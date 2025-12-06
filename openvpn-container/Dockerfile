@@ -1,7 +1,7 @@
 FROM alpine:latest
 
-# Install OpenVPN, Privoxy and required tools
-RUN apk add --no-cache \
+# Update package index and install OpenVPN, Privoxy and required tools
+RUN apk update && apk add --no-cache \
     openvpn \
     privoxy \
     curl \
@@ -9,7 +9,8 @@ RUN apk add --no-cache \
     bash \
     net-tools \
     unzip \
-    wget
+    wget \
+    ca-certificates
 
 # Create necessary directories
 RUN mkdir -p /etc/openvpn /var/log/openvpn /etc/privoxy /var/log/privoxy /config

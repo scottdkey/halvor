@@ -59,19 +59,19 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-${{ matrix.target }}-
 
-      - name: Install cross-compilation dependencies (Linux)
-        if: matrix.target == 'x86_64-unknown-linux-musl'
+      - name: Install build dependencies (Linux)
+        if: startsWith(matrix.target, 'x86_64-unknown-linux') || startsWith(matrix.target, 'aarch64-unknown-linux')
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools
+          if [[ "${{ matrix.target }}" == *"musl"* ]]; then
+            sudo apt-get install -y musl-tools musl-dev
+          else
+            sudo apt-get install -y pkg-config libssl-dev
+          fi
 
       - name: Build Rust CLI
         run: |
-          if [[ "${{ matrix.target }}" == *"musl"* ]]; then
-            cargo build --release --target ${{ matrix.target }}
-          else
-            cargo build --release --target ${{ matrix.target }}
-          fi
+          cargo build --release --target ${{ matrix.target }}
 
       - name: Prepare binary name
         id: binary_name
