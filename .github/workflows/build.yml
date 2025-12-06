@@ -28,7 +28,7 @@ env:
 
 jobs:
   build-rust-cli-linux:
-    name: Build Rust CLI (Linux)
+    name: Build CLI (Linux)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -109,7 +109,7 @@ jobs:
           retention-days: 90
 
   build-rust-cli-macos:
-    name: Build Rust CLI (macOS)
+    name: Build CLI (macOS)
     runs-on: macos-14
     permissions:
       contents: read
@@ -156,7 +156,7 @@ jobs:
           if-no-files-found: error
 
   build-docker-image:
-    name: Build and Push Docker Image
+    name: Build and Push Docker Images
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -203,7 +203,7 @@ jobs:
             type=sha,prefix={{branch}}-
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push Docker image
+      - name: Build and push vpn image
         uses: docker/build-push-action@v5
         with:
           context: ./openvpn-container
