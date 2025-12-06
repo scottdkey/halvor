@@ -157,26 +157,72 @@ fi
 
 echo ""
 echo "=== Backing up Docker volumes ==="
-# Get all Docker volumes
-VOLUMES=$(docker volume ls --format "{{{{.Name}}}}" 2>/dev/null || sudo docker volume ls --format "{{{{.Name}}}}" 2>/dev/null)
+# Get all Docker volumes (try without sudo first, then with sudo)
+VOLUMES=""
+if command -v docker &> /dev/null; then
+    VOLUMES=$(docker volume ls --format "{{{{.Name}}}}" 2>/dev/null || true)
+fi
+if [ -z "$VOLUMES" ] && command -v sudo &> /dev/null; then
+    VOLUMES=$(sudo docker volume ls --format "{{{{.Name}}}}" 2>/dev/null || true)
+fi
 
 if [ -z "$VOLUMES" ]; then
     echo "No Docker volumes found"
 else
-    VOL_COUNT=$(echo "$VOLUMES" | wc -l)
-    echo "Found $VOL_COUNT volume(s) to backup"
+    # Filter out empty lines and count
+    VOL_COUNT=$(echo "$VOLUMES" | grep -v '^$' | wc -l)
+    echo "Found $VOL_COUNT volume(s) to backup:"
+    echo "$VOLUMES" | grep -v '^$' | sed 's/^/  - /'
     echo ""
     
-    for VOL in $VOLUMES; do
-        echo "  Backing up volume: $VOL"
-        if docker run --rm -v "$VOL":/data -v "$BACKUP_DIR":/backup alpine tar czf "/backup/$VOL.tar.gz" -C /data . 2>/dev/null; then
-            echo "    ✓ Volume $VOL backed up"
-        elif sudo docker run --rm -v "$VOL":/data -v "$BACKUP_DIR":/backup alpine tar czf "/backup/$VOL.tar.gz" -C /data . 2>/dev/null; then
-            echo "    ✓ Volume $VOL backed up"
-        else
-            echo "    ✗ Failed to backup volume $VOL"
+    # Backup each volume
+    for VOL in $(echo "$VOLUMES" | grep -v '^$'); do
+        if [ -n "$VOL" ]; then
+            echo "  Backing up volume: $VOL"
+            # Try without sudo first
+            if docker run --rm -v "$VOL":/data:ro -v "$BACKUP_DIR":/backup alpine tar czf "/backup/$VOL.tar.gz" -C /data . 2>&1; then
+                echo "    ✓ Volume $VOL backed up"
+            # Try with sudo if first attempt failed
+            elif sudo docker run --rm -v "$VOL":/data:ro -v "$BACKUP_DIR":/backup alpine tar czf "/backup/$VOL.tar.gz" -C /data . 2>&1; then
+                echo "    ✓ Volume $VOL backed up"
+            else
+                echo "    ✗ Failed to backup volume $VOL"
+            fi
         fi
     done
+fi
+
+echo ""
+echo "=== Backing up bind mounts from containers ==="
+# Get all running and stopped containers with bind mounts
+CONTAINERS=$(docker ps -a --format "{{{{.Names}}}}" 2>/dev/null || sudo docker ps -a --format "{{{{.Names}}}}" 2>/dev/null)
+
+if [ -n "$CONTAINERS" ]; then
+    for CONTAINER in $(echo "$CONTAINERS" | grep -v '^$'); do
+        if [ -n "$CONTAINER" ]; then
+            # Get bind mounts for this container
+            BIND_MOUNTS=$(docker inspect "$CONTAINER" --format '{{{{range .Mounts}}}}{{{{if eq .Type "bind"}}}}{{{{.Source}}}}{{{{end}}}}{{{{end}}}}' 2>/dev/null || sudo docker inspect "$CONTAINER" --format '{{{{range .Mounts}}}}{{{{if eq .Type "bind"}}}}{{{{.Source}}}}{{{{end}}}}{{{{end}}}}' 2>/dev/null || true)
+            
+            if [ -n "$BIND_MOUNTS" ]; then
+                for MOUNT_PATH in $(echo "$BIND_MOUNTS" | grep -v '^$'); do
+                    if [ -n "$MOUNT_PATH" ] && [ -d "$MOUNT_PATH" ]; then
+                        MOUNT_NAME=$(basename "$MOUNT_PATH" | tr '/' '_')
+                        BACKUP_NAME="${{CONTAINER}}_${{MOUNT_NAME}}"
+                        echo "  Backing up bind mount from ${{CONTAINER}}: ${{MOUNT_PATH}}"
+                        if docker run --rm -v "${{MOUNT_PATH}}":/data:ro -v "${{BACKUP_DIR}}":/backup alpine tar czf "/backup/${{BACKUP_NAME}}.tar.gz" -C /data . 2>&1; then
+                            echo "    ✓ Bind mount ${{MOUNT_PATH}} backed up as ${{BACKUP_NAME}}.tar.gz"
+                        elif sudo docker run --rm -v "${{MOUNT_PATH}}":/data:ro -v "${{BACKUP_DIR}}":/backup alpine tar czf "/backup/${{BACKUP_NAME}}.tar.gz" -C /data . 2>&1; then
+                            echo "    ✓ Bind mount ${{MOUNT_PATH}} backed up as ${{BACKUP_NAME}}.tar.gz"
+                        else
+                            echo "    ✗ Failed to backup bind mount $MOUNT_PATH"
+                        fi
+                    fi
+                done
+            fi
+        fi
+    done
+else
+    echo "No containers found"
 fi
 
 # Create a metadata file
@@ -362,398 +408,6 @@ echo "Restored from: $BACKUP_DIR"
 echo "Host: $HOSTNAME"
 "#,
         hostname,
-        backup_base,
-        backup_name,
-        backup_dir
-    ));
-
-    Ok(script)
-}
-
-// Keep old functions for backward compatibility (compose-specific backups)
-
-pub fn backup_compose(
-    hostname: &str,
-    service_name: &str,
-    compose_path: &str,
-    config: &EnvConfig,
-) -> Result<()> {
-    let host_config = config.hosts.get(hostname).with_context(|| {
-        format!(
-            "Host '{}' not found in .env\n\nAdd configuration to .env:\n  HOST_{}_IP=\"<ip-address>\"\n  HOST_{}_TAILSCALE=\"<tailscale-hostname>\"",
-            hostname,
-            hostname.to_uppercase(),
-            hostname.to_uppercase()
-        )
-    })?;
-
-    let target_host = if let Some(ip) = &host_config.ip {
-        ip.clone()
-    } else if let Some(tailscale) = &host_config.tailscale {
-        tailscale.clone()
-    } else {
-        anyhow::bail!("No IP or Tailscale hostname configured for {}", hostname);
-    };
-
-    // Check if maple/backups is mounted
-    let backup_base = "/mnt/smb/maple/backups/compose-data";
-
-    println!(
-        "Backing up {} on {} ({})...",
-        service_name, hostname, target_host
-    );
-    println!();
-
-    // Build the backup script
-    let script = build_backup_script(service_name, compose_path, backup_base)?;
-
-    // Execute the script via SSH
-    execute_backup_script(&target_host, &script)?;
-
-    println!();
-    println!("✓ Backup complete for {}", service_name);
-
-    Ok(())
-}
-
-// Old compose-specific functions removed - using host-level backups instead
-
-fn build_backup_script(
-    service_name: &str,
-    compose_path: &str,
-    backup_base: &str,
-) -> Result<String> {
-    let datetime = chrono::DateTime::<chrono::Utc>::from(SystemTime::now());
-    let timestamp_str = datetime.format("%Y%m%d_%H%M%S").to_string();
-
-    let backup_dir = format!("{}/{}/{}", backup_base, service_name, timestamp_str);
-
-    let mut script = String::from("#!/bin/bash\nset -e\n\n");
-
-    script.push_str(&format!(
-        r#"
-SERVICE_NAME="{}"
-COMPOSE_PATH="{}"
-BACKUP_BASE="{}"
-BACKUP_DIR="{}"
-TIMESTAMP="{}"
-
-echo "=== Backup Configuration ==="
-echo "Service: $SERVICE_NAME"
-echo "Compose Path: $COMPOSE_PATH"
-echo "Backup Directory: $BACKUP_DIR"
-echo ""
-
-# Check if backup directory exists and is mounted
-if [ ! -d "$BACKUP_BASE" ]; then
-    echo "Error: Backup directory $BACKUP_BASE does not exist or is not mounted"
-    echo "Make sure SMB mount is set up: hal smb <hostname>"
-    exit 1
-fi
-
-# Create backup directory
-mkdir -p "$BACKUP_DIR"
-echo "✓ Created backup directory: $BACKUP_DIR"
-
-# Navigate to compose directory
-cd "$COMPOSE_PATH" || {{
-    echo "Error: Cannot access compose directory: $COMPOSE_PATH"
-    exit 1
-}}
-
-echo ""
-echo "=== Stopping services ==="
-# Stop the services
-if command -v docker &> /dev/null && docker compose version &> /dev/null; then
-    docker compose down || sudo docker compose down
-elif command -v docker-compose &> /dev/null; then
-    docker-compose down || sudo docker-compose down
-else
-    echo "Error: docker compose not found"
-    exit 1
-fi
-echo "✓ Services stopped"
-
-echo ""
-echo "=== Creating backup ==="
-# Detect if using volumes or bind mounts
-# Check docker-compose.yml for volume definitions
-COMPOSE_FILE=""
-if [ -f "docker-compose.yml" ]; then
-    COMPOSE_FILE="docker-compose.yml"
-elif [ -f "compose.yml" ]; then
-    COMPOSE_FILE="compose.yml"
-fi
-
-if [ -n "$COMPOSE_FILE" ] && grep -q "volumes:" "$COMPOSE_FILE" 2>/dev/null; then
-    # Extract volume names from docker-compose.yml
-    # Look for volume definitions in the services section
-    VOLUMES=$(grep -A 20 "volumes:" "$COMPOSE_FILE" | grep -E "^\s+-" | sed 's/.*- //' | grep -v "^/" | sed 's/:.*//' | sort -u || true)
-    
-    # Also check for named volumes in the volumes: section at the bottom
-    NAMED_VOLUMES=$(grep -A 10 "^volumes:" "$COMPOSE_FILE" | grep -E "^\s+\w+:" | sed 's/://' | sed 's/^[[:space:]]*//' || true)
-    
-    if [ -n "$VOLUMES" ] || [ -n "$NAMED_VOLUMES" ]; then
-        echo "Found Docker volumes, backing up volumes..."
-        for VOL in $VOLUMES $NAMED_VOLUMES; do
-            # Check if volume exists
-            if docker volume inspect "$VOL" &>/dev/null; then
-                echo "  Backing up volume: $VOL"
-                docker run --rm -v "$VOL":/data -v "$BACKUP_DIR":/backup alpine tar czf "/backup/$VOL.tar.gz" -C /data .
-                echo "  ✓ Volume $VOL backed up"
-            fi
-        done
-    fi
-fi
-
-# Check for bind mounts (./data, ./letsencrypt, etc.)
-if [ -d "./data" ]; then
-    echo "Found bind mount: ./data"
-    tar czf "$BACKUP_DIR/data.tar.gz" -C . data
-    echo "✓ Backed up ./data"
-fi
-
-if [ -d "./letsencrypt" ]; then
-    echo "Found bind mount: ./letsencrypt"
-    tar czf "$BACKUP_DIR/letsencrypt.tar.gz" -C . letsencrypt
-    echo "✓ Backed up ./letsencrypt"
-fi
-
-# Also backup the docker-compose.yml file
-if [ -f "docker-compose.yml" ]; then
-    cp docker-compose.yml "$BACKUP_DIR/docker-compose.yml"
-    echo "✓ Backed up docker-compose.yml"
-fi
-
-if [ -f "compose.yml" ]; then
-    cp compose.yml "$BACKUP_DIR/compose.yml"
-    echo "✓ Backed up compose.yml"
-fi
-
-# Create a metadata file
-cat > "$BACKUP_DIR/backup-info.txt" <<EOF
-Service: $SERVICE_NAME
-Timestamp: $TIMESTAMP
-Date: $(date)
-Compose Path: $COMPOSE_PATH
-EOF
-echo "✓ Created backup metadata"
-
-echo ""
-echo "=== Starting services ==="
-# Start the services back up
-if command -v docker &> /dev/null && docker compose version &> /dev/null; then
-    docker compose up -d || sudo docker compose up -d
-elif command -v docker-compose &> /dev/null; then
-    docker-compose up -d || sudo docker-compose up -d
-fi
-echo "✓ Services started"
-
-echo ""
-echo "=== Backup Summary ==="
-echo "Backup location: $BACKUP_DIR"
-echo "Backup name: $TIMESTAMP"
-ls -lh "$BACKUP_DIR"
-"#,
-        service_name,
-        compose_path,
-        backup_base,
-        backup_dir,
-        timestamp_str
-    ));
-
-    Ok(script)
-}
-
-fn build_list_backups_script(service_name: Option<&str>, backup_base: &str) -> Result<String> {
-    let mut script = String::from("#!/bin/bash\nset -e\n\n");
-
-    script.push_str(&format!(
-        r#"
-BACKUP_BASE="{}"
-
-echo "=== Available Backups ==="
-
-if [ ! -d "$BACKUP_BASE" ]; then
-    echo "Error: Backup directory $BACKUP_BASE does not exist or is not mounted"
-    exit 1
-fi
-
-"#,
-        backup_base
-    ));
-
-    if let Some(service) = service_name {
-        script.push_str(&format!(
-            r#"
-SERVICE_DIR="$BACKUP_BASE/{}"
-if [ ! -d "$SERVICE_DIR" ]; then
-    echo "No backups found for service: {}"
-    exit 0
-fi
-
-echo "Backups for service: {}"
-echo ""
-for BACKUP in "$SERVICE_DIR"/*; do
-    if [ -d "$BACKUP" ]; then
-        BACKUP_NAME=$(basename "$BACKUP")
-        BACKUP_DATE=$(stat -c %y "$BACKUP" 2>/dev/null || stat -f %Sm "$BACKUP" 2>/dev/null || echo "unknown")
-        echo "  - $BACKUP_NAME"
-        echo "    Date: $BACKUP_DATE"
-        if [ -f "$BACKUP/backup-info.txt" ]; then
-            echo "    Info:"
-            cat "$BACKUP/backup-info.txt" | sed 's/^/      /'
-        fi
-        echo ""
-    fi
-done
-"#,
-            service, service, service
-        ));
-    } else {
-        script.push_str(
-            r#"
-# List all services
-for SERVICE_DIR in "$BACKUP_BASE"/*; do
-    if [ -d "$SERVICE_DIR" ]; then
-        SERVICE_NAME=$(basename "$SERVICE_DIR")
-        echo "Service: $SERVICE_NAME"
-        BACKUP_COUNT=$(find "$SERVICE_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l)
-        echo "  Backups: $BACKUP_COUNT"
-        echo ""
-    fi
-done
-"#,
-        );
-    }
-
-    Ok(script)
-}
-
-fn build_restore_script(
-    service_name: &str,
-    compose_path: &str,
-    backup_base: &str,
-    backup_name: &str,
-) -> Result<String> {
-    let backup_dir = format!("{}/{}/{}", backup_base, service_name, backup_name);
-
-    let mut script = String::from("#!/bin/bash\nset -e\n\n");
-
-    script.push_str(&format!(
-        r#"
-SERVICE_NAME="{}"
-COMPOSE_PATH="{}"
-BACKUP_BASE="{}"
-BACKUP_NAME="{}"
-BACKUP_DIR="{}"
-
-echo "=== Restore Configuration ==="
-echo "Service: $SERVICE_NAME"
-echo "Compose Path: $COMPOSE_PATH"
-echo "Backup: $BACKUP_NAME"
-echo "Backup Directory: $BACKUP_DIR"
-echo ""
-
-# Check if backup exists
-if [ ! -d "$BACKUP_DIR" ]; then
-    echo "Error: Backup directory does not exist: $BACKUP_DIR"
-    echo "Available backups:"
-    ls -1 "$BACKUP_BASE/$SERVICE_NAME" 2>/dev/null || echo "  (none)"
-    exit 1
-fi
-
-# Navigate to compose directory
-cd "$COMPOSE_PATH" || {{
-    echo "Error: Cannot access compose directory: $COMPOSE_PATH"
-    exit 1
-}}
-
-echo ""
-echo "=== Stopping services ==="
-# Stop the services
-if command -v docker &> /dev/null && docker compose version &> /dev/null; then
-    docker compose down || sudo docker compose down
-elif command -v docker-compose &> /dev/null; then
-    docker-compose down || sudo docker-compose down
-else
-    echo "Error: docker compose not found"
-    exit 1
-fi
-echo "✓ Services stopped"
-
-echo ""
-echo "=== Restoring from backup ==="
-
-# Restore volumes
-for BACKUP_FILE in "$BACKUP_DIR"/*.tar.gz; do
-    if [ -f "$BACKUP_FILE" ]; then
-        VOL_NAME=$(basename "$BACKUP_FILE" .tar.gz)
-        echo "Restoring volume: $VOL_NAME"
-        
-        # Check if volume exists, create if not
-        if ! docker volume inspect "$VOL_NAME" &>/dev/null; then
-            docker volume create "$VOL_NAME"
-            echo "  Created volume: $VOL_NAME"
-        fi
-        
-        # Restore volume
-        docker run --rm -v "$VOL_NAME":/data -v "$BACKUP_DIR":/backup alpine sh -c "cd /data && rm -rf * && tar xzf /backup/$VOL_NAME.tar.gz"
-        echo "  ✓ Restored volume: $VOL_NAME"
-    fi
-done
-
-# Restore bind mounts
-if [ -f "$BACKUP_DIR/data.tar.gz" ]; then
-    echo "Restoring bind mount: ./data"
-    if [ -d "./data" ]; then
-        rm -rf ./data/*
-    else
-        mkdir -p ./data
-    fi
-    tar xzf "$BACKUP_DIR/data.tar.gz" -C .
-    echo "✓ Restored ./data"
-fi
-
-if [ -f "$BACKUP_DIR/letsencrypt.tar.gz" ]; then
-    echo "Restoring bind mount: ./letsencrypt"
-    if [ -d "./letsencrypt" ]; then
-        rm -rf ./letsencrypt/*
-    else
-        mkdir -p ./letsencrypt
-    fi
-    tar xzf "$BACKUP_DIR/letsencrypt.tar.gz" -C .
-    echo "✓ Restored ./letsencrypt"
-fi
-
-# Restore docker-compose.yml if it exists in backup
-if [ -f "$BACKUP_DIR/docker-compose.yml" ]; then
-    cp "$BACKUP_DIR/docker-compose.yml" ./docker-compose.yml
-    echo "✓ Restored docker-compose.yml"
-fi
-
-if [ -f "$BACKUP_DIR/compose.yml" ]; then
-    cp "$BACKUP_DIR/compose.yml" ./compose.yml
-    echo "✓ Restored compose.yml"
-fi
-
-echo ""
-echo "=== Starting services ==="
-# Start the services
-if command -v docker &> /dev/null && docker compose version &> /dev/null; then
-    docker compose up -d || sudo docker compose up -d
-elif command -v docker-compose &> /dev/null; then
-    docker-compose up -d || sudo docker-compose up -d
-fi
-echo "✓ Services started"
-
-echo ""
-echo "=== Restore Summary ==="
-echo "Restored from: $BACKUP_DIR"
-echo "Service: $SERVICE_NAME"
-"#,
-        service_name,
-        compose_path,
         backup_base,
         backup_name,
         backup_dir

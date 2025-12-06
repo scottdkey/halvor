@@ -7,12 +7,17 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=Etc/UTC
+      # Route traffic through gluetun VPN
+      - HTTP_PROXY=http://gluetun:8888
+      - HTTPS_PROXY=http://gluetun:8888
     volumes:
-      - /path/to/sonarr/data:/config
+      - sonarr_data:/config
       - /path/to/tvseries:/tv #optional
       - /path/to/downloadclient-downloads:/downloads #optional
     ports:
       - 8989:8989
+    networks:
+      - vpn_network
     restart: unless-stopped
   radarr:
     image: lscr.io/linuxserver/radarr:latest
@@ -21,12 +26,17 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=Etc/UTC
+      # Route traffic through gluetun VPN
+      - HTTP_PROXY=http://gluetun:8888
+      - HTTPS_PROXY=http://gluetun:8888
     volumes:
-      - /path/to/radarr/data:/config
-      - /path/to/movies:/movies #optional
-      - /path/to/download-client-downloads:/downloads #optional
+      - radarr_data:/config
+      - /mnt/smb/maple/data/media/movies:/movies #optional
+      - /mnt/smb/maple/data/downloads:/downloads #optional
     ports:
       - 7878:7878
+    networks:
+      - vpn_network
     restart: unless-stopped
   radarr-4k:
     image: lscr.io/linuxserver/radarr:latest
@@ -35,12 +45,17 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=Etc/UTC
+      # Route traffic through gluetun VPN
+      - HTTP_PROXY=http://gluetun:8888
+      - HTTPS_PROXY=http://gluetun:8888
     volumes:
-      - /path/to/radarr/data:/config
-      - /path/to/movies:/movies #optional
-      - /path/to/download-client-downloads:/downloads #optional
+      - radarr_4k_data:/config
+      - /mnt/smb/maple/data/media/4k:/movies #optional
+      - /mnt/smb/maple/data/downloads:/downloads #optional
     ports:
-      - 7878:7878
+      - 7879:7878
+    networks:
+      - vpn_network
     restart: unless-stopped
   prowlarr:
     image: lscr.io/linuxserver/prowlarr:latest
@@ -49,10 +64,15 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=Etc/UTC
+      # Route traffic through gluetun VPN
+      - HTTP_PROXY=http://gluetun:8888
+      - HTTPS_PROXY=http://gluetun:8888
     volumes:
-      - /path/to/prowlarr/data:/config
+      - prowlarr_data:/config
     ports:
       - 9696:9696
+    networks:
+      - vpn_network
     restart: unless-stopped
   bazarr:
     image: lscr.io/linuxserver/bazarr:latest
@@ -61,10 +81,35 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=Etc/UTC
+      # Route traffic through gluetun VPN
+      - HTTP_PROXY=http://gluetun:8888
+      - HTTPS_PROXY=http://gluetun:8888
     volumes:
-      - /path/to/bazarr/config:/config
-      - /path/to/movies:/movies #optional
-      - /path/to/tv:/tv #optional
+      - bazarr_data:/config
+      - /mnt/smb/maple/data/media/movies:/movies #optional
+      - /mnt/smb/maple/data/media/tv:/tv #optional
+      - /mnt/smb/maple/data/media/4k:/4k #optional
+      - /mnt/smb/maple/data/downloads:/downloads #optional
+      - /mnt/smb/maple/data/music:/music #optional
     ports:
       - 6767:6767
+    networks:
+      - vpn_network
     restart: unless-stopped
+
+volumes:
+  sonarr_data:
+    name: sonarr_data
+  radarr_data:
+    name: radarr_data
+  radarr_4k_data:
+    name: radarr_4k_data
+  prowlarr_data:
+    name: prowlarr_data
+  bazarr_data:
+    name: bazarr_data
+
+networks:
+  vpn_network:
+    name: vpn_network
+    external: true

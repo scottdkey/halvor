@@ -1,5 +1,6 @@
 mod backup;
 mod config;
+mod npm;
 mod provision;
 mod smb;
 mod ssh;
@@ -62,6 +63,17 @@ enum Commands {
         hostname: String,
         #[command(subcommand)]
         command: BackupCommands,
+    },
+    /// Automatically create proxy hosts in Nginx Proxy Manager from compose file
+    Npm {
+        /// Hostname where Nginx Proxy Manager is running
+        hostname: String,
+        /// Docker compose file to read services from (e.g., media.docker-compose.yml)
+        #[arg(default_value = "")]
+        compose_file: String,
+        /// Create proxy host for a specific service (e.g., portainer:9000 or npm:81)
+        #[arg(long)]
+        service: Option<String>,
     },
 }
 
@@ -132,6 +144,27 @@ fn main() -> Result<()> {
                 BackupCommands::Restore { backup } => {
                     backup::restore_host(&hostname, backup.as_deref(), &config)?
                 }
+            }
+        }
+        Commands::Npm {
+            hostname,
+            compose_file,
+            service,
+        } => {
+            let homelab_dir = config::find_homelab_dir()?;
+            let config = config::load_env_config(&homelab_dir)?;
+            // Use tokio runtime for async
+            let rt = tokio::runtime::Runtime::new()?;
+            if let Some(service_spec) = service {
+                rt.block_on(npm::setup_single_proxy_host(
+                    &hostname,
+                    &service_spec,
+                    &config,
+                ))?;
+            } else if !compose_file.is_empty() {
+                rt.block_on(npm::setup_proxy_hosts(&hostname, &compose_file, &config))?;
+            } else {
+                anyhow::bail!("Either --service or compose_file must be provided");
             }
         }
     }

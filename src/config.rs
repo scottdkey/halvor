@@ -183,3 +183,15 @@ pub fn get_home_dir() -> Result<PathBuf> {
             Ok(PathBuf::from("~"))
         })
 }
+
+pub fn get_npm_url() -> Option<String> {
+    env::var("NPM_URL").ok()
+}
+
+pub fn get_npm_username() -> Option<String> {
+    env::var("NPM_USERNAME").ok()
+}
+
+pub fn get_npm_password() -> Option<String> {
+    env::var("NPM_PASSWORD").ok()
+}

@@ -160,6 +160,85 @@ hal provision bellerophon --portainer-host
 
 This installs the full Portainer CE with web UI instead of just the agent.
 
+### Setup SMB Mounts
+
+Setup and mount SMB shares on a remote host:
+
+```bash
+hal smb bellerophon
+```
+
+This will:
+- Install SMB client utilities (`cifs-utils`)
+- Create mount points at `/mnt/smb/{servername}/{sharename}`
+- Mount SMB shares using credentials from `.env`
+- Add entries to `/etc/fstab` for persistent mounts
+
+**Uninstall SMB mounts:**
+
+```bash
+hal smb bellerophon --uninstall
+```
+
+### Backup and Restore Docker Volumes
+
+**Create a backup:**
+
+```bash
+hal backup bellerophon create
+```
+
+This creates a timestamped backup of all Docker volumes and bind mounts in `/mnt/smb/maple/backups/{hostname}/{timestamp}/`.
+
+**List available backups:**
+
+```bash
+hal backup bellerophon list
+```
+
+**Restore from a backup:**
+
+```bash
+hal backup bellerophon restore
+```
+
+If no backup name is specified, it will list available backups and prompt you to select one.
+
+Or restore a specific backup:
+
+```bash
+hal backup bellerophon restore --backup 20240101_120000
+```
+
+### Automatically Setup Nginx Proxy Manager Hosts
+
+Automatically create proxy hosts in Nginx Proxy Manager from a Docker Compose file:
+
+```bash
+hal npm bellerophon media.docker-compose.yml
+```
+
+This will:
+- Parse the compose file to find services with exposed ports
+- Connect to Nginx Proxy Manager API (requires `NPM_USERNAME` and `NPM_PASSWORD` in `.env`)
+- Create proxy hosts for each service (e.g., `sonarr.local`, `radarr.local`)
+- Forward traffic to the host where services are running
+
+**Required environment variables:**
+
+Add to your `.env` file:
+
+```bash
+NPM_URL="https://bellerophon:81"  # Optional, defaults to https://{hostname}:81
+NPM_USERNAME="admin@example.com"
+NPM_PASSWORD="your-password"
+```
+
+The command will:
+- Skip services that already have proxy hosts configured
+- Use the host's IP or Tailscale address for forwarding
+- Create domains in the format `{servicename}.local`
+
 ## Development
 
 ### Building
