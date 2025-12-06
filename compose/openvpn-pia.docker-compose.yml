@@ -9,7 +9,7 @@ services:
       dockerfile: Dockerfile
     # Set VPN_IMAGE environment variable or use default from your GitHub username
     # Example: VPN_IMAGE=ghcr.io/username/vpn:latest
-    image: ${VPN_IMAGE:-ghcr.io/${GITHUB_USER}/vpn:latest}
+    image: ${VPN_IMAGE:-ghcr.io/scottdkey/vpn:latest}
     container_name: openvpn-pia
     cap_add:
       - NET_ADMIN
