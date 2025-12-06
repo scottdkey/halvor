@@ -219,9 +219,9 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
 
     let use_key_auth = test_status.is_ok() && test_status.unwrap().success();
 
-    // Create directories on remote system
-    let mkdir_command =
-        r#"mkdir -p "$HOME/vpn/openvpn" 2>/dev/null || mkdir -p "$(eval echo ~$USER)/vpn/openvpn""#;
+    // Create directories on remote system in system-wide location
+    // Use /opt/vpn/openvpn which is accessible to all users (including Portainer)
+    let mkdir_command = r#"sudo mkdir -p /opt/vpn/openvpn && sudo chmod 755 /opt/vpn && sudo chmod 755 /opt/vpn/openvpn"#;
 
     let mut mkdir_cmd = Command::new("ssh");
     if use_key_auth {
@@ -255,7 +255,7 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
 
     let mkdir_status = mkdir_cmd.status()?;
     if !mkdir_status.success() {
-        anyhow::bail!("Failed to create $HOME/vpn/openvpn directory on remote system");
+        anyhow::bail!("Failed to create /opt/vpn/openvpn directory on remote system");
     }
 
     // Copy OpenVPN config files to remote system
@@ -270,11 +270,10 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
         anyhow::bail!("OpenVPN config file not found at {}", config_file.display());
     }
 
-    // Copy auth.txt
+    // Copy auth.txt to system-wide location
     let auth_content = std::fs::read_to_string(&auth_file)
         .with_context(|| format!("Failed to read auth file: {}", auth_file.display()))?;
-    let auth_setup_cmd =
-        r#"cat > "$HOME/vpn/openvpn/auth.txt" || cat > "$(eval echo ~$USER)/vpn/openvpn/auth.txt""#;
+    let auth_setup_cmd = r#"sudo tee /opt/vpn/openvpn/auth.txt > /dev/null && sudo chmod 600 /opt/vpn/openvpn/auth.txt"#;
 
     let mut auth_cmd = Command::new("ssh");
     if use_key_auth {
@@ -324,7 +323,7 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
     // Copy ca-montreal.ovpn
     let config_content = std::fs::read_to_string(&config_file)
         .with_context(|| format!("Failed to read config file: {}", config_file.display()))?;
-    let config_setup_cmd = r#"cat > "$HOME/vpn/openvpn/ca-montreal.ovpn" || cat > "$(eval echo ~$USER)/vpn/openvpn/ca-montreal.ovpn""#;
+    let config_setup_cmd = r#"sudo tee /opt/vpn/openvpn/ca-montreal.ovpn > /dev/null && sudo chmod 644 /opt/vpn/openvpn/ca-montreal.ovpn"#;
 
     let mut config_cmd = Command::new("ssh");
     if use_key_auth {
@@ -371,7 +370,7 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
 
     println!("✓ Copied ca-montreal.ovpn to remote system");
 
-    // Copy compose file to remote system
+    // Copy compose file to remote system (keep in home directory for user access)
     let setup_cmd = r#"cat > "$HOME/vpn/docker-compose.yml" || cat > "$(eval echo ~$USER)/vpn/docker-compose.yml""#;
 
     let mut cmd = Command::new("ssh");
@@ -479,8 +478,8 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
     println!("  Files copied:");
     println!("    - ~/vpn/docker-compose.yml (Portainer compose file)");
     println!("    - ~/vpn/.env (PIA credentials)");
-    println!("    - ~/vpn/openvpn/auth.txt (OpenVPN authentication)");
-    println!("    - ~/vpn/openvpn/ca-montreal.ovpn (OpenVPN configuration)");
+    println!("    - /opt/vpn/openvpn/auth.txt (OpenVPN authentication - system-wide)");
+    println!("    - /opt/vpn/openvpn/ca-montreal.ovpn (OpenVPN configuration - system-wide)");
     println!();
     println!("  You can now deploy the VPN manually using Portainer or docker-compose.");
 

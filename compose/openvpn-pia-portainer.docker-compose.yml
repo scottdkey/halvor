@@ -17,9 +17,8 @@ services:
       - UPDATE_CONFIGS=${UPDATE_CONFIGS:-false}
     volumes:
       # Mount OpenVPN config and auth files
-      # For deployment, uses bind mount to ~/vpn/openvpn
-      # For manual setup, adjust the path as needed
-      - ~/vpn/openvpn:/config:ro
+      # Using system-wide location accessible to all users (including Portainer)
+      - /opt/vpn/openvpn:/config:ro
       - openvpn_logs:/var/log/openvpn
     ports:
       # HTTP proxy port (Privoxy)
