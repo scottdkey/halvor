@@ -18,7 +18,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/pia-vpn
+  IMAGE_NAME: ${{ github.repository_owner }}/vpn
 
 jobs:
   release-rust-cli-linux:
@@ -132,7 +132,7 @@ jobs:
       - name: Upload release asset
         uses: actions/upload-artifact@v4
         with:
-          name: hal-${{ steps.os_arch.outputs.os }}-${{ steps.os_arch.outputs.arch }}${{ steps.os_arch.outputs.ext && format('-{0}', steps.os_arch.outputs.ext) || '' }}
+          name: hal-${{ matrix.target }}
           path: ${{ steps.create_archive.outputs.archive_name }}
           retention-days: 90
 
@@ -213,7 +213,7 @@ jobs:
       - name: Upload release asset
         uses: actions/upload-artifact@v4
         with:
-          name: hal-${{ steps.os_arch.outputs.os }}-${{ steps.os_arch.outputs.arch }}
+          name: hal-${{ matrix.target }}
           path: ${{ steps.create_archive.outputs.archive_name }}
           retention-days: 90
 
