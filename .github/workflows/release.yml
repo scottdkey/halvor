@@ -21,8 +21,8 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/pia-vpn
 
 jobs:
-  release-rust-cli:
-    name: Release Rust CLI
+  release-rust-cli-linux:
+    name: Release Rust CLI (Linux)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -34,8 +34,6 @@ jobs:
           - x86_64-unknown-linux-gnu
           - x86_64-unknown-linux-musl
           - aarch64-unknown-linux-gnu
-          - x86_64-apple-darwin
-          - aarch64-apple-darwin
 
     steps:
       - name: Checkout code
@@ -80,10 +78,8 @@ jobs:
         run: |
           # Unset MACOSX_DEPLOYMENT_TARGET for Linux targets to prevent ring crate issues
           # The ring crate (used by rustls-tls) can incorrectly detect macOS flags during cross-compilation
-          if [[ "${{ matrix.target }}" != *"apple-darwin"* ]]; then
-            unset MACOSX_DEPLOYMENT_TARGET || true
-            export MACOSX_DEPLOYMENT_TARGET=""
-          fi
+          unset MACOSX_DEPLOYMENT_TARGET || true
+          export MACOSX_DEPLOYMENT_TARGET=""
           cargo build --release --target ${{ matrix.target }}
 
       - name: Determine OS and architecture
@@ -137,6 +133,87 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: hal-${{ steps.os_arch.outputs.os }}-${{ steps.os_arch.outputs.arch }}${{ steps.os_arch.outputs.ext && format('-{0}', steps.os_arch.outputs.ext) || '' }}
+          path: ${{ steps.create_archive.outputs.archive_name }}
+          retention-days: 90
+
+  release-rust-cli-macos:
+    name: Release Rust CLI (macOS)
+    runs-on: macos-14
+    permissions:
+      contents: read
+      actions: write
+
+    strategy:
+      matrix:
+        target:
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.target }}-
+
+      - name: Build Rust CLI
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Determine OS and architecture
+        id: os_arch
+        run: |
+          case "${{ matrix.target }}" in
+            x86_64-apple-darwin)
+              OS="darwin"
+              ARCH="amd64"
+              ;;
+            aarch64-apple-darwin)
+              OS="darwin"
+              ARCH="arm64"
+              ;;
+          esac
+          echo "os=$OS" >> $GITHUB_OUTPUT
+          echo "arch=$ARCH" >> $GITHUB_OUTPUT
+
+      - name: Create release archive
+        id: create_archive
+        run: |
+          if [ "${{ github.event_name }}" == "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          OS="${{ steps.os_arch.outputs.os }}"
+          ARCH="${{ steps.os_arch.outputs.arch }}"
+
+          mkdir -p release
+          cp target/${{ matrix.target }}/release/hal release/hal
+          chmod +x release/hal
+
+          ARCHIVE_NAME="hal-${VERSION}-${OS}-${ARCH}.tar.gz"
+          tar -czf "${ARCHIVE_NAME}" -C release hal
+          echo "archive_name=${ARCHIVE_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Upload release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: hal-${{ steps.os_arch.outputs.os }}-${{ steps.os_arch.outputs.arch }}
           path: ${{ steps.create_archive.outputs.archive_name }}
           retention-days: 90
 
