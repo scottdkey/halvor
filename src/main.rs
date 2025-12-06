@@ -1,14 +1,15 @@
 mod backup;
 mod config;
+mod config_manager;
 mod npm;
 mod provision;
 mod smb;
-mod ssh;
 mod tailscale;
 mod vpn;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "hal")]
@@ -20,23 +21,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Connect to a host via SSH (tries local IP, then Tailscale)
-    Ssh {
-        /// Hostname to connect to
-        hostname: String,
-        /// Username for SSH connection (if not provided, will prompt or use default)
-        #[arg(long, short = 'u')]
-        user: Option<String>,
-        /// Remove offending host keys from known_hosts before connecting
-        #[arg(long, short = 'f')]
-        fix_keys: bool,
-        /// Copy SSH public key to remote host for passwordless authentication
-        #[arg(long)]
-        keys: bool,
-        /// Additional SSH arguments
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        ssh_args: Vec<String>,
-    },
     /// Install Tailscale on the system
     Tailscale {
         #[command(subcommand)]
@@ -81,6 +65,11 @@ enum Commands {
         #[command(subcommand)]
         command: VpnCommands,
     },
+    /// Configure HAL settings (environment file location, etc.)
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -121,21 +110,23 @@ enum BackupCommands {
     },
 }
 
+#[derive(Subcommand)]
+enum ConfigCommands {
+    /// Initialize or update HAL configuration (interactive)
+    Init,
+    /// Set the environment file path
+    SetEnv {
+        /// Path to the .env file
+        path: String,
+    },
+    /// Show current configuration
+    Show,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Ssh {
-            hostname,
-            user,
-            fix_keys,
-            keys,
-            ssh_args,
-        } => {
-            let homelab_dir = config::find_homelab_dir()?;
-            let config = config::load_env_config(&homelab_dir)?;
-            ssh::ssh_to_host(&hostname, user, fix_keys, keys, &ssh_args, &config)?;
-        }
         Commands::Tailscale { command } => match command {
             TailscaleCommands::Install => tailscale::install_tailscale()?,
         },
@@ -196,9 +187,55 @@ fn main() -> Result<()> {
                 vpn::build_and_push_vpn_image(&github_user, tag.as_deref())?;
             }
             VpnCommands::Deploy { hostname } => {
-                let homelab_dir = config::find_homelab_dir()?;
-                let config = config::load_env_config(&homelab_dir)?;
+                let config_dir = config::find_homelab_dir()?;
+                let config = config::load_env_config(&config_dir)?;
                 vpn::deploy_vpn(&hostname, &config)?;
+            }
+        },
+        Commands::Config { command } => match command {
+            ConfigCommands::Init => {
+                config_manager::init_config_interactive()?;
+            }
+            ConfigCommands::SetEnv { path } => {
+                let env_path = std::path::PathBuf::from(&path);
+                let env_path = if env_path.is_relative() {
+                    std::env::current_dir()?.join(&env_path)
+                } else {
+                    env_path
+                };
+                let env_path = env_path
+                    .canonicalize()
+                    .with_context(|| format!("Failed to resolve path: {}", path))?;
+
+                if !env_path.exists() {
+                    anyhow::bail!("File does not exist: {}", env_path.display());
+                }
+
+                config_manager::set_env_file_path(&env_path)?;
+            }
+            ConfigCommands::Show => {
+                let hal_config = config_manager::load_config()?;
+                println!("HAL Configuration");
+                println!("=================");
+                println!();
+
+                if let Some(ref env_path) = hal_config.env_file_path {
+                    println!("Environment file: {}", env_path.display());
+                    if env_path.exists() {
+                        println!("  Status: ✓ Found");
+                    } else {
+                        println!("  Status: ✗ Not found");
+                    }
+                } else {
+                    println!("Environment file: Not configured");
+                    println!("  Run 'hal config init' to set it up");
+                }
+
+                println!();
+                println!(
+                    "Config file location: {}",
+                    config_manager::get_config_file_path()?.display()
+                );
             }
         },
     }

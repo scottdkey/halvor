@@ -1,12 +1,14 @@
 # HAL - Homelab Automation Layer
 
-A Rust-based CLI tool for managing your homelab infrastructure, with support for SSH connections via local IP or Tailscale.
+A Rust-based CLI tool for managing your homelab infrastructure, with scripts for SSH setup and automation.
 
 **HAL** stands for **Homelab Automation Layer** - your intelligent assistant for homelab operations.
 
 ## Features
 
-- **SSH Connection**: Connect to hosts via local IP first, with automatic fallback to Tailscale
+- **Global Installation**: Works from any directory with configured environment file
+- **SSH Host Configuration**: Automatically configure SSH hosts from `.env` file
+- **SSH Key Setup**: One-time password setup for passwordless SSH connections
 - **Environment-based Configuration**: Host configurations stored in `.env` file
 - **Development Mode**: Auto-build and install on file changes
 
@@ -14,17 +16,30 @@ A Rust-based CLI tool for managing your homelab infrastructure, with support for
 
 ### Automatic Installation (Recommended)
 
-The install scripts will automatically detect if Rust is installed and install it if needed, then build and install hal.
+Download and run the install script from GitHub:
 
 **On Unix/macOS/Linux:**
 ```bash
+curl -fsSL https://raw.githubusercontent.com/scottdkey/homelab/main/scripts/install.sh | bash
+```
+
+Or download and run manually:
+```bash
+curl -O https://raw.githubusercontent.com/scottdkey/homelab/main/scripts/install.sh
+chmod +x install.sh
 ./install.sh
 ```
 
 **On Windows (PowerShell):**
 ```powershell
-.\install.ps1
+irm https://raw.githubusercontent.com/scottdkey/homelab/main/scripts/install.ps1 | iex
 ```
+
+The install scripts will:
+- Detect your platform (OS and architecture)
+- Download the correct pre-built binary from GitHub releases
+- Install to `/usr/local/bin` (Linux/macOS) or `~/.local/bin` (Windows)
+- Set up PATH if needed
 
 ### Manual Installation
 
@@ -55,7 +70,22 @@ This will:
 
 ## Configuration
 
-1. Copy `.env.example` to `.env`:
+### Initial Setup
+
+When `hal` is installed globally, you need to configure the location of your `.env` file:
+
+```bash
+hal config init
+```
+
+This will:
+- Prompt you for the path to your `.env` file
+- Store the configuration in `~/.config/hal/config.toml`
+- Allow `hal` to work from any directory
+
+### Environment File
+
+1. Copy `.env.example` to `.env` (or create your own):
    ```bash
    cp .env.example .env
    ```
@@ -68,61 +98,81 @@ This will:
    # Host configurations
    HOST_bellerophon_IP="10.10.10.14"
    HOST_bellerophon_TAILSCALE="bellerophon"
+   
+   # SSH host configurations (for setup-ssh-hosts.sh)
+   SSH_MAPLE_HOST="10.10.10.130"
+   SSH_MAPLE_USER="skey"
+   SSH_BELLEROPHON_HOST="10.10.10.14"
+   SSH_BELLEROPHON_USER="scottkey"
    ```
+
+### Managing Configuration
+
+**View current configuration:**
+```bash
+hal config show
+```
+
+**Set environment file path:**
+```bash
+hal config set-env /path/to/.env
+```
+
+**Re-initialize configuration (interactive):**
+```bash
+hal config init
+```
+
+## Setup
+
+### Configure SSH Hosts
+
+First, set up your SSH hosts from `.env` configuration:
+
+```bash
+./scripts/setup-ssh-hosts.sh
+```
+
+This reads SSH host configurations from your `.env` file and adds them to `~/.ssh/config`. Add entries like:
+
+```bash
+SSH_MAPLE_HOST="10.10.10.130"
+SSH_MAPLE_USER="skey"
+SSH_MAPLE_PORT="22"
+
+SSH_BELLEROPHON_HOST="10.10.10.14"
+SSH_BELLEROPHON_USER="scottkey"
+```
+
+### Setup SSH Keys
+
+After configuring hosts, set up SSH key authentication (one-time password required):
+
+```bash
+./scripts/setup-ssh-keys.sh maple
+```
+
+This will:
+- Copy your SSH public key to the remote host
+- Prompt for password once (only time needed)
+- Enable passwordless SSH connections
 
 ## Usage
 
 ### SSH to a host
 
+After setup, simply use standard SSH:
+
 ```bash
-hal ssh bellerophon
+ssh maple
+ssh bellerophon
 ```
 
 With additional SSH arguments:
 
 ```bash
-hal ssh bellerophon -L 8080:localhost:8080
+ssh maple -L 8080:localhost:8080
 ```
-
-**Fix SSH host key issues:**
-
-If you encounter "host key verification failed" or "host ID mismatch" errors, use the `--fix-keys` flag to remove offending host keys from your `known_hosts` file:
-
-```bash
-hal ssh bellerophon --fix-keys
-```
-
-This will:
-- Prompt you to confirm removal for each configured host address (IP, Tailscale hostname, etc.)
-- Remove the offending host keys from `~/.ssh/known_hosts`
-- Then attempt to connect via SSH
-
-You can also use the short form:
-
-```bash
-hal ssh bellerophon -f
-```
-
-**Copy SSH keys for passwordless authentication:**
-
-To copy your SSH public key to a remote host for passwordless authentication:
-
-```bash
-hal ssh bellerophon --keys
-```
-
-This will:
-- Prompt for username (or use default)
-- Use `ssh-copy-id` to copy your public key to the remote host
-- Prompt for password once during key copy
-- After this, future connections will use key-based authentication
-
-**Automatic authentication method selection:**
-
-The SSH command now automatically:
-- First tries key-based authentication (no password prompt)
-- Falls back to password authentication if keys aren't set up
-- Prompts for username/password only when needed
 
 ### Install Tailscale
 

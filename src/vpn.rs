@@ -184,15 +184,13 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
     println!("Deploying VPN to {} ({})...", hostname, target_host);
     println!();
 
-    // Read Portainer compose file (for deployment)
+    // Read compose file - use local build version for now (avoids registry auth issues)
+    // User can switch to portainer version after making image public
     let compose_file = homelab_dir
         .join("compose")
-        .join("openvpn-pia-portainer.docker-compose.yml");
+        .join("openvpn-pia.docker-compose.yml");
     if !compose_file.exists() {
-        anyhow::bail!(
-            "VPN Portainer compose file not found at {}",
-            compose_file.display()
-        );
+        anyhow::bail!("VPN compose file not found at {}", compose_file.display());
     }
 
     let compose_content = std::fs::read_to_string(&compose_file)
@@ -219,13 +217,12 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
 
     let use_key_auth = test_status.is_ok() && test_status.unwrap().success();
 
-    // Create directories on remote system in system-wide location
-    // Use /opt/vpn/openvpn which is accessible to all users (including Portainer)
-    let mkdir_command = r#"sudo mkdir -p /opt/vpn/openvpn && sudo chmod 755 /opt/vpn && sudo chmod 755 /opt/vpn/openvpn"#;
-
-    let mut mkdir_cmd = Command::new("ssh");
+    // Check if files already exist - if so, skip deployment
+    // Check for both .ovpn and .opvn (typo) variants
+    let check_cmd = r#"test -f /opt/vpn/openvpn/auth.txt && (test -f /opt/vpn/openvpn/ca-montreal.ovpn || test -f /opt/vpn/openvpn/ca-montreal.opvn) && echo 'exists' || echo 'missing'"#;
+    let mut check_cmd_exec = Command::new("ssh");
     if use_key_auth {
-        mkdir_cmd.args([
+        check_cmd_exec.args([
             "-o",
             "StrictHostKeyChecking=no",
             "-o",
@@ -235,10 +232,10 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
             &host_with_user,
             "bash",
             "-c",
-            mkdir_command,
+            check_cmd,
         ]);
     } else {
-        mkdir_cmd.args([
+        check_cmd_exec.args([
             "-o",
             "StrictHostKeyChecking=no",
             "-o",
@@ -246,129 +243,179 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
             &host_with_user,
             "bash",
             "-c",
-            mkdir_command,
+            check_cmd,
         ]);
     }
+    check_cmd_exec.stdout(Stdio::piped());
+    check_cmd_exec.stderr(Stdio::null());
+    let check_output = check_cmd_exec.output()?;
+    let output_str = String::from_utf8_lossy(&check_output.stdout);
+    let files_exist = output_str.trim() == "exists";
 
-    mkdir_cmd.stdout(Stdio::null());
-    mkdir_cmd.stderr(Stdio::inherit());
-
-    let mkdir_status = mkdir_cmd.status()?;
-    if !mkdir_status.success() {
-        anyhow::bail!("Failed to create /opt/vpn/openvpn directory on remote system");
+    // Debug: print what we got
+    if !files_exist {
+        eprintln!(
+            "Debug: Check command output: '{}' (status: {})",
+            output_str.trim(),
+            check_output.status
+        );
     }
 
-    // Copy OpenVPN config files to remote system
-    let openvpn_dir = homelab_dir.join("openvpn");
-    let auth_file = openvpn_dir.join("auth.txt");
-    let config_file = openvpn_dir.join("ca-montreal.ovpn");
-
-    if !auth_file.exists() {
-        anyhow::bail!("OpenVPN auth file not found at {}", auth_file.display());
-    }
-    if !config_file.exists() {
-        anyhow::bail!("OpenVPN config file not found at {}", config_file.display());
-    }
-
-    // Copy auth.txt to system-wide location
-    let auth_content = std::fs::read_to_string(&auth_file)
-        .with_context(|| format!("Failed to read auth file: {}", auth_file.display()))?;
-    let auth_setup_cmd = r#"sudo tee /opt/vpn/openvpn/auth.txt > /dev/null && sudo chmod 600 /opt/vpn/openvpn/auth.txt"#;
-
-    let mut auth_cmd = Command::new("ssh");
-    if use_key_auth {
-        auth_cmd.args([
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "PreferredAuthentications=publickey",
-            "-o",
-            "PasswordAuthentication=no",
-            &host_with_user,
-            "bash",
-            "-c",
-            auth_setup_cmd,
-        ]);
+    if files_exist {
+        println!("✓ VPN configuration files already exist on remote system");
+        println!("  Skipping file copy (files are already in place)");
     } else {
-        auth_cmd.args([
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "PreferredAuthentications=publickey,keyboard-interactive,password",
-            &host_with_user,
-            "bash",
-            "-c",
-            auth_setup_cmd,
-        ]);
+        println!("VPN configuration files not found, attempting to copy...");
+
+        // Copy OpenVPN config files to remote system
+        let openvpn_dir = homelab_dir.join("openvpn");
+        let auth_file = openvpn_dir.join("auth.txt");
+        let config_file = openvpn_dir.join("ca-montreal.ovpn");
+
+        if !auth_file.exists() {
+            anyhow::bail!("OpenVPN auth file not found at {}", auth_file.display());
+        }
+        if !config_file.exists() {
+            anyhow::bail!("OpenVPN config file not found at {}", config_file.display());
+        }
+
+        // Copy files using scp, then move to /opt/vpn/openvpn with sudo
+        // First copy to temp location in home directory
+        let mut scp_auth = Command::new("scp");
+        if use_key_auth {
+            scp_auth.args([
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "PreferredAuthentications=publickey",
+                "-o",
+                "PasswordAuthentication=no",
+                auth_file.to_str().unwrap(),
+                &format!("{}:~/auth.txt.tmp", host_with_user),
+            ]);
+        } else {
+            scp_auth.args([
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "PreferredAuthentications=publickey,keyboard-interactive,password",
+                auth_file.to_str().unwrap(),
+                &format!("{}:~/auth.txt.tmp", host_with_user),
+            ]);
+        }
+        scp_auth.stdout(Stdio::null());
+        scp_auth.stderr(Stdio::inherit());
+        let scp_auth_status = scp_auth.status()?;
+        if !scp_auth_status.success() {
+            anyhow::bail!("Failed to copy auth.txt to remote system");
+        }
+
+        // Move and set permissions with sudo
+        let move_auth_cmd = r#"sudo mv ~/auth.txt.tmp /opt/vpn/openvpn/auth.txt && sudo chmod 600 /opt/vpn/openvpn/auth.txt"#;
+        let mut move_auth = Command::new("ssh");
+        if use_key_auth {
+            move_auth.args([
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "PreferredAuthentications=publickey",
+                "-o",
+                "PasswordAuthentication=no",
+                &host_with_user,
+                "bash",
+                "-c",
+                move_auth_cmd,
+            ]);
+        } else {
+            move_auth.args([
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "PreferredAuthentications=publickey,keyboard-interactive,password",
+                &host_with_user,
+                "bash",
+                "-c",
+                move_auth_cmd,
+            ]);
+        }
+        move_auth.stdout(Stdio::null());
+        move_auth.stderr(Stdio::inherit());
+        let move_auth_status = move_auth.status()?;
+        if !move_auth_status.success() {
+            anyhow::bail!(
+                "Failed to move auth.txt to /opt/vpn/openvpn (sudo may require password)"
+            );
+        }
+        println!("✓ Copied auth.txt to remote system");
+
+        // Copy config file
+        let mut scp_config = Command::new("scp");
+        if use_key_auth {
+            scp_config.args([
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "PreferredAuthentications=publickey",
+                "-o",
+                "PasswordAuthentication=no",
+                config_file.to_str().unwrap(),
+                &format!("{}:~/ca-montreal.ovpn.tmp", host_with_user),
+            ]);
+        } else {
+            scp_config.args([
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "PreferredAuthentications=publickey,keyboard-interactive,password",
+                config_file.to_str().unwrap(),
+                &format!("{}:~/ca-montreal.ovpn.tmp", host_with_user),
+            ]);
+        }
+        scp_config.stdout(Stdio::null());
+        scp_config.stderr(Stdio::inherit());
+        let scp_config_status = scp_config.status()?;
+        if !scp_config_status.success() {
+            anyhow::bail!("Failed to copy ca-montreal.ovpn to remote system");
+        }
+
+        // Move and set permissions with sudo
+        let move_config_cmd = r#"sudo mv ~/ca-montreal.ovpn.tmp /opt/vpn/openvpn/ca-montreal.ovpn && sudo chmod 644 /opt/vpn/openvpn/ca-montreal.ovpn"#;
+        let mut move_config = Command::new("ssh");
+        if use_key_auth {
+            move_config.args([
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "PreferredAuthentications=publickey",
+                "-o",
+                "PasswordAuthentication=no",
+                &host_with_user,
+                "bash",
+                "-c",
+                move_config_cmd,
+            ]);
+        } else {
+            move_config.args([
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "PreferredAuthentications=publickey,keyboard-interactive,password",
+                &host_with_user,
+                "bash",
+                "-c",
+                move_config_cmd,
+            ]);
+        }
+        move_config.stdout(Stdio::null());
+        move_config.stderr(Stdio::inherit());
+        let move_config_status = move_config.status()?;
+        if !move_config_status.success() {
+            anyhow::bail!(
+                "Failed to move ca-montreal.ovpn to /opt/vpn/openvpn (sudo may require password)"
+            );
+        }
+        println!("✓ Copied ca-montreal.ovpn to remote system");
     }
-
-    auth_cmd.stdin(Stdio::piped());
-    auth_cmd.stdout(Stdio::null());
-    auth_cmd.stderr(Stdio::inherit());
-
-    let mut auth_child = auth_cmd.spawn()?;
-    if let Some(mut stdin) = auth_child.stdin.take() {
-        stdin.write_all(auth_content.as_bytes())?;
-        stdin.flush()?;
-        drop(stdin);
-    }
-
-    let auth_status = auth_child.wait()?;
-    if !auth_status.success() {
-        anyhow::bail!("Failed to copy auth.txt to remote system");
-    }
-
-    println!("✓ Copied auth.txt to remote system");
-
-    // Copy ca-montreal.ovpn
-    let config_content = std::fs::read_to_string(&config_file)
-        .with_context(|| format!("Failed to read config file: {}", config_file.display()))?;
-    let config_setup_cmd = r#"sudo tee /opt/vpn/openvpn/ca-montreal.ovpn > /dev/null && sudo chmod 644 /opt/vpn/openvpn/ca-montreal.ovpn"#;
-
-    let mut config_cmd = Command::new("ssh");
-    if use_key_auth {
-        config_cmd.args([
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "PreferredAuthentications=publickey",
-            "-o",
-            "PasswordAuthentication=no",
-            &host_with_user,
-            "bash",
-            "-c",
-            config_setup_cmd,
-        ]);
-    } else {
-        config_cmd.args([
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "PreferredAuthentications=publickey,keyboard-interactive,password",
-            &host_with_user,
-            "bash",
-            "-c",
-            config_setup_cmd,
-        ]);
-    }
-
-    config_cmd.stdin(Stdio::piped());
-    config_cmd.stdout(Stdio::null());
-    config_cmd.stderr(Stdio::inherit());
-
-    let mut config_child = config_cmd.spawn()?;
-    if let Some(mut stdin) = config_child.stdin.take() {
-        stdin.write_all(config_content.as_bytes())?;
-        stdin.flush()?;
-        drop(stdin);
-    }
-
-    let config_status = config_child.wait()?;
-    if !config_status.success() {
-        anyhow::bail!("Failed to copy ca-montreal.ovpn to remote system");
-    }
-
-    println!("✓ Copied ca-montreal.ovpn to remote system");
 
     // Copy compose file to remote system (keep in home directory for user access)
     let setup_cmd = r#"cat > "$HOME/vpn/docker-compose.yml" || cat > "$(eval echo ~$USER)/vpn/docker-compose.yml""#;

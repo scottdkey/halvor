@@ -7,7 +7,7 @@ services:
     build:
       context: ../openvpn-container
       dockerfile: Dockerfile
-    image: ${VPN_IMAGE:-ghcr.io/scottkey/pia-vpn:latest}
+    image: ghcr.io/scottdkey/pia-vpn:latest
     container_name: openvpn-pia
     cap_add:
       - NET_ADMIN
@@ -27,9 +27,9 @@ services:
       # Set UPDATE_CONFIGS=true to download fresh PIA configs on startup
       - UPDATE_CONFIGS=${UPDATE_CONFIGS:-false}
     volumes:
-      # Mount OpenVPN config and auth files
+      # Mount OpenVPN config and auth files from system-wide location
       # Note: Remove :ro if using UPDATE_CONFIGS to allow writing downloaded configs
-      - ../openvpn:/config
+      - /opt/vpn/openvpn:/config
       - openvpn_logs:/var/log/openvpn
     restart: unless-stopped
 

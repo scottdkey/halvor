@@ -1,0 +1,162 @@
+name: Release
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g., v1.0.0)"
+        required: true
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/pia-vpn
+
+jobs:
+  release-rust-cli:
+    name: Release Rust CLI
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-gnu
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.target }}-
+
+      - name: Install cross-compilation dependencies (Linux)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Build Rust CLI
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Determine OS and architecture
+        id: os_arch
+        run: |
+          case "${{ matrix.target }}" in
+            *linux-gnu*)
+              OS="linux"
+              ARCH=$(echo ${{ matrix.target }} | sed 's/.*-\(.*\)-.*/\1/' | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
+              ;;
+            *linux-musl*)
+              OS="linux"
+              ARCH="amd64"
+              EXT="musl"
+              ;;
+            *apple-darwin*)
+              OS="darwin"
+              ARCH=$(echo ${{ matrix.target }} | sed 's/.*-\(.*\)-.*/\1/' | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
+              ;;
+          esac
+          echo "os=$OS" >> $GITHUB_OUTPUT
+          echo "arch=$ARCH" >> $GITHUB_OUTPUT
+          echo "ext=${EXT:-}" >> $GITHUB_OUTPUT
+
+      - name: Create release archive
+        id: create_archive
+        run: |
+          if [ "${{ github.event_name }}" == "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          OS="${{ steps.os_arch.outputs.os }}"
+          ARCH="${{ steps.os_arch.outputs.arch }}"
+          EXT="${{ steps.os_arch.outputs.ext }}"
+
+          mkdir -p release
+          cp target/${{ matrix.target }}/release/hal release/hal
+          chmod +x release/hal
+
+          if [ -n "$EXT" ]; then
+            ARCHIVE_NAME="hal-${VERSION}-${OS}-${ARCH}-${EXT}.tar.gz"
+          else
+            ARCHIVE_NAME="hal-${VERSION}-${OS}-${ARCH}.tar.gz"
+          fi
+
+          tar -czf "${ARCHIVE_NAME}" -C release hal
+          echo "archive_name=${ARCHIVE_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Upload release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: hal-${{ steps.os_arch.outputs.os }}-${{ steps.os_arch.outputs.arch }}${{ steps.os_arch.outputs.ext && format('-{0}', steps.os_arch.outputs.ext) || '' }}
+          path: ${{ steps.create_archive.outputs.archive_name }}
+          retention-days: 90
+
+  release-docker-image:
+    name: Release Docker Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine version tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./openvpn-container
+          file: ./openvpn-container/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64

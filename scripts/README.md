@@ -1,41 +1,94 @@
-# VPN Firewall Setup Scripts
+# Scripts
 
-## Host-Level Firewall (Required for Network Blocking)
+This directory contains utility scripts for setting up and managing your homelab.
 
-To completely block direct internet access from containers on the `vpn_network`, you must run the host-level firewall script:
+## Installation Scripts
 
+### `install.sh` / `install.ps1`
+
+Downloads and installs the `hal` CLI tool from GitHub releases.
+
+**Usage:**
 ```bash
-sudo ./scripts/setup-vpn-firewall.sh
+# Linux/macOS
+curl -fsSL https://raw.githubusercontent.com/scottdkey/homelab/main/scripts/install.sh | bash
+
+# Windows
+irm https://raw.githubusercontent.com/scottdkey/homelab/main/scripts/install.ps1 | iex
 ```
 
-This script:
-- Blocks all outbound internet traffic from the `vpn_network` subnet
-- Allows access to the VPN container (for proxy access)
-- Allows DNS (port 53) for name resolution
-- Allows local network access (10.x, 172.16-31.x, 192.168.x)
+The scripts automatically:
+- Detect your platform (OS and architecture)
+- Download the correct pre-built binary from GitHub releases
+- Install to `/usr/local/bin` (Linux/macOS) or `~/.local/bin` (Windows)
+- Set up PATH if needed
 
-### What it does:
+## SSH Setup Scripts
 
-1. Creates an iptables chain `DOCKER-VPN-FILTER`
-2. Adds rules to block direct internet access from VPN network
-3. Allows only proxy access through the VPN container
+### `setup-ssh-hosts.sh`
 
-### To remove the firewall rules:
+Configures SSH hosts in `~/.ssh/config` from your `.env` file.
 
+**Usage:**
 ```bash
-VPN_SUBNET=$(docker network inspect vpn_network --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}' | head -1 | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+')
-sudo iptables -D FORWARD -s $VPN_SUBNET ! -d $VPN_SUBNET -j DOCKER-VPN-FILTER
-sudo iptables -F DOCKER-VPN-FILTER
-sudo iptables -X DOCKER-VPN-FILTER
+./scripts/setup-ssh-hosts.sh
 ```
 
-## Container-Level Configuration
+**Configuration in `.env`:**
+```bash
+SSH_MAPLE_HOST="10.10.10.130"
+SSH_MAPLE_USER="skey"
+SSH_MAPLE_PORT="22"
 
-The VPN container also has internal firewall setup, but due to Docker's network architecture, host-level rules are required for complete blocking.
+SSH_BELLEROPHON_HOST="10.10.10.14"
+SSH_BELLEROPHON_USER="scottkey"
+```
 
-## Current Status
+This creates SSH config entries that allow you to connect with:
+```bash
+ssh maple
+ssh bellerophon
+```
 
-- ✅ All containers have `HTTP_PROXY` and `HTTPS_PROXY` environment variables set
-- ✅ Applications that respect these variables will use the proxy
-- ⚠️ Network-level blocking requires running the host script above
-- ⚠️ VPN connection not yet established (TLS handshake issue - separate from proxy)
+### `setup-ssh-keys.sh`
+
+Sets up SSH key authentication on remote hosts. Uses password authentication initially, then enables key-based auth.
+
+**Usage:**
+```bash
+./scripts/setup-ssh-keys.sh <hostname> [username]
+```
+
+**Example:**
+```bash
+./scripts/setup-ssh-keys.sh maple
+```
+
+This will:
+1. Check if SSH key is already installed
+2. If not, prompt for password once
+3. Copy your SSH public key to the remote host
+4. Enable passwordless SSH connections
+
+After running this, you can connect without a password:
+```bash
+ssh maple
+```
+
+## VPN Scripts
+
+### `setup-vpn-firewall.sh`
+
+Sets up firewall rules for VPN containers. See the script for details.
+
+## Running Scripts Remotely
+
+You can also run scripts directly from GitHub:
+
+```bash
+# Setup SSH hosts
+curl -fsSL https://raw.githubusercontent.com/scottdkey/homelab/main/scripts/setup-ssh-hosts.sh | bash
+
+# Setup SSH keys
+curl -fsSL https://raw.githubusercontent.com/scottdkey/homelab/main/scripts/setup-ssh-keys.sh | bash -s maple
+```

@@ -23,9 +23,18 @@ pub struct EnvConfig {
 }
 
 pub fn find_homelab_dir() -> Result<PathBuf> {
+    use crate::config_manager;
+
     // Check for environment variable override
     if let Ok(dir) = env::var("HOMELAB_DIR") {
         return Ok(PathBuf::from(dir));
+    }
+
+    // Check if env file path is configured in hal config
+    if let Some(env_path) = config_manager::get_env_file_path() {
+        if let Some(parent) = env_path.parent() {
+            return Ok(parent.to_path_buf());
+        }
     }
 
     // Try to find .env file in current directory or parent directories
@@ -44,12 +53,30 @@ pub fn find_homelab_dir() -> Result<PathBuf> {
     Ok(env::current_dir()?)
 }
 
-pub fn load_env_config(homelab_dir: &Path) -> Result<EnvConfig> {
-    let env_file = homelab_dir.join(".env");
+pub fn get_env_file_path() -> Result<PathBuf> {
+    use crate::config_manager;
+
+    // Check for environment variable override
+    if let Ok(path) = env::var("HOMELAB_ENV_FILE") {
+        return Ok(PathBuf::from(path));
+    }
+
+    // Check if env file path is configured in hal config
+    if let Some(env_path) = config_manager::get_env_file_path() {
+        return Ok(env_path);
+    }
+
+    // Fallback: try to find .env in homelab directory
+    let homelab_dir = find_homelab_dir()?;
+    Ok(homelab_dir.join(".env"))
+}
+
+pub fn load_env_config(_homelab_dir: &Path) -> Result<EnvConfig> {
+    let env_file = get_env_file_path()?;
 
     if !env_file.exists() {
         anyhow::bail!(
-            "Error: .env file not found at {}\nCopy .env.example to .env and configure your settings.",
+            "Error: .env file not found at {}\n\nRun 'hal config init' to configure the environment file location.\nOr copy .env.example to .env and configure your settings.",
             env_file.display()
         );
     }
