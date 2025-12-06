@@ -161,6 +161,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write # Required for attestations
     # Skip if openvpn-container directory doesn't exist (check in step instead)
     if: always()
 
@@ -171,14 +172,23 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Verify GitHub token permissions
+        run: |
+          echo "Actor: ${{ github.actor }}"
+          echo "Repository: ${{ github.repository }}"
+          echo "Package: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          echo "Token present: $([ -n '${{ github.token }}' ] && echo 'yes' || echo 'no')"
+          # Check if we can access the package
+          echo "Checking package access..."
+          curl -s -H "Authorization: Bearer ${{ github.token }}" \
+            "https://ghcr.io/v2/${{ env.IMAGE_NAME }}/tags/list" || echo "Package may not exist yet or access denied"
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ github.token }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Extract metadata
         id: meta
@@ -204,6 +214,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64,linux/arm64
+          # Disable attestations if they're causing permission issues
+          # provenance: false
+          # sbom: false
 
   build-summary:
     name: Build Summary

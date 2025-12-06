@@ -4,13 +4,20 @@ If you're getting a `403 Forbidden` error when pushing to GHCR, follow these ste
 
 ## Step 1: Grant Repository Access to the Package
 
+**This is the most common cause of 403 errors!**
+
 1. Go to your package page: https://github.com/users/scottdkey/packages/container/pia-vpn
-2. Click **"Package settings"** (on the right sidebar)
-3. Scroll down to **"Manage Actions access"**
-4. Click **"Add repository"**
-5. Select your repository: `scottdkey/homelab`
-6. Set the role to **"Write"**
-7. Click **"Add repository"**
+   - If the package doesn't exist yet, it will be created on first successful push
+   - If you see "This package does not exist", that's fine - it will be created automatically
+   
+2. If the package exists, click **"Package settings"** (on the right sidebar)
+3. Scroll down to **"Manage Actions access"** section
+4. Click **"Add repository"** button
+5. In the dropdown, select your repository: `scottdkey/homelab`
+6. Set the role to **"Write"** (this is critical!)
+7. Click **"Add repository"** to save
+
+**Note**: If you don't see "Package settings", the package may not exist yet. Try running the workflow first - if it still fails with 403, the package was created but needs access granted.
 
 ## Step 2: Verify Repository Workflow Permissions
 
