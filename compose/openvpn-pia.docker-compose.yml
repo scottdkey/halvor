@@ -27,9 +27,12 @@ services:
       # Set UPDATE_CONFIGS=true to download fresh PIA configs on startup
       - UPDATE_CONFIGS=${UPDATE_CONFIGS:-false}
     volumes:
-      # Mount OpenVPN config and auth files from system-wide location
+      # Mount OpenVPN config and auth files from user's home directory
+      # Set USER environment variable to specify which user's home directory to use
+      # Defaults to current user if not set: /home/${USER:-$USER}/config/vpn
+      # Example: USER=testUser -> /home/testUser/config/vpn
       # Note: Remove :ro if using UPDATE_CONFIGS to allow writing downloaded configs
-      - /opt/vpn/openvpn:/config
+      - /home/${USER}/config/vpn:/config
       - openvpn_logs:/var/log/openvpn
     restart: unless-stopped
 

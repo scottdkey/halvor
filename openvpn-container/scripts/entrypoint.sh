@@ -9,9 +9,14 @@ PIA_CONFIG_URL="https://www.privateinternetaccess.com/openvpn/openvpn.zip"
 if [ "${UPDATE_CONFIGS:-false}" = "true" ]; then
     echo "UPDATE_CONFIGS is set - downloading PIA OpenVPN configs..."
     
+    # Ensure /config directory exists and is writable
+    mkdir -p /config
+    chmod 755 /config
+    
     # Check if config directory is writable
     if [ ! -w /config ]; then
         echo "⚠ Warning: /config is not writable, cannot download configs"
+        echo "  Make sure the volume mount is not read-only (:ro)"
     else
         # Create temp directory for download
         TEMP_DIR=$(mktemp -d)
@@ -44,13 +49,31 @@ fi
 
 # Find OpenVPN config file
 OVPN_CONFIG=""
+echo "Checking for OpenVPN config files in /config..."
+echo "Contents of /config:"
+ls -la /config/ 2>&1 || echo "Cannot list /config directory"
+
 if [ -f /config/ca-montreal.ovpn ]; then
     OVPN_CONFIG="/config/ca-montreal.ovpn"
-elif [ -f /config/*.ovpn ]; then
+    echo "Found: $OVPN_CONFIG"
+elif ls /config/*.ovpn 1> /dev/null 2>&1; then
     OVPN_CONFIG=$(ls /config/*.ovpn | head -1)
+    echo "Found: $OVPN_CONFIG"
 else
     echo "⚠ No OpenVPN config file found in /config"
-    echo "Please mount a .ovpn file to /config/"
+    echo ""
+    echo "Debugging information:"
+    echo "  /config exists: $([ -d /config ] && echo 'yes' || echo 'no')"
+    echo "  /config readable: $([ -r /config ] && echo 'yes' || echo 'no')"
+    echo "  /config writable: $([ -w /config ] && echo 'yes' || echo 'no')"
+    echo "  Files in /config:"
+    find /config -type f 2>&1 | head -10 || echo "  Cannot search /config"
+    echo ""
+    echo "Please ensure:"
+    echo "  1. Directory \$HOME/config/vpn exists on the host"
+    echo "  2. Files are present: \$HOME/config/vpn/ca-montreal.ovpn and \$HOME/config/vpn/auth.txt"
+    echo "  3. Docker daemon has access to \$HOME/config/vpn (check volume mount path)"
+    echo "  4. Or set UPDATE_CONFIGS=true to download configs automatically"
     exit 1
 fi
 
@@ -60,6 +83,9 @@ echo "Using OpenVPN config: $OVPN_CONFIG"
 if [ ! -f /config/auth.txt ]; then
     echo "⚠ Warning: /config/auth.txt not found"
     echo "OpenVPN may fail without authentication credentials"
+    echo "Create /config/auth.txt with format:"
+    echo "  Line 1: PIA username"
+    echo "  Line 2: PIA password"
 fi
 
 # Start Privoxy in background first (so it's ready when OpenVPN connects)

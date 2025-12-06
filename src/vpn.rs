@@ -198,8 +198,10 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
 
     // Don't substitute - let docker-compose read from .env file using --env-file
 
-    // Determine username for SSH
+    // Determine username for SSH and VPN config path
     let default_user = crate::config::get_default_username();
+    // Allow VPN_USER to override the username for config path (useful for Portainer)
+    let vpn_user = env::var("VPN_USER").unwrap_or_else(|_| default_user.clone());
     let host_with_user = format!("{}@{}", default_user, target_host);
 
     // Test if key-based auth works
@@ -219,7 +221,12 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
 
     // Check if files already exist - if so, skip deployment
     // Check for both .ovpn and .opvn (typo) variants
-    let check_cmd = r#"test -f /opt/vpn/openvpn/auth.txt && (test -f /opt/vpn/openvpn/ca-montreal.ovpn || test -f /opt/vpn/openvpn/ca-montreal.opvn) && echo 'exists' || echo 'missing'"#;
+    // Use /home/$USER/config/vpn (USER can be set via VPN_USER env var)
+    let vpn_config_dir = format!("/home/{}/config/vpn", vpn_user);
+    let check_cmd = format!(
+        r#"test -f "{}/auth.txt" && (test -f "{}/ca-montreal.ovpn" || test -f "{}/ca-montreal.opvn") && echo 'exists' || echo 'missing'"#,
+        vpn_config_dir, vpn_config_dir, vpn_config_dir
+    );
     let mut check_cmd_exec = Command::new("ssh");
     if use_key_auth {
         check_cmd_exec.args([
@@ -232,7 +239,7 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
             &host_with_user,
             "bash",
             "-c",
-            check_cmd,
+            &check_cmd,
         ]);
     } else {
         check_cmd_exec.args([
@@ -243,7 +250,7 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
             &host_with_user,
             "bash",
             "-c",
-            check_cmd,
+            &check_cmd,
         ]);
     }
     check_cmd_exec.stdout(Stdio::piped());
@@ -279,8 +286,8 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
             anyhow::bail!("OpenVPN config file not found at {}", config_file.display());
         }
 
-        // Copy files using scp, then move to /opt/vpn/openvpn with sudo
-        // First copy to temp location in home directory
+        // Copy files using scp, then move to $HOME/config/vpn
+        // First copy to temp location in home directory, then move to final location
         let mut scp_auth = Command::new("scp");
         if use_key_auth {
             scp_auth.args([
@@ -310,8 +317,11 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
             anyhow::bail!("Failed to copy auth.txt to remote system");
         }
 
-        // Move and set permissions with sudo
-        let move_auth_cmd = r#"sudo mv ~/auth.txt.tmp /opt/vpn/openvpn/auth.txt && sudo chmod 600 /opt/vpn/openvpn/auth.txt"#;
+        // Move and set permissions (no sudo needed in user's home directory)
+        let move_auth_cmd = format!(
+            r#"mkdir -p "/home/{}/config/vpn" && mv ~/auth.txt.tmp "/home/{}/config/vpn/auth.txt" && chmod 600 "/home/{}/config/vpn/auth.txt""#,
+            vpn_user, vpn_user, vpn_user
+        );
         let mut move_auth = Command::new("ssh");
         if use_key_auth {
             move_auth.args([
@@ -324,7 +334,7 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
                 &host_with_user,
                 "bash",
                 "-c",
-                move_auth_cmd,
+                &move_auth_cmd,
             ]);
         } else {
             move_auth.args([
@@ -335,16 +345,14 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
                 &host_with_user,
                 "bash",
                 "-c",
-                move_auth_cmd,
+                &move_auth_cmd,
             ]);
         }
         move_auth.stdout(Stdio::null());
         move_auth.stderr(Stdio::inherit());
         let move_auth_status = move_auth.status()?;
         if !move_auth_status.success() {
-            anyhow::bail!(
-                "Failed to move auth.txt to /opt/vpn/openvpn (sudo may require password)"
-            );
+            anyhow::bail!("Failed to move auth.txt to $HOME/config/vpn");
         }
         println!("✓ Copied auth.txt to remote system");
 
@@ -378,8 +386,11 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
             anyhow::bail!("Failed to copy ca-montreal.ovpn to remote system");
         }
 
-        // Move and set permissions with sudo
-        let move_config_cmd = r#"sudo mv ~/ca-montreal.ovpn.tmp /opt/vpn/openvpn/ca-montreal.ovpn && sudo chmod 644 /opt/vpn/openvpn/ca-montreal.ovpn"#;
+        // Move and set permissions (no sudo needed in user's home directory)
+        let move_config_cmd = format!(
+            r#"mkdir -p "/home/{}/config/vpn" && mv ~/ca-montreal.ovpn.tmp "/home/{}/config/vpn/ca-montreal.ovpn" && chmod 644 "/home/{}/config/vpn/ca-montreal.ovpn""#,
+            vpn_user, vpn_user, vpn_user
+        );
         let mut move_config = Command::new("ssh");
         if use_key_auth {
             move_config.args([
@@ -392,7 +403,7 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
                 &host_with_user,
                 "bash",
                 "-c",
-                move_config_cmd,
+                &move_config_cmd,
             ]);
         } else {
             move_config.args([
@@ -403,16 +414,14 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
                 &host_with_user,
                 "bash",
                 "-c",
-                move_config_cmd,
+                &move_config_cmd,
             ]);
         }
         move_config.stdout(Stdio::null());
         move_config.stderr(Stdio::inherit());
         let move_config_status = move_config.status()?;
         if !move_config_status.success() {
-            anyhow::bail!(
-                "Failed to move ca-montreal.ovpn to /opt/vpn/openvpn (sudo may require password)"
-            );
+            anyhow::bail!("Failed to move ca-montreal.ovpn to $HOME/config/vpn");
         }
         println!("✓ Copied ca-montreal.ovpn to remote system");
     }
@@ -525,8 +534,17 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
     println!("  Files copied:");
     println!("    - ~/vpn/docker-compose.yml (Portainer compose file)");
     println!("    - ~/vpn/.env (PIA credentials)");
-    println!("    - /opt/vpn/openvpn/auth.txt (OpenVPN authentication - system-wide)");
-    println!("    - /opt/vpn/openvpn/ca-montreal.ovpn (OpenVPN configuration - system-wide)");
+    println!(
+        "    - /home/{}/config/vpn/auth.txt (OpenVPN authentication)",
+        vpn_user
+    );
+    println!(
+        "    - /home/{}/config/vpn/ca-montreal.ovpn (OpenVPN configuration)",
+        vpn_user
+    );
+    println!();
+    println!("  Note: Set USER environment variable in Portainer to match the username");
+    println!("        Example: USER={}", vpn_user);
     println!();
     println!("  You can now deploy the VPN manually using Portainer or docker-compose.");
 

@@ -16,9 +16,12 @@ services:
       # Set UPDATE_CONFIGS=true to download fresh PIA configs on startup
       - UPDATE_CONFIGS=${UPDATE_CONFIGS:-false}
     volumes:
-      # Mount OpenVPN config and auth files
-      # Using system-wide location accessible to all users (including Portainer)
-      - /opt/vpn/openvpn:/config:ro
+      # Mount OpenVPN config and auth files from user's home directory
+      # Set USER environment variable to specify which user's home directory to use
+      # Defaults to current user if not set: /home/${USER:-$USER}/config/vpn
+      # Example: USER=testUser -> /home/testUser/config/vpn
+      # If UPDATE_CONFIGS=true, remove :ro to allow downloading configs
+      - /home/${USER}/config/vpn:/config:ro
       - openvpn_logs:/var/log/openvpn
     ports:
       # HTTP proxy port (Privoxy)
