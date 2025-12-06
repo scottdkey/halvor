@@ -3,8 +3,8 @@ services:
     # Combined OpenVPN + Privoxy container
     # Handles VPN connection and provides HTTP proxy
     # For Portainer deployment - uses image from GitHub Container Registry
-    # Set VPN_IMAGE in .env or use default: ghcr.io/scottkey/pia-vpn:latest
-    image: ghcr.io/scottdkey/pia-vpn:latest
+    # Set VPN_IMAGE in .env or use default: ghcr.io/scottdkey/vpn:latest
+    image: ghcr.io/scottdkey/vpn:latest
     container_name: openvpn-pia
     cap_add:
       - NET_ADMIN

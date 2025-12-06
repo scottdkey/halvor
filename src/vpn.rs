@@ -33,7 +33,7 @@ pub fn build_and_push_vpn_image(github_user: &str, image_tag: Option<&str>) -> R
         })
         .unwrap_or_else(|| "unknown".to_string());
 
-    let base_image = format!("ghcr.io/{}/pia-vpn", github_user);
+    let base_image = format!("ghcr.io/{}/vpn", github_user);
     let latest_tag = format!("{}:latest", base_image);
     let hash_tag = format!("{}:{}", base_image, git_hash);
 
@@ -81,7 +81,7 @@ pub fn build_and_push_vpn_image(github_user: &str, image_tag: Option<&str>) -> R
     // Try to verify we can access ghcr.io
     let login_test = Command::new("docker")
         .arg("pull")
-        .arg(format!("ghcr.io/{}/pia-vpn:latest", github_user))
+        .arg(format!("ghcr.io/{}/vpn:latest", github_user))
         .output();
 
     if let Ok(output) = login_test {
@@ -129,7 +129,7 @@ pub fn build_and_push_vpn_image(github_user: &str, image_tag: Option<&str>) -> R
             println!();
             println!("  3. If this is the first push, make sure the repository exists or");
             println!(
-                "     create it at: https://github.com/{}/pia-vpn",
+                "     create it at: https://github.com/users/{}/packages/container/vpn",
                 github_user
             );
             println!();

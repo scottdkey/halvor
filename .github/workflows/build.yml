@@ -23,7 +23,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/pia-vpn
+  IMAGE_NAME: ${{ github.repository_owner }}/vpn
   RUST_VERSION: stable
 
 jobs:
