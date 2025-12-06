@@ -70,12 +70,20 @@ jobs:
             sudo apt-get install -y \
               gcc-aarch64-linux-gnu \
               g++-aarch64-linux-gnu
-            # Set linker for cross-compilation
+            # Set linker and compiler for cross-compilation
             echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+            echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+            echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++" >> $GITHUB_ENV
           fi
 
       - name: Build Rust CLI
         run: |
+          # Unset MACOSX_DEPLOYMENT_TARGET for Linux targets to prevent ring crate issues
+          # The ring crate (used by rustls-tls) can incorrectly detect macOS flags during cross-compilation
+          if [[ "${{ matrix.target }}" != *"apple-darwin"* ]]; then
+            unset MACOSX_DEPLOYMENT_TARGET || true
+            export MACOSX_DEPLOYMENT_TARGET=""
+          fi
           cargo build --release --target ${{ matrix.target }}
 
       - name: Prepare binary name
