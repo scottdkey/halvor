@@ -7,26 +7,14 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=Etc/UTC
+      # Route traffic through pia-vpn (Gluetun HTTP proxy)
+      - HTTP_PROXY=http://pia-vpn:8888
+      - HTTPS_PROXY=http://pia-vpn:8888
     volumes:
       - sabnzbd_data:/config
       - ${DOWNLOADS_PATH}:/downloads #optional
     ports:
       - 8080:8080
-    networks:
-      - vpn_network
-    restart: unless-stopped
-  transmission:
-    image: lscr.io/linuxserver/transmission:latest
-    container_name: transmission
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Etc/UTC
-    volumes:
-      - transmission_data:/config
-      - ${DOWNLOADS_PATH}:/downloads #optional
-    ports:
-      - 9091:9091
     networks:
       - vpn_network
     restart: unless-stopped
@@ -37,48 +25,16 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=Etc/UTC
+      # Route traffic through pia-vpn (Gluetun HTTP proxy)
+      - HTTP_PROXY=http://pia-vpn:8888
+      - HTTPS_PROXY=http://pia-vpn:8888
     volumes:
       - qbittorrent_data:/config
       - ${DOWNLOADS_PATH}:/downloads #optional
     ports:
-      - 8080:8080
+      - 8081:8080
     networks:
       - vpn_network
-    restart: unless-stopped
-  deluge:
-    image: lscr.io/linuxserver/deluge:latest
-    container_name: deluge
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Etc/UTC
-    volumes:
-      - deluge_data:/config
-      - ${DOWNLOADS_PATH}:/downloads #optional
-    ports:
-      - 8112:8112
-    networks:
-      - vpn_network
-    restart: unless-stopped
-  sonarr:
-    image: lscr.io/linuxserver/sonarr:latest
-    container_name: sonarr
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Etc/UTC
-      # Route traffic through gluetun VPN
-      - HTTP_PROXY=http://gluetun:8888
-      - HTTPS_PROXY=http://gluetun:8888
-    volumes:
-      - sonarr_data:/config
-      - ${TV_PATH}:/media/tv #optional
-      - ${DOWNLOADS_PATH}:/downloads #optional
-    ports:
-      - 8989:8989
-    networks:
-      - vpn_network
-    restart: unless-stopped
   radarr:
     image: lscr.io/linuxserver/radarr:latest
     container_name: radarr
@@ -86,9 +42,9 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=Etc/UTC
-      # Route traffic through gluetun VPN
-      - HTTP_PROXY=http://gluetun:8888
-      - HTTPS_PROXY=http://gluetun:8888
+      # Route traffic through pia-vpn (Gluetun HTTP proxy)
+      - HTTP_PROXY=http://pia-vpn:8888
+      - HTTPS_PROXY=http://pia-vpn:8888
     volumes:
       - radarr_data:/config
       - ${MOVIES_PATH}:/media/movies #optional
@@ -105,12 +61,12 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=Etc/UTC
-      # Route traffic through gluetun VPN
-      - HTTP_PROXY=http://gluetun:8888
-      - HTTPS_PROXY=http://gluetun:8888
+      # Route traffic through pia-vpn (Gluetun HTTP proxy)
+      - HTTP_PROXY=http://pia-vpn:8888
+      - HTTPS_PROXY=http://pia-vpn:8888
     volumes:
       - radarr_4k_data:/config
-      - ${4K_MOVIES_PATH}:/media/movies #optional
+      - ${MOVIES_4K_PATH}:/media/movies #optional
       - ${DOWNLOADS_PATH}:/downloads #optional
     ports:
       - 7879:7878
@@ -124,9 +80,9 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=Etc/UTC
-      # Route traffic through gluetun VPN
-      - HTTP_PROXY=http://gluetun:8888
-      - HTTPS_PROXY=http://gluetun:8888
+      # Route traffic through pia-vpn (Gluetun HTTP proxy)
+      - HTTP_PROXY=http://pia-vpn:8888
+      - HTTPS_PROXY=http://pia-vpn:8888
     volumes:
       - prowlarr_data:/config
     ports:
@@ -141,14 +97,14 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=Etc/UTC
-      # Route traffic through gluetun VPN
-      - HTTP_PROXY=http://gluetun:8888
-      - HTTPS_PROXY=http://gluetun:8888
+      # Route traffic through pia-vpn (Gluetun HTTP proxy)
+      - HTTP_PROXY=http://pia-vpn:8888
+      - HTTPS_PROXY=http://pia-vpn:8888
     volumes:
       - bazarr_data:/config
       - ${MOVIES_PATH}:/media/movies #optional
       - ${TV_PATH}:/media/tv #optional
-      - ${4K_PATH}:/media/4k #optional
+      - ${MOVIES_4K_PATH}:/media/4k #optional
       - ${DOWNLOADS_PATH}:/downloads #optional
       - ${MUSIC_PATH}:/media/music #optional
     ports:
@@ -168,6 +124,10 @@ volumes:
     name: prowlarr_data
   bazarr_data:
     name: bazarr_data
+  qbittorrent_data:
+    name: qbittorrent_data
+  sabnzbd_data:
+    name: sabnzbd_data
 
 networks:
   vpn_network:

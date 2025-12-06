@@ -13,3 +13,11 @@ Thumbs.db
 /target/
 **/*.rs.bk
 Cargo.lock
+
+# Test directories
+tmp/
+
+# Secrets - OpenVPN configs and credentials (never commit these!)
+.secrets/
+openvpn/
+vpn-container/openvpn/

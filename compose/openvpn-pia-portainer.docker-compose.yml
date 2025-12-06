@@ -1,0 +1,38 @@
+services:
+  openvpn-pia:
+    # Combined OpenVPN + Privoxy container
+    # Handles VPN connection and provides HTTP proxy
+    # For Portainer deployment - uses image from GitHub Container Registry
+    # Set VPN_IMAGE in .env or use default: ghcr.io/scottkey/pia-vpn:latest
+    image: ${VPN_IMAGE:-ghcr.io/scottdkey/pia-vpn:latest}
+    container_name: openvpn-pia
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - TZ=Etc/UTC
+      # Set UPDATE_CONFIGS=true to download fresh PIA configs on startup
+      - UPDATE_CONFIGS=${UPDATE_CONFIGS:-false}
+    volumes:
+      # Mount OpenVPN config and auth files
+      # For deployment, uses bind mount to ~/vpn/openvpn
+      # For manual setup, adjust the path as needed
+      - ~/vpn/openvpn:/config:ro
+      - openvpn_logs:/var/log/openvpn
+    ports:
+      # HTTP proxy port (Privoxy)
+      - "8888:8888/tcp"
+    networks:
+      - vpn_network
+    restart: unless-stopped
+
+volumes:
+  openvpn_logs:
+    name: openvpn_logs
+
+networks:
+  vpn_network:
+    name: vpn_network
+    external: true

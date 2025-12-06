@@ -5,6 +5,7 @@ mod provision;
 mod smb;
 mod ssh;
 mod tailscale;
+mod vpn;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -75,12 +76,35 @@ enum Commands {
         #[arg(long)]
         service: Option<String>,
     },
+    /// Build and push VPN container image to GitHub Container Registry
+    Vpn {
+        #[command(subcommand)]
+        command: VpnCommands,
+    },
 }
 
 #[derive(Subcommand)]
 enum TailscaleCommands {
     /// Install Tailscale
     Install,
+}
+
+#[derive(Subcommand)]
+enum VpnCommands {
+    /// Build and push VPN container image to GitHub Container Registry
+    Build {
+        /// GitHub username or organization
+        #[arg(long)]
+        github_user: String,
+        /// Image tag (if not provided, pushes both 'latest' and git hash)
+        #[arg(long)]
+        tag: Option<String>,
+    },
+    /// Deploy VPN to a remote host (injects PIA credentials from local .env)
+    Deploy {
+        /// Hostname to deploy VPN to
+        hostname: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -167,6 +191,16 @@ fn main() -> Result<()> {
                 anyhow::bail!("Either --service or compose_file must be provided");
             }
         }
+        Commands::Vpn { command } => match command {
+            VpnCommands::Build { github_user, tag } => {
+                vpn::build_and_push_vpn_image(&github_user, tag.as_deref())?;
+            }
+            VpnCommands::Deploy { hostname } => {
+                let homelab_dir = config::find_homelab_dir()?;
+                let config = config::load_env_config(&homelab_dir)?;
+                vpn::deploy_vpn(&hostname, &config)?;
+            }
+        },
     }
 
     Ok(())
