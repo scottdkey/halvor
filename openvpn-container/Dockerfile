@@ -1,7 +1,9 @@
-FROM alpine:latest
+FROM alpine:3.19
 
-# Update package index and install OpenVPN, Privoxy and required tools
-RUN apk update && apk add --no-cache \
+# Install OpenVPN, Privoxy and required tools
+# Using --update to refresh package index, with retry for multi-platform builds
+RUN apk update --no-cache || apk update --no-cache && \
+    apk add --no-cache \
     openvpn \
     privoxy \
     curl \
