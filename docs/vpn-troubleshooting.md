@@ -11,7 +11,7 @@ If you're seeing this error when deploying the VPN container via Portainer, chec
 In Portainer:
 1. Go to your stack
 2. Click "Editor" or "Environment"
-3. Add environment variable: `USER=testUser` (replace with your actual username)
+3. Add environment variable: `USER=<your-username>` (replace with your actual username)
 4. Redeploy the stack
 
 ### 2. Verify Files Exist on Host

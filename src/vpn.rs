@@ -201,6 +201,7 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
     // Determine username for SSH and VPN config path
     let default_user = crate::config::get_default_username();
     // Allow VPN_USER to override the username for config path (useful for Portainer)
+    // If not set, uses the SSH user (default_user)
     let vpn_user = env::var("VPN_USER").unwrap_or_else(|_| default_user.clone());
     let host_with_user = format!("{}@{}", default_user, target_host);
 
