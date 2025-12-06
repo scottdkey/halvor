@@ -26,10 +26,10 @@ services:
       - "8888:8888/tcp"
       # SOCKS5 proxy (optional)
       - "8388:8388/tcp"
-      # Port forwarding (if enabled)
-      - "8000:8000/tcp"
-      - "8001:8001/tcp"
-      - "8002:8002/tcp"
+      # Port forwarding (if enabled) - remapped to avoid conflicts
+      - "18000:8000/tcp"
+      - "18001:8001/tcp"
+      - "18002:8002/tcp"
     networks:
       - vpn_network
     restart: unless-stopped
