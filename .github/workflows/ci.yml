@@ -385,7 +385,7 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   manual-approval-production:
-    name: Manual Approval (Production Release)
+    name: Production Release
     runs-on: ubuntu-latest
     needs:
       [
