@@ -221,7 +221,6 @@ openvpn \
     --daemon \
     --log /var/log/openvpn/openvpn.log \
     --mssfix 1450 \
-    --fragment 1450 \
     --sndbuf 393216 \
     --rcvbuf 393216 \
     --verb 3
