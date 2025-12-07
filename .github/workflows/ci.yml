@@ -360,13 +360,44 @@ jobs:
             echo "version=" >> $GITHUB_OUTPUT
           fi
 
-  manual-approval-alpha-beta:
-    name: Manual Approval (Alpha/Beta)
+  approval-to-build:
+    name: Approval to Build
+    runs-on: ubuntu-latest
+    needs: [check-skip-ci, check-changes]
+    if: |
+      always() &&
+      needs.check-skip-ci.outputs.skip != 'true' &&
+      (needs.check-changes.outputs.branch_type == 'alpha' || 
+       needs.check-changes.outputs.branch_type == 'beta' || 
+       needs.check-changes.outputs.branch_type == 'production')
+    environment:
+      name: ${{ needs.check-changes.outputs.branch_type }}-build-approval
+    steps:
+      - name: Request approval to build
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Approval Required: Build ${{ needs.check-changes.outputs.branch_type }}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "Branch: ${{ needs.check-changes.outputs.branch_type }}"
+          echo "Changes detected:"
+          echo "  - Source files: ${{ needs.check-changes.outputs.src }}"
+          echo "  - Docker files: ${{ needs.check-changes.outputs.docker }}"
+          echo ""
+          echo "Approving this will trigger builds for:"
+          echo "  - Rust CLI (Linux, macOS, Windows)"
+          echo "  - Docker image"
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  approval-to-version:
+    name: Approval to Version
     runs-on: ubuntu-latest
     needs:
       [
         check-skip-ci,
         check-changes,
+        approval-to-build,
         build-rust-cli-linux,
         build-rust-cli-macos,
         build-rust-cli-windows,
@@ -375,39 +406,53 @@ jobs:
     if: |
       always() &&
       needs.check-skip-ci.outputs.skip != 'true' &&
-      (needs.check-changes.outputs.branch_type == 'alpha' || needs.check-changes.outputs.branch_type == 'beta') &&
+      needs.approval-to-build.result == 'success' &&
+      (needs.check-changes.outputs.branch_type == 'alpha' || 
+       needs.check-changes.outputs.branch_type == 'beta' || 
+       needs.check-changes.outputs.branch_type == 'production') &&
       (needs.build-rust-cli-linux.result == 'success' || needs.build-rust-cli-linux.result == 'skipped') &&
       (needs.build-rust-cli-macos.result == 'success' || needs.build-rust-cli-macos.result == 'skipped') &&
       (needs.build-rust-cli-windows.result == 'success' || needs.build-rust-cli-windows.result == 'skipped') &&
       (needs.build-docker-image.result == 'success' || needs.build-docker-image.result == 'skipped')
     environment:
-      name: ${{ needs.check-changes.outputs.branch_type }}-approval
+      name: ${{ needs.check-changes.outputs.branch_type }}-version-approval
     steps:
-      - name: Request approval
+      - name: Request approval to version
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  Manual Approval Required: ${{ needs.check-changes.outputs.branch_type }} Release"
+          echo "  Approval Required: Version Increment"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo ""
-          echo "All builds completed successfully for ${{ needs.check-changes.outputs.branch_type }} branch."
-          echo "Please review the build artifacts and approve to continue with the pre-release."
-          echo ""
-          echo "This will create a pre-release version (e.g., 0.0.6-${{ needs.check-changes.outputs.branch_type }}.1)"
+          echo "Branch: ${{ needs.check-changes.outputs.branch_type }}"
           echo ""
           echo "Build results:"
           echo "  - Rust CLI (Linux): ${{ needs.build-rust-cli-linux.result }}"
           echo "  - Rust CLI (macOS): ${{ needs.build-rust-cli-macos.result }}"
           echo "  - Rust CLI (Windows): ${{ needs.build-rust-cli-windows.result }}"
           echo "  - Docker image: ${{ needs.build-docker-image.result }}"
+          echo ""
+          if [ "${{ needs.check-changes.outputs.branch_type }}" == "production" ]; then
+            if [ "${{ needs.check-changes.outputs.major_minor_changed }}" == "true" ]; then
+              echo "⚠ Major or minor version changed - patch will NOT be auto-incremented"
+            else
+              echo "✓ Patch version will be auto-incremented (e.g., 0.0.6 -> 0.0.7)"
+            fi
+          else
+            echo "✓ Pre-release version will be created (e.g., 0.0.6-${{ needs.check-changes.outputs.branch_type }}.1)"
+          fi
+          echo ""
+          echo "Approving this will increment/update the version and commit it."
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-  manual-approval-production:
-    name: Production Release
+  approval-to-release:
+    name: Approval to Release
     runs-on: ubuntu-latest
     needs:
       [
         check-skip-ci,
         check-changes,
+        approval-to-build,
+        approval-to-version,
         build-rust-cli-linux,
         build-rust-cli-macos,
         build-rust-cli-windows,
@@ -416,31 +461,47 @@ jobs:
     if: |
       always() &&
       needs.check-skip-ci.outputs.skip != 'true' &&
-      needs.check-changes.outputs.branch_type == 'production' &&
-      github.event_name == 'push' &&
+      needs.approval-to-build.result == 'success' &&
+      needs.approval-to-version.result == 'success' &&
+      (needs.check-changes.outputs.branch_type == 'alpha' || 
+       needs.check-changes.outputs.branch_type == 'beta' || 
+       needs.check-changes.outputs.branch_type == 'production') &&
       (needs.build-rust-cli-linux.result == 'success' || needs.build-rust-cli-linux.result == 'skipped') &&
       (needs.build-rust-cli-macos.result == 'success' || needs.build-rust-cli-macos.result == 'skipped') &&
       (needs.build-rust-cli-windows.result == 'success' || needs.build-rust-cli-windows.result == 'skipped') &&
       (needs.build-docker-image.result == 'success' || needs.build-docker-image.result == 'skipped')
-    environment: ${{ needs.check-changes.outputs.branch_type }}-release
+    environment:
+      name: ${{ needs.check-changes.outputs.branch_type }}-release-approval
     steps:
-      - name: Request approval
+      - name: Request approval to release
         run: |
-          echo "All builds completed successfully"
-          echo "Waiting for manual approval to increment version and create release..."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Approval Required: Create Release"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "Branch: ${{ needs.check-changes.outputs.branch_type }}"
+          echo ""
+          echo "All approvals completed:"
+          echo "  ✓ Build approval"
+          echo "  ✓ Version approval"
+          echo ""
+          echo "Approving this will:"
+          echo "  - Create a GitHub release"
+          echo "  - Upload all build artifacts"
+          echo "  - Tag the release"
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   build-rust-cli-linux:
     name: Build CLI (Linux)
     runs-on: ubuntu-latest
-    needs: [check-changes, prepare-release]
-    # Build on PRs, manual dispatch, when src files change, or on alpha/beta/main branches
+    needs: [check-changes, prepare-release, approval-to-build]
+    # Build on PRs, manual dispatch, or after approval-to-build
     # Skip if only release_docker is selected
     if: |
       github.event_name == 'pull_request' ||
       (github.event_name == 'workflow_dispatch' && inputs.release_docker != 'true' && (inputs.build_cli_linux == true || inputs.release == true)) ||
-      (needs.check-changes.result == 'success' && needs.check-changes.outputs.src == 'true' && github.event.inputs.release_docker != 'true') ||
-      (needs.check-changes.result == 'success' && (needs.check-changes.outputs.branch_type == 'alpha' || needs.check-changes.outputs.branch_type == 'beta' || needs.check-changes.outputs.branch_type == 'production')) ||
-      (needs.prepare-release.result == 'success' && needs.prepare-release.outputs.should_release == 'true' && github.event.inputs.release_docker != 'true')
+      (needs.approval-to-build.result == 'success' && github.event.inputs.release_docker != 'true')
     permissions:
       contents: read
       actions: write
@@ -528,15 +589,13 @@ jobs:
   build-rust-cli-macos:
     name: Build CLI (macOS)
     runs-on: macos-14
-    needs: [check-changes, prepare-release]
-    # Build on PRs, manual dispatch, when src files change, or on alpha/beta/main branches
+    needs: [check-changes, prepare-release, approval-to-build]
+    # Build on PRs, manual dispatch, or after approval-to-build
     # Skip if only release_docker is selected
     if: |
       github.event_name == 'pull_request' ||
       (github.event_name == 'workflow_dispatch' && inputs.release_docker != 'true' && (inputs.build_cli_macos == true || inputs.release == true)) ||
-      (needs.check-changes.result == 'success' && needs.check-changes.outputs.src == 'true' && github.event.inputs.release_docker != 'true') ||
-      (needs.check-changes.result == 'success' && (needs.check-changes.outputs.branch_type == 'alpha' || needs.check-changes.outputs.branch_type == 'beta' || needs.check-changes.outputs.branch_type == 'production')) ||
-      (needs.prepare-release.result == 'success' && needs.prepare-release.outputs.should_release == 'true' && github.event.inputs.release_docker != 'true')
+      (needs.approval-to-build.result == 'success' && github.event.inputs.release_docker != 'true')
     permissions:
       contents: read
       actions: write
@@ -585,15 +644,13 @@ jobs:
   build-rust-cli-windows:
     name: Build CLI (Windows)
     runs-on: windows-latest
-    needs: [check-changes, prepare-release]
-    # Build on PRs, manual dispatch, when src files change, or on alpha/beta/main branches
+    needs: [check-changes, prepare-release, approval-to-build]
+    # Build on PRs, manual dispatch, or after approval-to-build
     # Skip if only release_docker is selected
     if: |
       github.event_name == 'pull_request' ||
       (github.event_name == 'workflow_dispatch' && inputs.release_docker != 'true' && (inputs.build_cli_windows == true || inputs.release == true)) ||
-      (needs.check-changes.result == 'success' && needs.check-changes.outputs.src == 'true' && github.event.inputs.release_docker != 'true') ||
-      (needs.check-changes.result == 'success' && (needs.check-changes.outputs.branch_type == 'alpha' || needs.check-changes.outputs.branch_type == 'beta' || needs.check-changes.outputs.branch_type == 'production')) ||
-      (needs.prepare-release.result == 'success' && needs.prepare-release.outputs.should_release == 'true' && github.event.inputs.release_docker != 'true')
+      (needs.approval-to-build.result == 'success' && github.event.inputs.release_docker != 'true')
     permissions:
       contents: read
       actions: write
@@ -646,26 +703,25 @@ jobs:
       [
         check-changes,
         prepare-release,
+        approval-to-build,
+        approval-to-version,
+        approval-to-release,
         build-rust-cli-linux,
         build-rust-cli-macos,
         build-rust-cli-windows,
         build-docker-image,
-        manual-approval-production,
-        manual-approval-alpha-beta,
       ]
     # Skip create-release if only release_docker is selected (Docker is released separately)
-    # For production: require manual approval (should_release may be false initially, but we create release after approval)
-    # For alpha/beta: require manual approval and should_release must be true
-    # For workflow_dispatch: no approval needed, should_release must be true
+    # Requires all three approvals: build, version, and release
     if: |
       github.event.inputs.release_docker != 'true' &&
+      needs.approval-to-build.result == 'success' &&
+      needs.approval-to-version.result == 'success' &&
+      needs.approval-to-release.result == 'success' &&
       (needs.build-rust-cli-linux.result == 'success' || needs.build-rust-cli-linux.result == 'skipped') &&
       (needs.build-rust-cli-macos.result == 'success' || needs.build-rust-cli-macos.result == 'skipped') &&
       (needs.build-rust-cli-windows.result == 'success' || needs.build-rust-cli-windows.result == 'skipped') &&
-      (needs.build-docker-image.result == 'success' || needs.build-docker-image.result == 'skipped') &&
-      ((needs.check-changes.outputs.branch_type == 'production' && (needs.manual-approval-production.result == 'success' || github.event_name == 'workflow_dispatch')) ||
-       ((needs.check-changes.outputs.branch_type == 'alpha' || needs.check-changes.outputs.branch_type == 'beta') && needs.prepare-release.outputs.should_release == 'true' && (needs.manual-approval-alpha-beta.result == 'success' || github.event_name == 'workflow_dispatch')) ||
-       (github.event_name == 'workflow_dispatch' && needs.prepare-release.outputs.should_release == 'true'))
+      (needs.build-docker-image.result == 'success' || needs.build-docker-image.result == 'skipped')
     permissions:
       contents: write
       actions: read
@@ -683,8 +739,9 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
 
-      - name: Increment version (main branch - after approval)
+      - name: Increment version (after approval)
         if: |
+          needs.approval-to-version.result == 'success' &&
           needs.check-changes.outputs.branch_type == 'production' &&
           needs.check-changes.outputs.major_minor_changed != 'true'
         id: increment_after_approval
@@ -711,7 +768,7 @@ jobs:
             sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" Cargo.toml
             git add Cargo.toml
             git commit -m "chore: auto-increment patch version to $NEW_VERSION [skip ci]"
-            git push origin HEAD:main
+            git push origin HEAD:${{ github.ref_name }}
             
             echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
             echo "should_increment=true" >> $GITHUB_OUTPUT
@@ -891,15 +948,13 @@ jobs:
     name: Build and Push pia-vpn Image
     runs-on: ubuntu-latest
     # When release_docker is selected, run independently
-    # Otherwise, depend on check-changes and prepare-release (but they may be skipped)
-    needs: [check-changes, prepare-release]
+    # Otherwise, depend on check-changes, prepare-release, and approval-to-build
+    needs: [check-changes, prepare-release, approval-to-build]
     if: |
       always() && (
         github.event.inputs.release_docker == 'true' ||
         (github.event_name == 'pull_request' && (needs.check-changes.result == 'success' || needs.check-changes.result == 'skipped')) ||
-        (needs.check-changes.result == 'success' && needs.check-changes.outputs.docker == 'true' && github.event.inputs.release_docker != 'true') ||
-        (needs.check-changes.result == 'success' && (needs.check-changes.outputs.branch_type == 'alpha' || needs.check-changes.outputs.branch_type == 'beta' || needs.check-changes.outputs.branch_type == 'production')) ||
-        (needs.prepare-release.result == 'success' && needs.prepare-release.outputs.should_release == 'true' && github.event.inputs.release_docker != 'true')
+        (needs.approval-to-build.result == 'success' && github.event.inputs.release_docker != 'true')
       )
     permissions:
       contents: read
