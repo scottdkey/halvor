@@ -27,7 +27,8 @@ RUN echo "listen-address 0.0.0.0:8888" >> /etc/privoxy/config && \
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY scripts/tail-logs.sh /usr/local/bin/tail-logs.sh
 COPY scripts/check-proxy.sh /usr/local/bin/check-proxy.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/tail-logs.sh /usr/local/bin/check-proxy.sh
+COPY scripts/test-vpn.sh /usr/local/bin/test-vpn.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/tail-logs.sh /usr/local/bin/check-proxy.sh /usr/local/bin/test-vpn.sh
 
 # Expose OpenVPN port and Privoxy HTTP proxy port
 EXPOSE 1194/udp 8888/tcp

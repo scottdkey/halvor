@@ -241,6 +241,18 @@ if ! grep -q "Initialization Sequence Completed" /var/log/openvpn/openvpn.log 2>
     echo "⚠ OpenVPN may not have completed initialization"
     echo "Recent logs:"
     tail -20 /var/log/openvpn/openvpn.log || true
+else
+    echo "✓ OpenVPN initialization completed"
+    # Wait a moment for routes to stabilize
+    sleep 2
+    # Run quick connectivity test
+    echo "Running connectivity test..."
+    if curl -s --max-time 5 https://api.ipify.org >/dev/null 2>&1; then
+        VPN_PUBLIC_IP=$(curl -s --max-time 5 https://api.ipify.org)
+        echo "✓ VPN connectivity verified - Public IP: $VPN_PUBLIC_IP"
+    else
+        echo "⚠ VPN connectivity test failed (may need more time)"
+    fi
 fi
 
 echo "✓ OpenVPN started (PID: $OPENVPN_PID)"
