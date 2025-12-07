@@ -1,10 +1,16 @@
-use crate::config::EnvConfig;
-use crate::exec::SshConnection;
+use crate::exec::{CommandExecutor, Executor};
+use crate::{config::EnvConfig, docker};
 use anyhow::{Context, Result};
 use std::time::SystemTime;
 
 // New host-level backup functions
 pub fn backup_host(hostname: &str, config: &EnvConfig) -> Result<()> {
+    // Create executor - it automatically determines if execution should be local or remote
+    let exec = Executor::new(hostname, config)?;
+    let target_host = exec.target_host(hostname, config)?;
+    let is_local = exec.is_local();
+
+    // Get backup path from config (required)
     let host_config = config.hosts.get(hostname).with_context(|| {
         format!(
             "Host '{}' not found in .env\n\nAdd configuration to .env:\n  HOST_{}_IP=\"<ip-address>\"\n  HOST_{}_TAILSCALE=\"<tailscale-hostname>\"",
@@ -14,15 +20,6 @@ pub fn backup_host(hostname: &str, config: &EnvConfig) -> Result<()> {
         )
     })?;
 
-    let target_host = if let Some(ip) = &host_config.ip {
-        ip.clone()
-    } else if let Some(tailscale) = &host_config.tailscale {
-        tailscale.clone()
-    } else {
-        anyhow::bail!("No IP or Tailscale hostname configured for {}", hostname);
-    };
-
-    // Get backup path from config (required)
     let backup_base = host_config.backup_path.as_ref().with_context(|| {
         format!(
             "Backup path not configured for {}\n\nAdd to .env:\n  HOST_{}_BACKUP_PATH=\"/path/to/backups/{}\"",
@@ -32,17 +29,17 @@ pub fn backup_host(hostname: &str, config: &EnvConfig) -> Result<()> {
         )
     })?;
 
-    println!(
-        "Backing up all Docker volumes on {} ({})...",
-        hostname, target_host
-    );
+    if is_local {
+        println!("Backing up all Docker volumes locally on {}...", hostname);
+    } else {
+        println!(
+            "Backing up all Docker volumes on {} ({})...",
+            hostname, target_host
+        );
+    }
     println!();
 
-    let default_user = crate::config::get_default_username();
-    let host_with_user = format!("{}@{}", default_user, target_host);
-    let ssh_conn = SshConnection::new(&host_with_user)?;
-
-    perform_backup(&ssh_conn, hostname, backup_base)?;
+    perform_backup(&exec, hostname, backup_base)?;
 
     println!();
     println!("✓ Backup complete for {}", hostname);
@@ -51,20 +48,17 @@ pub fn backup_host(hostname: &str, config: &EnvConfig) -> Result<()> {
 }
 
 pub fn list_backups(hostname: &str, config: &EnvConfig) -> Result<()> {
+    // Create executor - it automatically determines if execution should be local or remote
+    let exec = Executor::new(hostname, config)?;
+    let target_host = exec.target_host(hostname, config)?;
+    let is_local = exec.is_local();
+
+    // Get backup path from config (required)
     let host_config = config
         .hosts
         .get(hostname)
         .with_context(|| format!("Host '{}' not found in .env", hostname))?;
 
-    let target_host = if let Some(ip) = &host_config.ip {
-        ip.clone()
-    } else if let Some(tailscale) = &host_config.tailscale {
-        tailscale.clone()
-    } else {
-        anyhow::bail!("No IP or Tailscale hostname configured for {}", hostname);
-    };
-
-    // Get backup path from config (required)
     let backup_base = host_config.backup_path.as_ref().with_context(|| {
         format!(
             "Backup path not configured for {}\n\nAdd to .env:\n  HOST_{}_BACKUP_PATH=\"/path/to/backups/{}\"",
@@ -74,33 +68,30 @@ pub fn list_backups(hostname: &str, config: &EnvConfig) -> Result<()> {
         )
     })?;
 
-    println!("Listing backups for {} ({})...", hostname, target_host);
+    if is_local {
+        println!("Listing backups locally for {}...", hostname);
+    } else {
+        println!("Listing backups for {} ({})...", hostname, target_host);
+    }
     println!();
 
-    let default_user = crate::config::get_default_username();
-    let host_with_user = format!("{}@{}", default_user, target_host);
-    let ssh_conn = SshConnection::new(&host_with_user)?;
-
-    list_backup_directories(&ssh_conn, backup_base)?;
+    list_backup_directories(&exec, backup_base)?;
 
     Ok(())
 }
 
 pub fn restore_host(hostname: &str, backup_name: Option<&str>, config: &EnvConfig) -> Result<()> {
+    // Create executor - it automatically determines if execution should be local or remote
+    let exec = Executor::new(hostname, config)?;
+    let _target_host = exec.target_host(hostname, config)?;
+    let _is_local = exec.is_local();
+
+    // Get backup path from config (required)
     let host_config = config
         .hosts
         .get(hostname)
         .with_context(|| format!("Host '{}' not found in .env", hostname))?;
 
-    let target_host = if let Some(ip) = &host_config.ip {
-        ip.clone()
-    } else if let Some(tailscale) = &host_config.tailscale {
-        tailscale.clone()
-    } else {
-        anyhow::bail!("No IP or Tailscale hostname configured for {}", hostname);
-    };
-
-    // Get backup path from config (required)
     let backup_base = host_config.backup_path.as_ref().with_context(|| {
         format!(
             "Backup path not configured for {}\n\nAdd to .env:\n  HOST_{}_BACKUP_PATH=\"/path/to/backups/{}\"",
@@ -114,11 +105,7 @@ pub fn restore_host(hostname: &str, backup_name: Option<&str>, config: &EnvConfi
         println!("Restoring {} from backup '{}'...", hostname, backup);
         println!();
 
-        let default_user = crate::config::get_default_username();
-        let host_with_user = format!("{}@{}", default_user, target_host);
-        let ssh_conn = SshConnection::new(&host_with_user)?;
-
-        perform_restore(&ssh_conn, hostname, backup_base, backup)?;
+        perform_restore(&exec, hostname, backup_base, backup)?;
 
         println!();
         println!("✓ Restore complete for {}", hostname);
@@ -137,7 +124,7 @@ pub fn restore_host(hostname: &str, backup_name: Option<&str>, config: &EnvConfi
     Ok(())
 }
 
-fn perform_backup(ssh_conn: &SshConnection, hostname: &str, backup_base: &str) -> Result<()> {
+fn perform_backup<E: CommandExecutor>(exec: &E, hostname: &str, backup_base: &str) -> Result<()> {
     let datetime = chrono::DateTime::<chrono::Utc>::from(SystemTime::now());
     let timestamp_str = datetime.format("%Y%m%d_%H%M%S").to_string();
     let backup_dir = format!("{}/{}", backup_base, timestamp_str);
@@ -150,7 +137,7 @@ fn perform_backup(ssh_conn: &SshConnection, hostname: &str, backup_base: &str) -
     // Check if backup base directory exists (parent of backup_base)
     if let Some(parent) = std::path::Path::new(backup_base).parent() {
         let parent_str = parent.to_string_lossy();
-        let check_mount = ssh_conn.execute_simple("test", &["-d", &parent_str])?;
+        let check_mount = exec.execute_simple("test", &["-d", &parent_str])?;
         if !check_mount.status.success() {
             anyhow::bail!(
                 "Error: Backup base directory {} does not exist or is not mounted\nMake sure SMB mount is set up: hal smb {} setup",
@@ -161,45 +148,26 @@ fn perform_backup(ssh_conn: &SshConnection, hostname: &str, backup_base: &str) -
     }
 
     // Create backup base directory if it doesn't exist
-    let dir_exists = ssh_conn.execute_simple("test", &["-d", backup_base])?;
+    let dir_exists = exec.execute_simple("test", &["-d", backup_base])?;
     if !dir_exists.status.success() {
         println!("Creating backup base directory: {}", backup_base);
-        ssh_conn.mkdir_p(backup_base)?;
+        exec.mkdir_p(backup_base)?;
         println!("✓ Created backup base directory");
     }
 
     // Create backup directory
-    ssh_conn.mkdir_p(&backup_dir)?;
+    exec.mkdir_p(&backup_dir)?;
     println!("✓ Created backup directory: {}", backup_dir);
 
     println!();
     println!("=== Stopping all containers ===");
 
-    // Get running containers
-    let running_output = ssh_conn.execute_simple("docker", &["ps", "-q"])?;
-    let running_containers = String::from_utf8_lossy(&running_output.stdout);
-    let running_containers: Vec<&str> = running_containers
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .collect();
-
+    let running_containers = docker::stop_all_containers(exec)?;
     if !running_containers.is_empty() {
         println!(
-            "Stopping {} running container(s)...",
+            "Stopped {} running container(s)...",
             running_containers.len()
         );
-        let stop_cmd = format!("docker stop {}", running_containers.join(" "));
-        let stop_output = ssh_conn.execute_shell(&stop_cmd)?;
-        if !stop_output.status.success() {
-            // Try with sudo
-            let sudo_stop = ssh_conn.execute_shell(&format!(
-                "sudo docker stop {}",
-                running_containers.join(" ")
-            ))?;
-            if !sudo_stop.status.success() {
-                eprintln!("⚠ Warning: Some containers may not have stopped");
-            }
-        }
         println!("✓ All containers stopped");
     } else {
         println!("✓ No running containers to stop");
@@ -209,13 +177,7 @@ fn perform_backup(ssh_conn: &SshConnection, hostname: &str, backup_base: &str) -
     println!("=== Backing up Docker volumes ===");
 
     // Get all Docker volumes
-    let volumes_output =
-        ssh_conn.execute_simple("docker", &["volume", "ls", "--format", "{{.Name}}"])?;
-    let volumes_str = String::from_utf8_lossy(&volumes_output.stdout);
-    let volumes: Vec<&str> = volumes_str
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .collect();
+    let volumes = docker::list_volumes(exec)?;
 
     if volumes.is_empty() {
         println!("No Docker volumes found");
@@ -229,25 +191,10 @@ fn perform_backup(ssh_conn: &SshConnection, hostname: &str, backup_base: &str) -
         // Backup each volume
         for vol in &volumes {
             println!("  Backing up volume: {}", vol);
-            let backup_cmd = format!(
-                "docker run --rm -v {}:/data:ro -v {}:/backup alpine tar czf /backup/{}.tar.gz -C /data .",
-                vol, backup_dir, vol
-            );
-            let backup_output = ssh_conn.execute_shell(&backup_cmd)?;
-            if backup_output.status.success() {
-                println!("    ✓ Volume {} backed up", vol);
+            if let Err(e) = docker::backup_volume(exec, vol, &backup_dir) {
+                println!("    ✗ Failed to backup volume: {} - {}", vol, e);
             } else {
-                // Try with sudo
-                let sudo_backup_cmd = format!(
-                    "sudo docker run --rm -v {}:/data:ro -v {}:/backup alpine tar czf /backup/{}.tar.gz -C /data .",
-                    vol, backup_dir, vol
-                );
-                let sudo_output = ssh_conn.execute_shell(&sudo_backup_cmd)?;
-                if sudo_output.status.success() {
-                    println!("    ✓ Volume {} backed up", vol);
-                } else {
-                    println!("    ✗ Failed to backup volume: {}", vol);
-                }
+                println!("    ✓ Volume {} backed up", vol);
             }
         }
     }
@@ -256,33 +203,18 @@ fn perform_backup(ssh_conn: &SshConnection, hostname: &str, backup_base: &str) -
     println!("=== Backing up bind mounts from containers ===");
 
     // Get all containers
-    let containers_output =
-        ssh_conn.execute_simple("docker", &["ps", "-a", "--format", "{{.Names}}"])?;
-    let containers_str = String::from_utf8_lossy(&containers_output.stdout);
-    let containers: Vec<&str> = containers_str
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .collect();
+    let containers = docker::list_containers(exec)?;
 
     if containers.is_empty() {
         println!("No containers found");
     } else {
         for container in &containers {
             // Get bind mounts for this container
-            let inspect_cmd = format!(
-                r#"docker inspect {} --format '{{{{range .Mounts}}}}{{{{if eq .Type "bind"}}}}{{{{.Source}}}}{{{{end}}}}{{{{end}}}}'"#,
-                container
-            );
-            let mounts_output = ssh_conn.execute_shell(&inspect_cmd)?;
-            let mounts_str = String::from_utf8_lossy(&mounts_output.stdout);
-            let mounts: Vec<&str> = mounts_str
-                .lines()
-                .filter(|l| !l.trim().is_empty())
-                .collect();
+            let mounts = docker::get_bind_mounts(exec, container)?;
 
             for mount_path in &mounts {
                 // Check if mount path is a directory
-                let check_dir = ssh_conn.execute_simple("test", &["-d", mount_path])?;
+                let check_dir = exec.execute_simple("test", &["-d", mount_path])?;
                 if check_dir.status.success() {
                     let mount_name = mount_path
                         .split('/')
@@ -292,11 +224,12 @@ fn perform_backup(ssh_conn: &SshConnection, hostname: &str, backup_base: &str) -
                     let backup_name = format!("{}_{}", container, mount_name);
                     println!("  Backing up bind mount from {}: {}", container, mount_path);
 
+                    // Use docker::backup_volume logic but for bind mounts
                     let backup_cmd = format!(
                         "docker run --rm -v {}:/data:ro -v {}:/backup alpine tar czf /backup/{}.tar.gz -C /data .",
                         mount_path, backup_dir, backup_name
                     );
-                    let backup_output = ssh_conn.execute_shell(&backup_cmd)?;
+                    let backup_output = exec.execute_shell(&backup_cmd)?;
                     if backup_output.status.success() {
                         println!(
                             "    ✓ Bind mount {} backed up as {}.tar.gz",
@@ -308,7 +241,7 @@ fn perform_backup(ssh_conn: &SshConnection, hostname: &str, backup_base: &str) -
                             "sudo docker run --rm -v {}:/data:ro -v {}:/backup alpine tar czf /backup/{}.tar.gz -C /data .",
                             mount_path, backup_dir, backup_name
                         );
-                        let sudo_output = ssh_conn.execute_shell(&sudo_backup_cmd)?;
+                        let sudo_output = exec.execute_shell(&sudo_backup_cmd)?;
                         if sudo_output.status.success() {
                             println!(
                                 "    ✓ Bind mount {} backed up as {}.tar.gz",
@@ -336,7 +269,7 @@ fn perform_backup(ssh_conn: &SshConnection, hostname: &str, backup_base: &str) -
             .collect::<Vec<_>>()
             .join("\n")
     );
-    ssh_conn.write_file(
+    exec.write_file(
         &format!("{}/backup-info.txt", backup_dir),
         metadata.as_bytes(),
     )?;
@@ -347,17 +280,7 @@ fn perform_backup(ssh_conn: &SshConnection, hostname: &str, backup_base: &str) -
 
     if !running_containers.is_empty() {
         println!("Starting containers...");
-        let start_cmd = format!("docker start {}", running_containers.join(" "));
-        let start_output = ssh_conn.execute_shell(&start_cmd)?;
-        if !start_output.status.success() {
-            let sudo_start = ssh_conn.execute_shell(&format!(
-                "sudo docker start {}",
-                running_containers.join(" ")
-            ))?;
-            if !sudo_start.status.success() {
-                eprintln!("⚠ Warning: Some containers may not have started");
-            }
-        }
+        docker::start_containers(exec, &running_containers)?;
         println!("✓ Containers started");
     } else {
         println!("✓ No containers to start");
@@ -369,7 +292,7 @@ fn perform_backup(ssh_conn: &SshConnection, hostname: &str, backup_base: &str) -
     println!("Backup name: {}", timestamp_str);
     println!("Volumes backed up: {}", volumes.len());
 
-    let list_output = ssh_conn.execute_shell(&format!("ls -lh {}", backup_dir))?;
+    let list_output = exec.execute_shell(&format!("ls -lh {}", backup_dir))?;
     if list_output.status.success() {
         let list_str = String::from_utf8_lossy(&list_output.stdout);
         for line in list_str.lines().skip(1) {
@@ -380,11 +303,11 @@ fn perform_backup(ssh_conn: &SshConnection, hostname: &str, backup_base: &str) -
     Ok(())
 }
 
-fn list_backup_directories(ssh_conn: &SshConnection, backup_base: &str) -> Result<()> {
+fn list_backup_directories<E: CommandExecutor>(exec: &E, backup_base: &str) -> Result<()> {
     println!("=== Available Backups ===");
 
     // Check if backup directory exists
-    let dir_check = ssh_conn.execute_simple("test", &["-d", backup_base])?;
+    let dir_check = exec.execute_simple("test", &["-d", backup_base])?;
     if !dir_check.status.success() {
         anyhow::bail!(
             "Error: Backup directory {} does not exist or is not mounted",
@@ -393,7 +316,7 @@ fn list_backup_directories(ssh_conn: &SshConnection, backup_base: &str) -> Resul
     }
 
     // List backup directories
-    let find_output = ssh_conn.execute_shell(&format!(
+    let find_output = exec.execute_shell(&format!(
         "find {} -mindepth 1 -maxdepth 1 -type d",
         backup_base
     ))?;
@@ -422,7 +345,7 @@ fn list_backup_directories(ssh_conn: &SshConnection, backup_base: &str) -> Resul
             r#"stat -c %y "{}" 2>/dev/null || stat -f %Sm "{}" 2>/dev/null || echo "unknown""#,
             backup_dir, backup_dir
         );
-        let date_output = ssh_conn.execute_shell(&stat_cmd)?;
+        let date_output = exec.execute_shell(&stat_cmd)?;
         let backup_date = String::from_utf8_lossy(&date_output.stdout)
             .trim()
             .to_string();
@@ -432,9 +355,9 @@ fn list_backup_directories(ssh_conn: &SshConnection, backup_base: &str) -> Resul
 
         // Read backup info if it exists
         let info_path = format!("{}/backup-info.txt", backup_dir);
-        let info_exists = ssh_conn.file_exists(&info_path)?;
+        let info_exists = exec.file_exists(&info_path)?;
         if info_exists {
-            let info_output = ssh_conn.execute_shell(&format!("cat {}", info_path))?;
+            let info_output = exec.execute_shell(&format!("cat {}", info_path))?;
             if info_output.status.success() {
                 let info_str = String::from_utf8_lossy(&info_output.stdout);
                 println!("    Info:");
@@ -449,8 +372,8 @@ fn list_backup_directories(ssh_conn: &SshConnection, backup_base: &str) -> Resul
     Ok(())
 }
 
-fn perform_restore(
-    ssh_conn: &SshConnection,
+fn perform_restore<E: CommandExecutor>(
+    exec: &E,
     hostname: &str,
     backup_base: &str,
     backup_name: &str,
@@ -466,7 +389,7 @@ fn perform_restore(
     // Check if backup base directory exists (parent of backup_base)
     if let Some(parent) = std::path::Path::new(backup_base).parent() {
         let parent_str = parent.to_string_lossy();
-        let check_mount = ssh_conn.execute_simple("test", &["-d", &parent_str])?;
+        let check_mount = exec.execute_simple("test", &["-d", &parent_str])?;
         if !check_mount.status.success() {
             anyhow::bail!(
                 "Error: Backup base directory {} does not exist or is not mounted\nMake sure SMB mount is set up: hal smb <hostname> setup",
@@ -476,18 +399,18 @@ fn perform_restore(
     }
 
     // Create backup base directory if it doesn't exist
-    let dir_exists = ssh_conn.execute_simple("test", &["-d", backup_base])?;
+    let dir_exists = exec.execute_simple("test", &["-d", backup_base])?;
     if !dir_exists.status.success() {
-        ssh_conn.mkdir_p(backup_base)?;
+        exec.mkdir_p(backup_base)?;
         println!("Created backup base directory: {}", backup_base);
     }
 
     // Check if backup exists
-    let backup_exists = ssh_conn.execute_simple("test", &["-d", &backup_dir])?;
+    let backup_exists = exec.execute_simple("test", &["-d", &backup_dir])?;
     if !backup_exists.status.success() {
         println!("Error: Backup directory does not exist: {}", backup_dir);
         println!("Available backups:");
-        let list_output = ssh_conn.execute_shell(&format!("ls -1 {}", backup_base))?;
+        let list_output = exec.execute_shell(&format!("ls -1 {}", backup_base))?;
         if list_output.status.success() {
             let list_str = String::from_utf8_lossy(&list_output.stdout);
             for line in list_str.lines() {
@@ -502,30 +425,12 @@ fn perform_restore(
     println!();
     println!("=== Stopping all containers ===");
 
-    // Get running containers
-    let running_output = ssh_conn.execute_simple("docker", &["ps", "-q"])?;
-    let running_containers = String::from_utf8_lossy(&running_output.stdout);
-    let running_containers: Vec<&str> = running_containers
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .collect();
-
+    let running_containers = docker::stop_all_containers(exec)?;
     if !running_containers.is_empty() {
         println!(
-            "Stopping {} running container(s)...",
+            "Stopped {} running container(s)...",
             running_containers.len()
         );
-        let stop_cmd = format!("docker stop {}", running_containers.join(" "));
-        let stop_output = ssh_conn.execute_shell(&stop_cmd)?;
-        if !stop_output.status.success() {
-            let sudo_stop = ssh_conn.execute_shell(&format!(
-                "sudo docker stop {}",
-                running_containers.join(" ")
-            ))?;
-            if !sudo_stop.status.success() {
-                eprintln!("⚠ Warning: Some containers may not have stopped");
-            }
-        }
         println!("✓ All containers stopped");
     } else {
         println!("✓ No running containers to stop");
@@ -535,7 +440,7 @@ fn perform_restore(
     println!("=== Restoring Docker volumes ===");
 
     // List backup files
-    let list_files = ssh_conn.execute_shell(&format!(
+    let list_files = exec.execute_shell(&format!(
         "ls -1 {}/*.tar.gz 2>/dev/null || true",
         backup_dir
     ))?;
@@ -559,48 +464,11 @@ fn perform_restore(
 
         println!("Restoring volume: {}", vol_name);
 
-        // Check if volume exists, create if not
-        let inspect_output = ssh_conn.execute_simple("docker", &["volume", "inspect", vol_name])?;
-        if !inspect_output.status.success() {
-            // Try with sudo
-            let sudo_inspect =
-                ssh_conn.execute_shell(&format!("sudo docker volume inspect {}", vol_name))?;
-            if !sudo_inspect.status.success() {
-                // Create volume
-                let create_output =
-                    ssh_conn.execute_simple("docker", &["volume", "create", vol_name])?;
-                if !create_output.status.success() {
-                    let sudo_create = ssh_conn
-                        .execute_shell(&format!("sudo docker volume create {}", vol_name))?;
-                    if !sudo_create.status.success() {
-                        println!("  ✗ Failed to create volume: {}", vol_name);
-                        continue;
-                    }
-                }
-                println!("  Created volume: {}", vol_name);
-            }
-        }
-
-        // Restore volume
-        let restore_cmd = format!(
-            "docker run --rm -v {}:/data -v {}:/backup alpine sh -c 'cd /data && rm -rf * && tar xzf /backup/{}.tar.gz'",
-            vol_name, backup_dir, vol_name
-        );
-        let restore_output = ssh_conn.execute_shell(&restore_cmd)?;
-        if restore_output.status.success() {
-            println!("  ✓ Restored volume: {}", vol_name);
+        // Restore volume using docker module
+        if let Err(e) = docker::restore_volume(exec, vol_name, &backup_dir) {
+            println!("  ✗ Failed to restore volume: {} - {}", vol_name, e);
         } else {
-            // Try with sudo
-            let sudo_restore_cmd = format!(
-                "sudo docker run --rm -v {}:/data -v {}:/backup alpine sh -c 'cd /data && rm -rf * && tar xzf /backup/{}.tar.gz'",
-                vol_name, backup_dir, vol_name
-            );
-            let sudo_restore = ssh_conn.execute_shell(&sudo_restore_cmd)?;
-            if sudo_restore.status.success() {
-                println!("  ✓ Restored volume: {}", vol_name);
-            } else {
-                println!("  ✗ Failed to restore volume: {}", vol_name);
-            }
+            println!("  ✓ Restored volume: {}", vol_name);
         }
     }
 
@@ -609,17 +477,7 @@ fn perform_restore(
 
     if !running_containers.is_empty() {
         println!("Starting containers...");
-        let start_cmd = format!("docker start {}", running_containers.join(" "));
-        let start_output = ssh_conn.execute_shell(&start_cmd)?;
-        if !start_output.status.success() {
-            let sudo_start = ssh_conn.execute_shell(&format!(
-                "sudo docker start {}",
-                running_containers.join(" ")
-            ))?;
-            if !sudo_start.status.success() {
-                eprintln!("⚠ Warning: Some containers may not have started");
-            }
-        }
+        docker::start_containers(exec, &running_containers)?;
         println!("✓ Containers started");
     } else {
         println!("✓ No containers to start");

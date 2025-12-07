@@ -1,4 +1,5 @@
 use crate::config;
+use crate::exec::CommandExecutor;
 use anyhow::Result;
 use std::process::Command;
 
@@ -90,5 +91,40 @@ fn install_tailscale_windows() -> Result<()> {
     println!();
     println!("Or use winget:");
     println!("  winget install Tailscale.Tailscale");
+    Ok(())
+}
+
+/// Check if Tailscale is installed and install it if not (for remote execution)
+pub fn check_and_install_remote<E: CommandExecutor>(exec: &E) -> Result<()> {
+    println!();
+    println!("=== Checking Tailscale installation ===");
+
+    if exec.check_command_exists("tailscale")? {
+        println!("✓ Tailscale already installed");
+        return Ok(());
+    }
+
+    println!("Tailscale not found. Installing Tailscale...");
+
+    if exec.check_command_exists("apt-get")?
+        || exec.check_command_exists("yum")?
+        || exec.check_command_exists("dnf")?
+    {
+        // Download Tailscale install script and execute it
+        // Note: This requires SshConnection for download_and_execute_script
+        // For now, use curl to download and execute
+        let install_cmd = "curl -fsSL https://tailscale.com/install.sh | sh";
+        let output = exec.execute_shell(install_cmd)?;
+        if !output.status.success() {
+            anyhow::bail!("Failed to install Tailscale");
+        }
+    } else if exec.check_command_exists("brew")? {
+        exec.execute_interactive("brew", &["install", "tailscale"])?;
+    } else {
+        anyhow::bail!("Unsupported package manager. Please install Tailscale manually.");
+    }
+
+    println!("✓ Tailscale installed");
+    println!("Note: Run 'sudo tailscale up' to connect to your tailnet");
     Ok(())
 }

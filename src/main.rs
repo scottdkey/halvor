@@ -1,8 +1,11 @@
 mod backup;
 mod config;
 mod config_manager;
+mod docker;
 mod exec;
+mod networking;
 mod npm;
+mod portainer;
 mod provision;
 mod smb;
 mod tailscale;
@@ -208,7 +211,16 @@ fn main() -> Result<()> {
         }
         Commands::Vpn { command } => match command {
             VpnCommands::Build { github_user, tag } => {
-                vpn::build_and_push_vpn_image(&github_user, tag.as_deref())?;
+                let config_dir = config::find_homelab_dir()?;
+                let config = config::load_env_config(&config_dir)?;
+                // For build, use localhost as default hostname (builds are typically local)
+                let build_hostname = "localhost";
+                vpn::build_and_push_vpn_image(
+                    build_hostname,
+                    &github_user,
+                    tag.as_deref(),
+                    &config,
+                )?;
             }
             VpnCommands::Deploy { hostname } => {
                 let config_dir = config::find_homelab_dir()?;

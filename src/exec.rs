@@ -250,15 +250,6 @@ pub mod local {
             .with_context(|| format!("Failed to execute command: {}", program))
     }
 
-    pub fn execute_status(program: &str, args: &[&str]) -> Result<std::process::ExitStatus> {
-        let mut cmd = Command::new(program);
-        cmd.args(args);
-        cmd.stdin(Stdio::null());
-        cmd.stdout(Stdio::null());
-        cmd.stderr(Stdio::null());
-        Ok(cmd.status()?)
-    }
-
     pub fn check_command_exists(command: &str) -> bool {
         Command::new("command")
             .arg("-v")
@@ -288,5 +279,300 @@ pub mod local {
             .output()
             .with_context(|| format!("Failed to execute shell command: {}", command))?;
         Ok(output)
+    }
+}
+
+/// Trait for executing commands either locally or remotely
+pub trait CommandExecutor {
+    /// Execute a simple command
+    fn execute_simple(&self, program: &str, args: &[&str]) -> Result<Output>;
+
+    /// Execute a shell command
+    fn execute_shell(&self, command: &str) -> Result<Output>;
+
+    /// Execute a command interactively (with stdin)
+    fn execute_interactive(&self, program: &str, args: &[&str]) -> Result<()>;
+
+    /// Check if a command exists
+    fn check_command_exists(&self, command: &str) -> Result<bool>;
+
+    /// Check if running on Linux
+    fn is_linux(&self) -> Result<bool>;
+
+    /// Read a file
+    fn read_file(&self, path: &str) -> Result<String>;
+
+    /// Write a file
+    fn write_file(&self, path: &str, content: &[u8]) -> Result<()>;
+
+    /// Create directory recursively
+    fn mkdir_p(&self, path: &str) -> Result<()>;
+
+    /// Check if file exists
+    fn file_exists(&self, path: &str) -> Result<bool>;
+
+    /// Execute a shell command interactively
+    fn execute_shell_interactive(&self, command: &str) -> Result<()>;
+
+    /// Get the current username (for local) or use $USER (for remote)
+    fn get_username(&self) -> Result<String>;
+}
+
+/// Executor that can be either local or remote (SSH)
+/// Automatically determines execution context based on hostname and config
+pub enum Executor {
+    Local,
+    Remote(SshConnection),
+}
+
+impl Executor {
+    /// Create an executor based on hostname and config
+    /// Automatically determines if execution should be local or remote
+    pub fn new(hostname: &str, config: &crate::config::EnvConfig) -> Result<Self> {
+        let host_config = config
+            .hosts
+            .get(hostname)
+            .with_context(|| format!("Host '{}' not found in config", hostname))?;
+
+        // Get target IP
+        let target_ip = if let Some(ip) = &host_config.ip {
+            ip.clone()
+        } else {
+            // If no IP configured, assume remote
+            return Ok(Executor::Remote({
+                let target_host = host_config.tailscale.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("No IP or Tailscale hostname configured for {}", hostname)
+                })?;
+                let default_user = crate::config::get_default_username();
+                let host_with_user = format!("{}@{}", default_user, target_host);
+                SshConnection::new(&host_with_user)?
+            }));
+        };
+
+        // Get local IP addresses
+        let local_ips = crate::networking::get_local_ips()?;
+
+        // Check if target IP matches any local IP
+        let is_local = local_ips.contains(&target_ip);
+
+        if is_local {
+            Ok(Executor::Local)
+        } else {
+            // Get host configuration for remote connection
+            let host_config = config.hosts.get(hostname).with_context(|| {
+                format!(
+                    "Host '{}' not found in .env\n\nAdd configuration to .env:\n  HOST_{}_IP=\"<ip-address>\"\n  HOST_{}_TAILSCALE=\"<tailscale-hostname>\"",
+                    hostname,
+                    hostname.to_uppercase(),
+                    hostname.to_uppercase()
+                )
+            })?;
+
+            // Determine which host to connect to (prefer IP, fallback to Tailscale)
+            let target_host = if let Some(ip) = &host_config.ip {
+                ip.clone()
+            } else if let Some(tailscale) = &host_config.tailscale {
+                tailscale.clone()
+            } else {
+                anyhow::bail!("No IP or Tailscale hostname configured for {}", hostname);
+            };
+
+            // Create SSH connection
+            let default_user = crate::config::get_default_username();
+            let host_with_user = format!("{}@{}", default_user, target_host);
+            let ssh_conn = SshConnection::new(&host_with_user)?;
+
+            Ok(Executor::Remote(ssh_conn))
+        }
+    }
+
+    /// Get the target host (for remote) or hostname (for local)
+    pub fn target_host(&self, hostname: &str, config: &crate::config::EnvConfig) -> Result<String> {
+        match self {
+            Executor::Local => Ok(hostname.to_string()),
+            Executor::Remote(_) => {
+                let host_config = config
+                    .hosts
+                    .get(hostname)
+                    .with_context(|| format!("Host '{}' not found in config", hostname))?;
+                let target_host = if let Some(ip) = &host_config.ip {
+                    ip.clone()
+                } else if let Some(tailscale) = &host_config.tailscale {
+                    tailscale.clone()
+                } else {
+                    anyhow::bail!("No IP or Tailscale hostname configured for {}", hostname);
+                };
+                Ok(target_host)
+            }
+        }
+    }
+
+    /// Check if this is a local executor
+    pub fn is_local(&self) -> bool {
+        matches!(self, Executor::Local)
+    }
+}
+
+impl CommandExecutor for Executor {
+    fn execute_simple(&self, program: &str, args: &[&str]) -> Result<Output> {
+        match self {
+            Executor::Local => local::execute(program, args),
+            Executor::Remote(exec) => exec.execute_simple(program, args),
+        }
+    }
+
+    fn execute_shell(&self, command: &str) -> Result<Output> {
+        match self {
+            Executor::Local => local::execute_shell(command),
+            Executor::Remote(exec) => exec.execute_shell(command),
+        }
+    }
+
+    fn execute_interactive(&self, program: &str, args: &[&str]) -> Result<()> {
+        match self {
+            Executor::Local => {
+                let mut cmd = Command::new(program);
+                cmd.args(args);
+                cmd.stdin(Stdio::inherit());
+                cmd.stdout(Stdio::inherit());
+                cmd.stderr(Stdio::inherit());
+                let status = cmd.status()?;
+                if !status.success() {
+                    anyhow::bail!("Command failed: {} {:?}", program, args);
+                }
+                Ok(())
+            }
+            Executor::Remote(exec) => exec.execute_interactive(program, args),
+        }
+    }
+
+    fn check_command_exists(&self, command: &str) -> Result<bool> {
+        match self {
+            Executor::Local => Ok(local::check_command_exists(command)),
+            Executor::Remote(exec) => exec.check_command_exists(command),
+        }
+    }
+
+    fn is_linux(&self) -> Result<bool> {
+        match self {
+            Executor::Local => {
+                #[cfg(target_os = "linux")]
+                return Ok(true);
+                #[cfg(not(target_os = "linux"))]
+                return Ok(false);
+            }
+            Executor::Remote(exec) => exec.is_linux(),
+        }
+    }
+
+    fn read_file(&self, path: &str) -> Result<String> {
+        match self {
+            Executor::Local => local::read_file(path),
+            Executor::Remote(exec) => exec.read_file(path),
+        }
+    }
+
+    fn write_file(&self, path: &str, content: &[u8]) -> Result<()> {
+        match self {
+            Executor::Local => {
+                std::fs::write(path, content)
+                    .with_context(|| format!("Failed to write file: {}", path))?;
+                Ok(())
+            }
+            Executor::Remote(exec) => exec.write_file(path, content),
+        }
+    }
+
+    fn mkdir_p(&self, path: &str) -> Result<()> {
+        match self {
+            Executor::Local => {
+                std::fs::create_dir_all(path)
+                    .with_context(|| format!("Failed to create directory: {}", path))?;
+                Ok(())
+            }
+            Executor::Remote(exec) => exec.mkdir_p(path),
+        }
+    }
+
+    fn file_exists(&self, path: &str) -> Result<bool> {
+        match self {
+            Executor::Local => Ok(std::path::Path::new(path).exists()),
+            Executor::Remote(exec) => exec.file_exists(path),
+        }
+    }
+
+    fn execute_shell_interactive(&self, command: &str) -> Result<()> {
+        match self {
+            Executor::Local => {
+                let mut cmd = Command::new("sh");
+                cmd.arg("-c");
+                cmd.arg(command);
+                cmd.stdin(Stdio::inherit());
+                cmd.stdout(Stdio::inherit());
+                cmd.stderr(Stdio::inherit());
+                let status = cmd.status()?;
+                if !status.success() {
+                    anyhow::bail!("Shell command failed");
+                }
+                Ok(())
+            }
+            Executor::Remote(exec) => exec.execute_shell_interactive(command),
+        }
+    }
+
+    fn get_username(&self) -> Result<String> {
+        match self {
+            Executor::Local => Ok(whoami::username()),
+            Executor::Remote(exec) => exec.get_username(),
+        }
+    }
+}
+
+/// Remote command executor (SSH) - SshConnection already implements CommandExecutor
+impl CommandExecutor for SshConnection {
+    fn execute_simple(&self, program: &str, args: &[&str]) -> Result<Output> {
+        self.execute_simple(program, args)
+    }
+
+    fn execute_shell(&self, command: &str) -> Result<Output> {
+        self.execute_shell(command)
+    }
+
+    fn execute_interactive(&self, program: &str, args: &[&str]) -> Result<()> {
+        self.execute_interactive(program, args)
+    }
+
+    fn check_command_exists(&self, command: &str) -> Result<bool> {
+        self.check_command_exists(command)
+    }
+
+    fn is_linux(&self) -> Result<bool> {
+        self.is_linux()
+    }
+
+    fn read_file(&self, path: &str) -> Result<String> {
+        self.read_file(path)
+    }
+
+    fn write_file(&self, path: &str, content: &[u8]) -> Result<()> {
+        self.write_file(path, content)
+    }
+
+    fn mkdir_p(&self, path: &str) -> Result<()> {
+        self.mkdir_p(path)
+    }
+
+    fn file_exists(&self, path: &str) -> Result<bool> {
+        self.file_exists(path)
+    }
+
+    fn execute_shell_interactive(&self, command: &str) -> Result<()> {
+        self.execute_shell_interactive(command)
+    }
+
+    fn get_username(&self) -> Result<String> {
+        let output = self.execute_simple("whoami", &[])?;
+        let username = String::from_utf8(output.stdout)?.trim().to_string();
+        Ok(username)
     }
 }

@@ -1,31 +1,63 @@
-use crate::exec::local;
+use crate::config::EnvConfig;
+use crate::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
-use std::process::Command;
 
-pub fn build_and_push_vpn_image(github_user: &str, image_tag: Option<&str>) -> Result<()> {
-    let homelab_dir = crate::config::find_homelab_dir()?;
+pub fn build_and_push_vpn_image(
+    hostname: &str,
+    github_user: &str,
+    image_tag: Option<&str>,
+    config: &EnvConfig,
+) -> Result<()> {
+    // Create executor - it automatically determines if execution should be local or remote
+    let exec = Executor::new(hostname, config)?;
+    let target_host = exec.target_host(hostname, config)?;
+    let is_local = exec.is_local();
+
+    if is_local {
+        println!("Building VPN container image locally on {}...", hostname);
+    } else {
+        println!(
+            "Building VPN container image on {} ({})...",
+            hostname, target_host
+        );
+    }
+    println!();
+
+    // For local builds, use local filesystem
+    // For remote builds, we'd need to handle file paths differently (not implemented yet)
+    let homelab_dir = if is_local {
+        crate::config::find_homelab_dir()?
+    } else {
+        anyhow::bail!(
+            "Remote builds require the VPN container directory to be available on the remote host. This is not yet implemented."
+        );
+    };
     let vpn_container_dir = homelab_dir.join("openvpn-container");
 
-    if !vpn_container_dir.exists() {
+    if is_local && !vpn_container_dir.exists() {
         anyhow::bail!(
             "VPN container directory not found at {}",
             vpn_container_dir.display()
         );
     }
 
-    // Get git hash for versioning
-    let git_hash = local::execute("git", &["rev-parse", "--short", "HEAD"])
-        .ok()
-        .and_then(|output| {
-            if output.status.success() {
-                String::from_utf8(output.stdout)
-                    .ok()
-                    .map(|s| s.trim().to_string())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| "unknown".to_string());
+    // Get git hash for versioning (only works locally where git repo exists)
+    let git_hash = if is_local {
+        exec.execute_simple("git", &["rev-parse", "--short", "HEAD"])
+            .ok()
+            .and_then(|output| {
+                if output.status.success() {
+                    String::from_utf8(output.stdout)
+                        .ok()
+                        .map(|s| s.trim().to_string())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| "unknown".to_string())
+    } else {
+        "unknown".to_string()
+    };
 
     let base_image = format!("ghcr.io/{}/pia-vpn", github_user);
     let latest_tag = format!("{}:latest", base_image);
@@ -50,13 +82,23 @@ pub fn build_and_push_vpn_image(github_user: &str, image_tag: Option<&str>) -> R
     }
     build_args.extend(&["-f", "Dockerfile", "."]);
 
-    let build_status = Command::new("docker")
-        .args(&build_args)
-        .current_dir(&vpn_container_dir)
-        .status()
+    // For local builds, we need to change directory, so use shell command
+    // For remote builds, we'd need to copy files first (not implemented yet)
+    if !is_local {
+        anyhow::bail!("Remote Docker builds are not yet supported. Please build locally.");
+    }
+
+    // Build using executor (for local, this will use local execution)
+    let build_cmd = format!(
+        "cd {} && docker {}",
+        vpn_container_dir.display(),
+        build_args.join(" ")
+    );
+    let build_output = exec
+        .execute_shell(&build_cmd)
         .context("Failed to execute docker build")?;
 
-    if !build_status.success() {
+    if !build_output.status.success() {
         anyhow::bail!("Docker build failed");
     }
 
@@ -65,10 +107,12 @@ pub fn build_and_push_vpn_image(github_user: &str, image_tag: Option<&str>) -> R
 
     // Check if user is logged into GitHub Container Registry
     println!("Checking GitHub Container Registry authentication...");
-    let _auth_check = local::execute("docker", &["info"]).context("Failed to check docker info")?;
+    let _auth_check = exec
+        .execute_simple("docker", &["info"])
+        .context("Failed to check docker info")?;
 
     // Try to verify we can access ghcr.io
-    let login_test = local::execute(
+    let login_test = exec.execute_simple(
         "docker",
         &["pull", &format!("ghcr.io/{}/pia-vpn:latest", github_user)],
     );
@@ -91,8 +135,10 @@ pub fn build_and_push_vpn_image(github_user: &str, image_tag: Option<&str>) -> R
     // Push all tags
     for tag in &tags_to_push {
         println!("Pushing {}...", tag);
-        let push_status = local::execute_status("docker", &["push", tag])
+        let push_output = exec
+            .execute_simple("docker", &["push", tag])
             .with_context(|| format!("Failed to execute docker push for {}", tag))?;
+        let push_status = push_output.status;
 
         if !push_status.success() {
             println!();

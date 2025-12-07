@@ -1,35 +1,22 @@
-use crate::config::{self, EnvConfig};
-use crate::exec::SshConnection;
-use anyhow::{Context, Result};
+use crate::config::EnvConfig;
+use crate::exec::{CommandExecutor, Executor};
+use anyhow::Result;
 
 pub fn setup_smb_mounts(hostname: &str, config: &EnvConfig) -> Result<()> {
-    let host_config = config.hosts.get(hostname).with_context(|| {
-        format!(
-            "Host '{}' not found in .env\n\nAdd configuration to .env:\n  HOST_{}_IP=\"<ip-address>\"\n  HOST_{}_TAILSCALE=\"<tailscale-hostname>\"",
-            hostname,
-            hostname.to_uppercase(),
-            hostname.to_uppercase()
-        )
-    })?;
+    // Create executor - it automatically determines if execution should be local or remote
+    let exec = Executor::new(hostname, config)?;
+    let target_host = exec.target_host(hostname, config)?;
+    let is_local = exec.is_local();
 
-    let target_host = if let Some(ip) = &host_config.ip {
-        ip.clone()
-    } else if let Some(tailscale) = &host_config.tailscale {
-        tailscale.clone()
+    if is_local {
+        println!("Setting up SMB mounts locally on {}...", hostname);
     } else {
-        anyhow::bail!("No IP or Tailscale hostname configured for {}", hostname);
-    };
-
-    println!("Setting up SMB mounts on {} ({})...", hostname, target_host);
+        println!("Setting up SMB mounts on {} ({})...", hostname, target_host);
+    }
     println!();
 
-    // Get SSH connection
-    let default_user = config::get_default_username();
-    let host_with_user = format!("{}@{}", default_user, target_host);
-    let ssh_conn = SshConnection::new(&host_with_user)?;
-
     // Execute setup using Rust-native operations
-    setup_smb_mounts_remote(&ssh_conn, config)?;
+    setup_smb_mounts_remote(&exec, config)?;
 
     println!();
     println!("✓ SMB mount setup complete for {}", hostname);
@@ -38,36 +25,23 @@ pub fn setup_smb_mounts(hostname: &str, config: &EnvConfig) -> Result<()> {
 }
 
 pub fn uninstall_smb_mounts(hostname: &str, config: &EnvConfig) -> Result<()> {
-    let host_config = config.hosts.get(hostname).with_context(|| {
-        format!(
-            "Host '{}' not found in .env\n\nAdd configuration to .env:\n  HOST_{}_IP=\"<ip-address>\"\n  HOST_{}_TAILSCALE=\"<tailscale-hostname>\"",
-            hostname,
-            hostname.to_uppercase(),
-            hostname.to_uppercase()
-        )
-    })?;
+    // Create executor - it automatically determines if execution should be local or remote
+    let exec = Executor::new(hostname, config)?;
+    let target_host = exec.target_host(hostname, config)?;
+    let is_local = exec.is_local();
 
-    let target_host = if let Some(ip) = &host_config.ip {
-        ip.clone()
-    } else if let Some(tailscale) = &host_config.tailscale {
-        tailscale.clone()
+    if is_local {
+        println!("Uninstalling SMB mounts locally on {}...", hostname);
     } else {
-        anyhow::bail!("No IP or Tailscale hostname configured for {}", hostname);
-    };
-
-    println!(
-        "Uninstalling SMB mounts on {} ({})...",
-        hostname, target_host
-    );
+        println!(
+            "Uninstalling SMB mounts on {} ({})...",
+            hostname, target_host
+        );
+    }
     println!();
 
-    // Get SSH connection
-    let default_user = config::get_default_username();
-    let host_with_user = format!("{}@{}", default_user, target_host);
-    let ssh_conn = SshConnection::new(&host_with_user)?;
-
     // Execute uninstall using Rust-native operations
-    uninstall_smb_mounts_remote(&ssh_conn, config)?;
+    uninstall_smb_mounts_remote(&exec, config)?;
 
     println!();
     println!("✓ SMB mounts removed from {}", hostname);
@@ -75,7 +49,7 @@ pub fn uninstall_smb_mounts(hostname: &str, config: &EnvConfig) -> Result<()> {
     Ok(())
 }
 
-fn setup_smb_mounts_remote(ssh_conn: &SshConnection, config: &EnvConfig) -> Result<()> {
+fn setup_smb_mounts_remote<E: CommandExecutor>(exec: &E, config: &EnvConfig) -> Result<()> {
     println!("=== SMB Configuration ===");
     println!("Configuration loaded from .env file");
     println!(
@@ -98,14 +72,15 @@ fn setup_smb_mounts_remote(ssh_conn: &SshConnection, config: &EnvConfig) -> Resu
     println!();
 
     // Install SMB client
-    install_smb_client(ssh_conn)?;
+    install_smb_client(exec)?;
 
     // Clean up old mounts
-    cleanup_old_mounts(ssh_conn)?;
+    cleanup_old_mounts(exec)?;
 
     // Create mount directory
     println!("=== Creating SMB mount directory ===");
-    ssh_conn.execute_interactive("sudo", &["mkdir", "-p", "/mnt/smb"])?;
+    // For system directories like /mnt, we need sudo
+    exec.execute_simple("sudo", &["mkdir", "-p", "/mnt/smb"])?;
     println!("✓ Mount directory created");
     println!();
 
@@ -116,7 +91,7 @@ fn setup_smb_mounts_remote(ssh_conn: &SshConnection, config: &EnvConfig) -> Resu
             let share_path = format!("//{}/{}", server_config.host, share_name);
 
             setup_smb_share(
-                ssh_conn,
+                exec,
                 server_name,
                 share_name,
                 &share_path,
@@ -132,23 +107,23 @@ fn setup_smb_mounts_remote(ssh_conn: &SshConnection, config: &EnvConfig) -> Resu
     Ok(())
 }
 
-fn install_smb_client(ssh_conn: &SshConnection) -> Result<()> {
+fn install_smb_client<E: CommandExecutor>(exec: &E) -> Result<()> {
     println!("=== Installing SMB client ===");
 
     // Check if mount.cifs exists
-    if ssh_conn.check_command_exists("mount.cifs")? {
+    if exec.check_command_exists("mount.cifs")? {
         println!("✓ SMB client already installed");
         return Ok(());
     }
 
     // Detect package manager and install
-    if ssh_conn.check_command_exists("apt-get")? {
-        ssh_conn.execute_interactive("sudo", &["apt-get", "update"])?;
-        ssh_conn.execute_interactive("sudo", &["apt-get", "install", "-y", "cifs-utils"])?;
-    } else if ssh_conn.check_command_exists("yum")? {
-        ssh_conn.execute_interactive("sudo", &["yum", "install", "-y", "cifs-utils"])?;
-    } else if ssh_conn.check_command_exists("dnf")? {
-        ssh_conn.execute_interactive("sudo", &["dnf", "install", "-y", "cifs-utils"])?;
+    if exec.check_command_exists("apt-get")? {
+        exec.execute_interactive("sudo", &["apt-get", "update"])?;
+        exec.execute_interactive("sudo", &["apt-get", "install", "-y", "cifs-utils"])?;
+    } else if exec.check_command_exists("yum")? {
+        exec.execute_interactive("sudo", &["yum", "install", "-y", "cifs-utils"])?;
+    } else if exec.check_command_exists("dnf")? {
+        exec.execute_interactive("sudo", &["dnf", "install", "-y", "cifs-utils"])?;
     } else {
         anyhow::bail!("Unsupported package manager for SMB client installation");
     }
@@ -157,11 +132,11 @@ fn install_smb_client(ssh_conn: &SshConnection) -> Result<()> {
     Ok(())
 }
 
-fn cleanup_old_mounts(ssh_conn: &SshConnection) -> Result<()> {
+fn cleanup_old_mounts<E: CommandExecutor>(exec: &E) -> Result<()> {
     println!("=== Cleaning up old mounts ===");
 
     // List directories in /mnt/smb
-    let list_output = ssh_conn.execute_simple("ls", &["-1", "/mnt/smb"])?;
+    let list_output = exec.execute_simple("ls", &["-1", "/mnt/smb"])?;
     if !list_output.status.success() {
         // Directory doesn't exist yet, nothing to clean up
         return Ok(());
@@ -177,14 +152,12 @@ fn cleanup_old_mounts(ssh_conn: &SshConnection) -> Result<()> {
         let full_path = format!("/mnt/smb/{}", server_dir);
 
         // Check if it's a mount point
-        let mountpoint_check = ssh_conn.execute_simple("mountpoint", &["-q", &full_path]);
+        let mountpoint_check = exec.execute_simple("mountpoint", &["-q", &full_path]);
         if let Ok(output) = mountpoint_check {
             if output.status.success() {
                 println!("Found old mount at {}, unmounting...", full_path);
-                ssh_conn
-                    .execute_simple("sudo", &["umount", &full_path])
-                    .ok();
-                remove_fstab_entry(ssh_conn, &full_path)?;
+                exec.execute_simple("sudo", &["umount", &full_path]).ok();
+                remove_fstab_entry(exec, &full_path)?;
                 println!("✓ Cleaned up old mount at {}", full_path);
             }
         }
@@ -194,8 +167,8 @@ fn cleanup_old_mounts(ssh_conn: &SshConnection) -> Result<()> {
     Ok(())
 }
 
-fn setup_smb_share(
-    ssh_conn: &SshConnection,
+fn setup_smb_share<E: CommandExecutor>(
+    exec: &E,
     server_name: &str,
     share_name: &str,
     share_path: &str,
@@ -244,10 +217,11 @@ fn setup_smb_share(
     })?;
 
     // Create mount point
-    ssh_conn.execute_interactive("sudo", &["mkdir", "-p", mount_point])?;
+    // For system directories under /mnt, we need sudo
+    exec.execute_simple("sudo", &["mkdir", "-p", mount_point])?;
 
     // Check if already mounted
-    let mountpoint_check = ssh_conn.execute_simple("mountpoint", &["-q", mount_point]);
+    let mountpoint_check = exec.execute_simple("mountpoint", &["-q", mount_point]);
     if let Ok(output) = mountpoint_check {
         if output.status.success() {
             println!(
@@ -259,12 +233,12 @@ fn setup_smb_share(
     }
 
     // Get user ID and group ID
-    let uid_output = ssh_conn.execute_simple("id", &["-u"])?;
+    let uid_output = exec.execute_simple("id", &["-u"])?;
     let uid = String::from_utf8_lossy(&uid_output.stdout)
         .trim()
         .to_string();
 
-    let gid_output = ssh_conn.execute_simple("id", &["-g"])?;
+    let gid_output = exec.execute_simple("id", &["-g"])?;
     let gid = String::from_utf8_lossy(&gid_output.stdout)
         .trim()
         .to_string();
@@ -281,7 +255,7 @@ fn setup_smb_share(
     println!("Mounting: {} -> {}", share_path, mount_point);
 
     // Mount the share
-    let mount_result = ssh_conn.execute_simple(
+    let mount_result = exec.execute_simple(
         "sudo",
         &[
             "mount",
@@ -305,7 +279,7 @@ fn setup_smb_share(
             "{} {} cifs {},_netdev 0 0",
             share_path, mount_point, mount_opts
         );
-        add_fstab_entry(ssh_conn, mount_point, &fstab_entry)?;
+        add_fstab_entry(exec, mount_point, &fstab_entry)?;
     } else {
         anyhow::bail!(
             "Failed to mount {} - {} at {}",
@@ -318,9 +292,9 @@ fn setup_smb_share(
     Ok(())
 }
 
-fn add_fstab_entry(ssh_conn: &SshConnection, mount_point: &str, entry: &str) -> Result<()> {
+fn add_fstab_entry<E: CommandExecutor>(exec: &E, mount_point: &str, entry: &str) -> Result<()> {
     // Check if entry already exists
-    let fstab_content = ssh_conn.read_file("/etc/fstab")?;
+    let fstab_content = exec.read_file("/etc/fstab")?;
     if fstab_content.lines().any(|line| line.contains(mount_point)) {
         println!("✓ Entry already exists in /etc/fstab");
         return Ok(());
@@ -328,15 +302,15 @@ fn add_fstab_entry(ssh_conn: &SshConnection, mount_point: &str, entry: &str) -> 
 
     // Append entry to /etc/fstab
     let new_content = format!("{}\n{}", fstab_content.trim_end(), entry);
-    ssh_conn.write_file("/tmp/fstab.new", new_content.as_bytes())?;
-    ssh_conn.execute_interactive("sudo", &["mv", "/tmp/fstab.new", "/etc/fstab"])?;
+    exec.write_file("/tmp/fstab.new", new_content.as_bytes())?;
+    exec.execute_interactive("sudo", &["mv", "/tmp/fstab.new", "/etc/fstab"])?;
     println!("✓ Added to /etc/fstab for automatic mounting");
     println!("  Entry: {}", entry);
     Ok(())
 }
 
-fn remove_fstab_entry(ssh_conn: &SshConnection, mount_point: &str) -> Result<()> {
-    let fstab_content = ssh_conn.read_file("/etc/fstab")?;
+fn remove_fstab_entry<E: CommandExecutor>(exec: &E, mount_point: &str) -> Result<()> {
+    let fstab_content = exec.read_file("/etc/fstab")?;
     let filtered_lines: Vec<&str> = fstab_content
         .lines()
         .filter(|line| !line.contains(mount_point))
@@ -349,13 +323,13 @@ fn remove_fstab_entry(ssh_conn: &SshConnection, mount_point: &str) -> Result<()>
 
     let new_content = filtered_lines.join("\n");
     if !new_content.is_empty() {
-        ssh_conn.write_file("/tmp/fstab.new", new_content.as_bytes())?;
-        ssh_conn.execute_interactive("sudo", &["mv", "/tmp/fstab.new", "/etc/fstab"])?;
+        exec.write_file("/tmp/fstab.new", new_content.as_bytes())?;
+        exec.execute_interactive("sudo", &["mv", "/tmp/fstab.new", "/etc/fstab"])?;
     }
     Ok(())
 }
 
-fn uninstall_smb_mounts_remote(ssh_conn: &SshConnection, config: &EnvConfig) -> Result<()> {
+fn uninstall_smb_mounts_remote<E: CommandExecutor>(exec: &E, config: &EnvConfig) -> Result<()> {
     println!("=== Unmounting SMB shares ===");
 
     // Unmount each share
@@ -364,11 +338,11 @@ fn uninstall_smb_mounts_remote(ssh_conn: &SshConnection, config: &EnvConfig) -> 
             let mount_point = format!("/mnt/smb/{}/{}", server_name, share_name);
 
             // Check if mounted
-            let mountpoint_check = ssh_conn.execute_simple("mountpoint", &["-q", &mount_point]);
+            let mountpoint_check = exec.execute_simple("mountpoint", &["-q", &mount_point]);
             if let Ok(output) = mountpoint_check {
                 if output.status.success() {
                     println!("Unmounting {} - {}...", server_name, share_name);
-                    let umount_result = ssh_conn.execute_simple("sudo", &["umount", &mount_point]);
+                    let umount_result = exec.execute_simple("sudo", &["umount", &mount_point]);
                     if umount_result.is_ok() && umount_result.as_ref().unwrap().status.success() {
                         println!("✓ {} - {} unmounted", server_name, share_name);
                     } else {
@@ -380,14 +354,14 @@ fn uninstall_smb_mounts_remote(ssh_conn: &SshConnection, config: &EnvConfig) -> 
             }
 
             // Remove from /etc/fstab
-            remove_fstab_entry(ssh_conn, &mount_point)?;
+            remove_fstab_entry(exec, &mount_point)?;
             println!("✓ Removed {} from /etc/fstab", mount_point);
 
             // Remove mount point directory
-            let dir_check = ssh_conn.execute_simple("test", &["-d", &mount_point]);
+            let dir_check = exec.execute_simple("test", &["-d", &mount_point]);
             if let Ok(output) = dir_check {
                 if output.status.success() {
-                    let rmdir_result = ssh_conn.execute_simple("sudo", &["rmdir", &mount_point]);
+                    let rmdir_result = exec.execute_simple("sudo", &["rmdir", &mount_point]);
                     if rmdir_result.is_ok() && rmdir_result.as_ref().unwrap().status.success() {
                         println!("✓ Removed mount point {}", mount_point);
                     } else {
