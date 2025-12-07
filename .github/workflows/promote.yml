@@ -68,7 +68,7 @@ jobs:
           TO="${{ github.event.inputs.to_branch }}"
 
           # Fetch all branches
-          git fetch origin --all
+          git fetch --all
 
           # Check if source branch exists
           if ! git show-ref --verify --quiet refs/remotes/origin/$FROM; then
@@ -91,8 +91,8 @@ jobs:
           TO="${{ github.event.inputs.to_branch }}"
 
           # Get latest commits from both branches
-          git fetch origin $FROM:$FROM 2>/dev/null || true
-          git fetch origin $TO:$TO 2>/dev/null || true
+          git fetch origin $FROM 2>/dev/null || true
+          git fetch origin $TO 2>/dev/null || true
 
           # Check if source has commits not in target
           COMMITS_AHEAD=$(git rev-list --count origin/$TO..origin/$FROM 2>/dev/null || echo "0")
