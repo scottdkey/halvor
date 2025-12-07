@@ -2,6 +2,18 @@
 
 set -e
 
+# Debug: Print environment variables if DEBUG is set
+if [ "${DEBUG:-false}" = "true" ]; then
+    echo "=== Environment Variables ==="
+    echo "REGION: ${REGION:-<not set>}"
+    echo "PIA_USERNAME: ${PIA_USERNAME:-<not set>}"
+    echo "PIA_PASSWORD: ${PIA_PASSWORD:+<set>}"
+    echo "UPDATE_CONFIGS: ${UPDATE_CONFIGS:-<not set>}"
+    echo "TZ: ${TZ:-<not set>}"
+    echo "=============================="
+    echo ""
+fi
+
 # PIA OpenVPN config download URL
 PIA_CONFIG_URL="https://www.privateinternetaccess.com/openvpn/openvpn.zip"
 
@@ -73,38 +85,57 @@ ls -la /config/ 2>&1 || echo "Cannot list /config directory"
 # If REGION is specified, try to find matching config
 if [ -n "$REGION" ]; then
     echo "REGION specified: $REGION"
-    # PIA configs are named like: us-california.ovpn, ca-montreal.ovpn, etc.
-    # Try to find a config that matches the region (case-insensitive)
-    REGION_LOWER=$(echo "$REGION" | tr '[:upper:]' '[:lower:]')
+    # PIA configs are named like: us_california.ovpn, uk_london.ovpn, canada.ovpn, etc.
+    # Normalize region name: convert to lowercase and replace hyphens with underscores
+    REGION_NORMALIZED=$(echo "$REGION" | tr '[:upper:]' '[:lower:]' | tr '-' '_')
     
-    # Try exact match first
-    if [ -f "/config/${REGION_LOWER}.ovpn" ]; then
-        OVPN_CONFIG="/config/${REGION_LOWER}.ovpn"
-        echo "Found exact match: $OVPN_CONFIG"
+    echo "Normalized region: $REGION_NORMALIZED"
+    
+    # Try exact match first (with .ovpn extension)
+    if [ -f "/config/${REGION_NORMALIZED}.ovpn" ]; then
+        OVPN_CONFIG="/config/${REGION_NORMALIZED}.ovpn"
+        echo "✓ Found exact match: $OVPN_CONFIG"
     else
-        # Try to find configs that contain the region name
-        MATCHING_CONFIG=$(find /config -name "*.ovpn" -type f | grep -i "$REGION_LOWER" | head -1)
+        # Try partial match - find configs that contain the region name
+        # This handles cases like "montreal" matching "canada" or "montreal" in filename
+        MATCHING_CONFIG=$(find /config -name "*.ovpn" -type f | grep -i "$REGION_NORMALIZED" | head -1)
+        
         if [ -n "$MATCHING_CONFIG" ]; then
             OVPN_CONFIG="$MATCHING_CONFIG"
-            echo "Found region match: $OVPN_CONFIG"
+            echo "✓ Found partial match: $OVPN_CONFIG"
         else
-            echo "⚠ No config found matching region: $REGION"
-            echo "Available configs:"
-            ls -1 /config/*.ovpn 2>/dev/null | sed 's|^/config/||' | sed 's|^|  - |' || echo "  (none found)"
+            # Try matching just the last part (e.g., "montreal" or "california")
+            # Extract the last segment after underscore or hyphen
+            REGION_PART=$(echo "$REGION_NORMALIZED" | awk -F'[_-]' '{print $NF}')
+            if [ "$REGION_PART" != "$REGION_NORMALIZED" ]; then
+                MATCHING_CONFIG=$(find /config -name "*.ovpn" -type f | grep -i "$REGION_PART" | head -1)
+                if [ -n "$MATCHING_CONFIG" ]; then
+                    OVPN_CONFIG="$MATCHING_CONFIG"
+                    echo "✓ Found match by region part '$REGION_PART': $OVPN_CONFIG"
+                fi
+            fi
+            
+            if [ -z "$OVPN_CONFIG" ]; then
+                echo "⚠ No config found matching region: $REGION"
+                echo "  Tried: ${REGION_NORMALIZED}.ovpn"
+                echo "  Tried: partial match for '$REGION_NORMALIZED'"
+                if [ "$REGION_PART" != "$REGION_NORMALIZED" ]; then
+                    echo "  Tried: partial match for '$REGION_PART'"
+                fi
+                echo ""
+                echo "Available configs (first 20):"
+                ls -1 /config/*.ovpn 2>/dev/null | sed 's|^/config/||' | sed 's|^|  - |' | head -20 || echo "  (none found)"
+            fi
         fi
     fi
 fi
 
 # If no config found yet, try default fallback logic
 if [ -z "$OVPN_CONFIG" ]; then
-    # Try common default: ca-montreal.ovpn
-    if [ -f /config/ca-montreal.ovpn ]; then
-        OVPN_CONFIG="/config/ca-montreal.ovpn"
-        echo "Using default config: $OVPN_CONFIG"
-    # Otherwise, use first available .ovpn file
-    elif ls /config/*.ovpn 1> /dev/null 2>&1; then
-        OVPN_CONFIG=$(ls /config/*.ovpn | head -1)
-        echo "Using first available config: $OVPN_CONFIG"
+    # Use first available .ovpn file (alphabetically sorted for consistency)
+    if ls /config/*.ovpn 1> /dev/null 2>&1; then
+        OVPN_CONFIG=$(ls /config/*.ovpn | sort | head -1)
+        echo "No REGION specified - using first available config: $OVPN_CONFIG"
     else
         echo "⚠ No OpenVPN config file found in /config"
         echo ""
