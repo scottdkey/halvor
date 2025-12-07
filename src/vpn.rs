@@ -489,7 +489,7 @@ fn verify_vpn_remote(hostname: &str, target_host: &str, ssh_conn: &SshConnection
 
     // Test 3: Check TUN interface
     println!("[3/10] Checking TUN interface...");
-    let tun_check = ssh_conn.execute_shell("docker exec openvpn-pia ip link show tun0 2>&1")?;
+    let tun_check = ssh_conn.execute_shell("docker exec openvpn-pia ip addr show tun0 2>&1")?;
     if tun_check.status.success() {
         let tun_output = String::from_utf8_lossy(&tun_check.stdout);
         if let Some(ip_line) = tun_output.lines().find(|l| l.contains("inet ")) {
@@ -685,7 +685,7 @@ fn verify_vpn_local(hostname: &str, target_host: &str) -> Result<()> {
 
     // Test 3: Check TUN interface
     println!("[3/10] Checking TUN interface...");
-    let tun_check = local::execute_shell("docker exec openvpn-pia ip link show tun0 2>&1")?;
+    let tun_check = local::execute_shell("docker exec openvpn-pia ip addr show tun0 2>&1")?;
     if tun_check.status.success() {
         let tun_output = String::from_utf8_lossy(&tun_check.stdout);
         if let Some(ip_line) = tun_output.lines().find(|l| l.contains("inet ")) {
