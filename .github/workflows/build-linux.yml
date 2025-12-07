@@ -1,0 +1,251 @@
+name: Build and Release Linux
+
+on:
+  workflow_dispatch:
+    inputs:
+      build:
+        description: "Build Linux CLI"
+        required: false
+        type: boolean
+        default: true
+      release:
+        description: "Release Linux CLI (requires build first)"
+        required: false
+        type: boolean
+        default: false
+      version:
+        description: "Version to release (defaults to Cargo.toml version)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+env:
+  RUST_VERSION: stable
+
+jobs:
+  approval-to-build:
+    name: Approval to Build
+    runs-on: ubuntu-latest
+    if: github.event.inputs.build == true
+    environment:
+      name: ${{ github.event.inputs.to_branch }}-approval
+    steps:
+      - name: Request approval to build
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Approval Required: Build Linux CLI"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "Approving this will build the Linux CLI for all supported targets."
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  build:
+    name: Build Linux CLI
+    runs-on: ubuntu-latest
+    needs: approval-to-build
+    if: needs.approval-to-build.result == 'success'
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-gnu
+          - aarch64-unknown-linux-musl
+          - riscv64gc-unknown-linux-gnu
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.tool_cache }}/cargo
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.target }}-
+            ${{ runner.os }}-cargo-
+
+      - name: Install build dependencies
+        if: startsWith(matrix.target, 'x86_64-unknown-linux') || startsWith(matrix.target, 'aarch64-unknown-linux') || startsWith(matrix.target, 'riscv64gc-unknown-linux')
+        run: |
+          sudo apt-get update
+          if [[ "${{ matrix.target }}" == *"musl"* ]]; then
+            sudo apt-get install -y musl-tools musl-dev
+          elif [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
+            sudo apt-get install -y \
+              gcc-aarch64-linux-gnu \
+              g++-aarch64-linux-gnu
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+            echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+            echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++" >> $GITHUB_ENV
+          elif [[ "${{ matrix.target }}" == "riscv64gc-unknown-linux-gnu" ]]; then
+            sudo apt-get install -y \
+              gcc-riscv64-linux-gnu \
+              g++-riscv64-linux-gnu
+            echo "CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER=riscv64-linux-gnu-gcc" >> $GITHUB_ENV
+            echo "CC_riscv64gc_unknown_linux_gnu=riscv64-linux-gnu-gcc" >> $GITHUB_ENV
+            echo "CXX_riscv64gc_unknown_linux_gnu=riscv64-linux-gnu-g++" >> $GITHUB_ENV
+          fi
+
+      - name: Build Rust CLI
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hal-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/hal
+          retention-days: 90
+          if-no-files-found: error
+
+  approval-to-release:
+    name: Approval to Release
+    runs-on: ubuntu-latest
+    needs: [approval-to-build, build]
+    if: |
+      always() &&
+      needs.approval-to-build.result == 'success' &&
+      github.event.inputs.release == true &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped')
+    environment:
+      name: ${{ github.event.inputs.to_branch }}-approval
+    steps:
+      - name: Request approval to release
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Approval Required: Release Linux CLI"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "Build completed successfully."
+          echo ""
+          echo "Approving this will:"
+          echo "  - Create a GitHub release"
+          echo "  - Upload Linux build artifacts"
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  release:
+    name: Release Linux CLI
+    runs-on: ubuntu-latest
+    needs: [approval-to-build, build, approval-to-release]
+    if: |
+      needs.approval-to-build.result == 'success' &&
+      needs.approval-to-release.result == 'success' &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          fi
+          # Remove 'v' prefix if present
+          VERSION="${VERSION#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Release version: $VERSION"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release archives
+        run: |
+          mkdir -p release
+          VERSION="${{ steps.version.outputs.version }}"
+
+          for artifact_dir in artifacts/hal-*/; do
+            if [ -d "$artifact_dir" ]; then
+              TARGET=$(basename "$artifact_dir" | sed 's/hal-//')
+              echo "Processing: $TARGET"
+              
+              # Extract architecture from target
+              ARCH_RAW=$(echo "$TARGET" | cut -d'-' -f1)
+              
+              # Convert architecture names
+              case "$ARCH_RAW" in
+                x86_64)
+                  ARCH="amd64"
+                  ;;
+                aarch64)
+                  ARCH="arm64"
+                  ;;
+                riscv64gc)
+                  ARCH="riscv64"
+                  ;;
+                *)
+                  ARCH="$ARCH_RAW"
+                  ;;
+              esac
+              
+              if [ -f "$artifact_dir/hal" ]; then
+                BINARY_NAME="hal"
+                case "$TARGET" in
+                  *linux-gnu*)
+                    OS="linux"
+                    EXT=""
+                    ;;
+                  *linux-musl*)
+                    OS="linux"
+                    EXT="musl"
+                    ;;
+                  *)
+                    echo "Unknown target: $TARGET"
+                    continue
+                    ;;
+                esac
+                
+                mkdir -p "release/${OS}-${ARCH}${EXT:+-$EXT}"
+                cp "$artifact_dir/$BINARY_NAME" "release/${OS}-${ARCH}${EXT:+-$EXT}/$BINARY_NAME"
+                chmod +x "release/${OS}-${ARCH}${EXT:+-$EXT}/$BINARY_NAME"
+                
+                if [ -n "$EXT" ]; then
+                  ARCHIVE_NAME="hal-${VERSION}-${OS}-${ARCH}-${EXT}.tar.gz"
+                else
+                  ARCHIVE_NAME="hal-${VERSION}-${OS}-${ARCH}.tar.gz"
+                fi
+                tar -czf "$ARCHIVE_NAME" -C "release/${OS}-${ARCH}${EXT:+-$EXT}" "$BINARY_NAME"
+                echo "Created: $ARCHIVE_NAME"
+              fi
+            fi
+          done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Release v${{ steps.version.outputs.version }} (Linux)
+          body: |
+            ## Linux Release v${{ steps.version.outputs.version }}
+
+            ### Downloads
+            - See assets below for Linux-specific binaries
+
+            ---
+            *This release was created automatically by the Linux build workflow.*
+          files: |
+            hal-*-linux-*.tar.gz
+          draft: false
+          prerelease: false

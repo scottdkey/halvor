@@ -1,0 +1,207 @@
+name: Build and Release Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      build:
+        description: "Build Windows CLI"
+        required: false
+        type: boolean
+        default: true
+      release:
+        description: "Release Windows CLI (requires build first)"
+        required: false
+        type: boolean
+        default: false
+      version:
+        description: "Version to release (defaults to Cargo.toml version)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+env:
+  RUST_VERSION: stable
+
+jobs:
+  approval-to-build:
+    name: Approval to Build
+    runs-on: ubuntu-latest
+    if: github.event.inputs.build == true
+    environment:
+      name: ${{ github.event.inputs.to_branch }}-approval
+    steps:
+      - name: Request approval to build
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Approval Required: Build Windows CLI"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "Approving this will build the Windows CLI for all supported targets."
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  build:
+    name: Build Windows CLI
+    runs-on: windows-latest
+    needs: approval-to-build
+    if: needs.approval-to-build.result == 'success'
+    strategy:
+      matrix:
+        target:
+          - x86_64-pc-windows-msvc
+          - aarch64-pc-windows-msvc
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.tool_cache }}/cargo
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.target }}-
+            ${{ runner.os }}-cargo-
+
+      - name: Build Rust CLI
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hal-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/hal.exe
+          retention-days: 90
+          if-no-files-found: error
+
+  approval-to-release:
+    name: Approval to Release
+    runs-on: ubuntu-latest
+    needs: [approval-to-build, build]
+    if: |
+      always() &&
+      needs.approval-to-build.result == 'success' &&
+      github.event.inputs.release == true &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped')
+    environment:
+      name: ${{ github.event.inputs.to_branch }}-approval
+    steps:
+      - name: Request approval to release
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Approval Required: Release Windows CLI"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "Build completed successfully."
+          echo ""
+          echo "Approving this will:"
+          echo "  - Create a GitHub release"
+          echo "  - Upload Windows build artifacts"
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  release:
+    name: Release Windows CLI
+    runs-on: ubuntu-latest
+    needs: [approval-to-build, build, approval-to-release]
+    if: |
+      needs.approval-to-build.result == 'success' &&
+      needs.approval-to-release.result == 'success' &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          fi
+          # Remove 'v' prefix if present
+          VERSION="${VERSION#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Release version: $VERSION"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release archives
+        run: |
+          mkdir -p release
+          VERSION="${{ steps.version.outputs.version }}"
+
+          for artifact_dir in artifacts/hal-*/; do
+            if [ -d "$artifact_dir" ]; then
+              TARGET=$(basename "$artifact_dir" | sed 's/hal-//')
+              echo "Processing: $TARGET"
+              
+              # Extract architecture from target
+              ARCH_RAW=$(echo "$TARGET" | cut -d'-' -f1)
+              
+              # Convert architecture names
+              case "$ARCH_RAW" in
+                x86_64)
+                  ARCH="amd64"
+                  ;;
+                aarch64)
+                  ARCH="arm64"
+                  ;;
+                *)
+                  ARCH="$ARCH_RAW"
+                  ;;
+              esac
+              
+              if [ -f "$artifact_dir/hal.exe" ]; then
+                BINARY_NAME="hal.exe"
+                OS="windows"
+                
+                mkdir -p "release/${OS}-${ARCH}"
+                cp "$artifact_dir/$BINARY_NAME" "release/${OS}-${ARCH}/$BINARY_NAME"
+                
+                ARCHIVE_NAME="hal-${VERSION}-${OS}-${ARCH}.zip"
+                cd "release/${OS}-${ARCH}"
+                zip -r "../../$ARCHIVE_NAME" "$BINARY_NAME"
+                cd ../..
+                echo "Created: $ARCHIVE_NAME"
+              fi
+            fi
+          done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Release v${{ steps.version.outputs.version }} (Windows)
+          body: |
+            ## Windows Release v${{ steps.version.outputs.version }}
+
+            ### Downloads
+            - See assets below for Windows-specific binaries
+
+            ---
+            *This release was created automatically by the Windows build workflow.*
+          files: |
+            hal-*-windows-*.zip
+          draft: false
+          prerelease: false
