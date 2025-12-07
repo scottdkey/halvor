@@ -172,6 +172,7 @@ fi
 
 # Start Privoxy in background first (so it's ready when OpenVPN connects)
 echo "Starting Privoxy..."
+# Privoxy will log to /var/log/privoxy/logfile (configured in Dockerfile)
 privoxy --no-daemon /etc/privoxy/config &
 PRIVOXY_PID=$!
 
@@ -246,25 +247,51 @@ echo "✓ OpenVPN started (PID: $OPENVPN_PID)"
 echo "✓ Privoxy started (PID: $PRIVOXY_PID)"
 echo ""
 echo "VPN Status:"
-ip addr show tun0 2>/dev/null || echo "  TUN interface: Not available"
+ip addr show tun0 2>/dev/null | grep "inet " | sed 's/^/  VPN IP: /' || echo "  TUN interface: Not available"
 echo ""
-echo "Network Configuration:"
-echo "  Container IPs:"
-ip addr show | grep "inet " | grep -v "127.0.0.1" | sed 's/^/    /'
-echo "  Default route:"
-ip route | grep default | sed 's/^/    /'
-echo "  Privoxy listening on:"
-netstat -tlnp 2>/dev/null | grep 8888 || ss -tlnp 2>/dev/null | grep 8888 || echo "    (checking...)"
+echo "Proxy: http://0.0.0.0:8888"
 echo ""
-echo "Proxy Information:"
-echo "  Privoxy proxy: http://0.0.0.0:8888 (inside container)"
-echo "  Access from host: http://<host-ip>:8888"
-echo "  Access from other containers: http://openvpn-pia:8888"
+echo "=== Service Logs ==="
 echo ""
-echo "Diagnostics:"
-echo "  View logs: docker exec <container> tail-logs.sh"
-echo "  Check proxy: docker exec <container> check-proxy.sh"
-echo ""
+
+# Wait a moment for log files to be created
+sleep 2
+
+# Start tailing both logs with prefixes in background, outputting to stdout
+TAIL_PIDS=""
+
+# Tail OpenVPN logs with prefix
+if [ -f /var/log/openvpn/openvpn.log ]; then
+    (tail -f /var/log/openvpn/openvpn.log 2>/dev/null | while IFS= read -r line; do
+        echo "[OpenVPN] $line"
+    done) &
+    TAIL_PIDS="$! "
+fi
+
+# Tail Privoxy logs with prefix
+if [ -f /var/log/privoxy/logfile ]; then
+    (tail -f /var/log/privoxy/logfile 2>/dev/null | while IFS= read -r line; do
+        echo "[Privoxy] $line"
+    done) &
+    TAIL_PIDS="${TAIL_PIDS}$!"
+fi
+
+# If log files don't exist yet, wait and retry
+if [ -z "$TAIL_PIDS" ]; then
+    sleep 3
+    if [ -f /var/log/openvpn/openvpn.log ]; then
+        (tail -f /var/log/openvpn/openvpn.log 2>/dev/null | while IFS= read -r line; do
+            echo "[OpenVPN] $line"
+        done) &
+        TAIL_PIDS="$! "
+    fi
+    if [ -f /var/log/privoxy/logfile ]; then
+        (tail -f /var/log/privoxy/logfile 2>/dev/null | while IFS= read -r line; do
+            echo "[Privoxy] $line"
+        done) &
+        TAIL_PIDS="${TAIL_PIDS}$!"
+    fi
+fi
 
 # Wait for Privoxy (child process) and monitor OpenVPN
 # OpenVPN runs as a daemon, so we can't wait on it directly
@@ -272,8 +299,13 @@ echo ""
 while kill -0 "$PRIVOXY_PID" 2>/dev/null; do
     # Check if OpenVPN is still running
     if ! pgrep -f "openvpn.*$OVPN_CONFIG" >/dev/null 2>&1; then
+        echo ""
         echo "⚠ OpenVPN process exited unexpectedly"
         tail -30 /var/log/openvpn/openvpn.log || true
+        # Kill tail processes
+        for pid in $TAIL_PIDS; do
+            kill $pid 2>/dev/null || true
+        done
         cleanup
         exit 1
     fi
@@ -282,5 +314,10 @@ while kill -0 "$PRIVOXY_PID" 2>/dev/null; do
 done
 
 # If Privoxy exits, cleanup and exit
+echo ""
 echo "⚠ Privoxy exited"
+# Kill tail processes
+for pid in $TAIL_PIDS; do
+    kill $pid 2>/dev/null || true
+done
 cleanup
