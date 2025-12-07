@@ -477,6 +477,14 @@ jobs:
         with:
           path: artifacts
 
+      - name: List downloaded artifacts
+        run: |
+          echo "Downloaded artifacts structure:"
+          find artifacts -type d -name "hal-*" | sort
+          echo ""
+          echo "Artifact directories:"
+          ls -la artifacts/ || echo "No artifacts directory found"
+
       - name: Prepare release archives
         run: |
           mkdir -p release
@@ -487,8 +495,20 @@ jobs:
               ARTIFACT_NAME=$(basename "$artifact_dir")
               TARGET=$(echo "$ARTIFACT_NAME" | sed 's/hal-//')
               
+              echo "Processing artifact: $ARTIFACT_NAME"
+              echo "Target: $TARGET"
+              
               # Extract architecture from target (format: arch-vendor-os-abi)
               ARCH_RAW=$(echo "$TARGET" | cut -d'-' -f1)
+              echo "ARCH_RAW: $ARCH_RAW"
+              
+              # Validate ARCH_RAW is not empty and not "linux" or "hal"
+              if [ -z "$ARCH_RAW" ] || [ "$ARCH_RAW" == "linux" ] || [ "$ARCH_RAW" == "hal" ]; then
+                echo "Error: Invalid architecture extracted from target: $TARGET (got: $ARCH_RAW)"
+                echo "Skipping this artifact"
+                continue
+              fi
+              
               # Convert architecture names
               case "$ARCH_RAW" in
                 x86_64)
@@ -504,6 +524,7 @@ jobs:
                   ARCH="$ARCH_RAW"
                   ;;
               esac
+              echo "Final ARCH: $ARCH"
               
               # Check for Windows executable (.exe)
               if [ -f "$artifact_dir/hal.exe" ]; then
@@ -698,8 +719,20 @@ jobs:
               ARTIFACT_NAME=$(basename "$artifact_dir")
               TARGET=$(echo "$ARTIFACT_NAME" | sed 's/hal-//')
               
+              echo "Processing artifact: $ARTIFACT_NAME"
+              echo "Target: $TARGET"
+              
               # Extract architecture from target (format: arch-vendor-os-abi)
               ARCH_RAW=$(echo "$TARGET" | cut -d'-' -f1)
+              echo "ARCH_RAW: $ARCH_RAW"
+              
+              # Validate ARCH_RAW is not empty and not "linux" or "hal"
+              if [ -z "$ARCH_RAW" ] || [ "$ARCH_RAW" == "linux" ] || [ "$ARCH_RAW" == "hal" ]; then
+                echo "Error: Invalid architecture extracted from target: $TARGET (got: $ARCH_RAW)"
+                echo "Skipping this artifact"
+                continue
+              fi
+              
               # Convert architecture names
               case "$ARCH_RAW" in
                 x86_64)
@@ -715,6 +748,7 @@ jobs:
                   ARCH="$ARCH_RAW"
                   ;;
               esac
+              echo "Final ARCH: $ARCH"
               
               case "$TARGET" in
                 *linux-gnu*)
@@ -726,9 +760,11 @@ jobs:
                   EXT="musl"
                   ;;
                 *)
+                  echo "Unknown target pattern: $TARGET, skipping"
                   continue
                   ;;
               esac
+              echo "OS: $OS, ARCH: $ARCH, EXT: $EXT"
               
               mkdir -p "release/${OS}-${ARCH}${EXT:+-$EXT}"
               cp "$artifact_dir/hal" "release/${OS}-${ARCH}${EXT:+-$EXT}/hal"
@@ -745,16 +781,16 @@ jobs:
             fi
           done
 
-      - name: Create GitHub Release
+      - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ steps.version.outputs.version }}
-          name: Release CLI (Linux) v${{ steps.version.outputs.version }}
+          name: Release v${{ steps.version.outputs.version }}
           body: |
-            ## Release CLI (Linux) v${{ steps.version.outputs.version }}
+            ## Release v${{ steps.version.outputs.version }}
 
             ### Downloads
-            See assets below for Linux binaries.
+            See assets below for platform-specific binaries.
           files: hal-*-linux-*.tar.gz
           draft: false
           prerelease: false
@@ -801,8 +837,20 @@ jobs:
               ARTIFACT_NAME=$(basename "$artifact_dir")
               TARGET=$(echo "$ARTIFACT_NAME" | sed 's/hal-//')
               
+              echo "Processing artifact: $ARTIFACT_NAME"
+              echo "Target: $TARGET"
+              
               # Extract architecture from target (format: arch-vendor-os-abi)
               ARCH_RAW=$(echo "$TARGET" | cut -d'-' -f1)
+              echo "ARCH_RAW: $ARCH_RAW"
+              
+              # Validate ARCH_RAW is not empty and not "darwin" or "hal"
+              if [ -z "$ARCH_RAW" ] || [ "$ARCH_RAW" == "darwin" ] || [ "$ARCH_RAW" == "hal" ]; then
+                echo "Error: Invalid architecture extracted from target: $TARGET (got: $ARCH_RAW)"
+                echo "Skipping this artifact"
+                continue
+              fi
+              
               # Convert architecture names
               case "$ARCH_RAW" in
                 x86_64)
@@ -815,6 +863,7 @@ jobs:
                   ARCH="$ARCH_RAW"
                   ;;
               esac
+              echo "Final ARCH: $ARCH"
               
               case "$TARGET" in
                 *apple-darwin*)
@@ -822,9 +871,11 @@ jobs:
                   EXT=""
                   ;;
                 *)
+                  echo "Unknown target pattern: $TARGET, skipping"
                   continue
                   ;;
               esac
+              echo "OS: $OS, ARCH: $ARCH, EXT: $EXT"
               
               mkdir -p "release/${OS}-${ARCH}"
               cp "$artifact_dir/hal" "release/${OS}-${ARCH}/hal"
