@@ -29,7 +29,7 @@ install:
 # Setup development dependencies
 setup-dev:
 	@echo "Installing cargo-watch for development..."
-	cargo install cargo-watch --quiet
+	cargo install cargo-watch
 
 # Development mode: watch for changes and auto-install
 dev: setup-dev
