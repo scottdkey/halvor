@@ -1,7 +1,7 @@
+use crate::exec::{SshConnection, local};
 use anyhow::{Context, Result};
 use std::env;
-use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 pub fn build_and_push_vpn_image(github_user: &str, image_tag: Option<&str>) -> Result<()> {
     let homelab_dir = crate::config::find_homelab_dir()?;
@@ -15,12 +15,7 @@ pub fn build_and_push_vpn_image(github_user: &str, image_tag: Option<&str>) -> R
     }
 
     // Get git hash for versioning
-    let git_hash = Command::new("git")
-        .arg("rev-parse")
-        .arg("--short")
-        .arg("HEAD")
-        .current_dir(&homelab_dir)
-        .output()
+    let git_hash = local::execute("git", &["rev-parse", "--short", "HEAD"])
         .ok()
         .and_then(|output| {
             if output.status.success() {
@@ -49,18 +44,16 @@ pub fn build_and_push_vpn_image(github_user: &str, image_tag: Option<&str>) -> R
     println!();
 
     // Build the image with all tags
-    let mut build_cmd = Command::new("docker");
-    build_cmd.arg("build");
+    let mut build_args = vec!["build"];
     for tag in &tags_to_push {
-        build_cmd.arg("-t").arg(tag);
+        build_args.push("-t");
+        build_args.push(tag);
     }
-    build_cmd
-        .arg("-f")
-        .arg("Dockerfile")
-        .arg(".")
-        .current_dir(&vpn_container_dir);
+    build_args.extend(&["-f", "Dockerfile", "."]);
 
-    let build_status = build_cmd
+    let build_status = Command::new("docker")
+        .args(&build_args)
+        .current_dir(&vpn_container_dir)
         .status()
         .context("Failed to execute docker build")?;
 
@@ -73,16 +66,13 @@ pub fn build_and_push_vpn_image(github_user: &str, image_tag: Option<&str>) -> R
 
     // Check if user is logged into GitHub Container Registry
     println!("Checking GitHub Container Registry authentication...");
-    let _auth_check = Command::new("docker")
-        .arg("info")
-        .output()
-        .context("Failed to check docker info")?;
+    let _auth_check = local::execute("docker", &["info"]).context("Failed to check docker info")?;
 
     // Try to verify we can access ghcr.io
-    let login_test = Command::new("docker")
-        .arg("pull")
-        .arg(format!("ghcr.io/{}/vpn:latest", github_user))
-        .output();
+    let login_test = local::execute(
+        "docker",
+        &["pull", &format!("ghcr.io/{}/vpn:latest", github_user)],
+    );
 
     if let Ok(output) = login_test {
         if !output.status.success() {
@@ -102,11 +92,8 @@ pub fn build_and_push_vpn_image(github_user: &str, image_tag: Option<&str>) -> R
     // Push all tags
     for tag in &tags_to_push {
         println!("Pushing {}...", tag);
-        let push_status = Command::new("docker")
-            .arg("push")
-            .arg(tag)
-            .status()
-            .context(format!("Failed to execute docker push for {}", tag))?;
+        let push_status = local::execute_status("docker", &["push", tag])
+            .with_context(|| format!("Failed to execute docker push for {}", tag))?;
 
         if !push_status.success() {
             println!();
@@ -204,70 +191,16 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
     // If not set, uses the SSH user (default_user)
     let vpn_user = env::var("VPN_USER").unwrap_or_else(|_| default_user.clone());
     let host_with_user = format!("{}@{}", default_user, target_host);
-
-    // Test if key-based auth works
-    let test_cmd = format!(
-        r#"ssh -o ConnectTimeout=1 -o BatchMode=yes -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o StrictHostKeyChecking=no {} 'echo test' >/dev/null 2>&1"#,
-        host_with_user
-    );
-
-    let test_status = Command::new("sh")
-        .arg("-c")
-        .arg(&test_cmd)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-
-    let use_key_auth = test_status.is_ok() && test_status.unwrap().success();
+    let ssh_conn = SshConnection::new(&host_with_user)?;
 
     // Check if files already exist - if so, skip deployment
     // Check for both .ovpn and .opvn (typo) variants
     // Use /home/$USER/config/vpn (USER can be set via VPN_USER env var)
     let vpn_config_dir = format!("/home/{}/config/vpn", vpn_user);
-    let check_cmd = format!(
-        r#"test -f "{}/auth.txt" && (test -f "{}/ca-montreal.ovpn" || test -f "{}/ca-montreal.opvn") && echo 'exists' || echo 'missing'"#,
-        vpn_config_dir, vpn_config_dir, vpn_config_dir
-    );
-    let mut check_cmd_exec = Command::new("ssh");
-    if use_key_auth {
-        check_cmd_exec.args([
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "PreferredAuthentications=publickey",
-            "-o",
-            "PasswordAuthentication=no",
-            &host_with_user,
-            "bash",
-            "-c",
-            &check_cmd,
-        ]);
-    } else {
-        check_cmd_exec.args([
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "PreferredAuthentications=publickey,keyboard-interactive,password",
-            &host_with_user,
-            "bash",
-            "-c",
-            &check_cmd,
-        ]);
-    }
-    check_cmd_exec.stdout(Stdio::piped());
-    check_cmd_exec.stderr(Stdio::null());
-    let check_output = check_cmd_exec.output()?;
-    let output_str = String::from_utf8_lossy(&check_output.stdout);
-    let files_exist = output_str.trim() == "exists";
-
-    // Debug: print what we got
-    if !files_exist {
-        eprintln!(
-            "Debug: Check command output: '{}' (status: {})",
-            output_str.trim(),
-            check_output.status
-        );
-    }
+    let auth_exists = ssh_conn.file_exists(&format!("{}/auth.txt", vpn_config_dir))?;
+    let config_exists = ssh_conn.file_exists(&format!("{}/ca-montreal.ovpn", vpn_config_dir))?
+        || ssh_conn.file_exists(&format!("{}/ca-montreal.opvn", vpn_config_dir))?;
+    let files_exist = auth_exists && config_exists;
 
     if files_exist {
         println!("✓ VPN configuration files already exist on remote system");
@@ -288,191 +221,32 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
         }
 
         // Copy files using scp, then move to $HOME/config/vpn
-        // First copy to temp location in home directory, then move to final location
-        let mut scp_auth = Command::new("scp");
-        if use_key_auth {
-            scp_auth.args([
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-o",
-                "PreferredAuthentications=publickey",
-                "-o",
-                "PasswordAuthentication=no",
-                auth_file.to_str().unwrap(),
-                &format!("{}:~/auth.txt.tmp", host_with_user),
-            ]);
-        } else {
-            scp_auth.args([
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-o",
-                "PreferredAuthentications=publickey,keyboard-interactive,password",
-                auth_file.to_str().unwrap(),
-                &format!("{}:~/auth.txt.tmp", host_with_user),
-            ]);
-        }
-        scp_auth.stdout(Stdio::null());
-        scp_auth.stderr(Stdio::inherit());
-        let scp_auth_status = scp_auth.status()?;
-        if !scp_auth_status.success() {
-            anyhow::bail!("Failed to copy auth.txt to remote system");
-        }
+        // Read auth file and write directly
+        let auth_content = std::fs::read(&auth_file)
+            .with_context(|| format!("Failed to read auth file: {}", auth_file.display()))?;
 
-        // Move and set permissions (no sudo needed in user's home directory)
-        let move_auth_cmd = format!(
-            r#"mkdir -p "/home/{}/config/vpn" && mv ~/auth.txt.tmp "/home/{}/config/vpn/auth.txt" && chmod 600 "/home/{}/config/vpn/auth.txt""#,
-            vpn_user, vpn_user, vpn_user
-        );
-        let mut move_auth = Command::new("ssh");
-        if use_key_auth {
-            move_auth.args([
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-o",
-                "PreferredAuthentications=publickey",
-                "-o",
-                "PasswordAuthentication=no",
-                &host_with_user,
-                "bash",
-                "-c",
-                &move_auth_cmd,
-            ]);
-        } else {
-            move_auth.args([
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-o",
-                "PreferredAuthentications=publickey,keyboard-interactive,password",
-                &host_with_user,
-                "bash",
-                "-c",
-                &move_auth_cmd,
-            ]);
-        }
-        move_auth.stdout(Stdio::null());
-        move_auth.stderr(Stdio::inherit());
-        let move_auth_status = move_auth.status()?;
-        if !move_auth_status.success() {
-            anyhow::bail!("Failed to move auth.txt to $HOME/config/vpn");
-        }
+        // Create directory and write file
+        ssh_conn.mkdir_p(&vpn_config_dir)?;
+        ssh_conn.write_file(&format!("{}/auth.txt", vpn_config_dir), &auth_content)?;
+        ssh_conn.execute_shell_interactive(&format!("chmod 600 {}/auth.txt", vpn_config_dir))?;
         println!("✓ Copied auth.txt to remote system");
 
         // Copy config file
-        let mut scp_config = Command::new("scp");
-        if use_key_auth {
-            scp_config.args([
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-o",
-                "PreferredAuthentications=publickey",
-                "-o",
-                "PasswordAuthentication=no",
-                config_file.to_str().unwrap(),
-                &format!("{}:~/ca-montreal.ovpn.tmp", host_with_user),
-            ]);
-        } else {
-            scp_config.args([
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-o",
-                "PreferredAuthentications=publickey,keyboard-interactive,password",
-                config_file.to_str().unwrap(),
-                &format!("{}:~/ca-montreal.ovpn.tmp", host_with_user),
-            ]);
-        }
-        scp_config.stdout(Stdio::null());
-        scp_config.stderr(Stdio::inherit());
-        let scp_config_status = scp_config.status()?;
-        if !scp_config_status.success() {
-            anyhow::bail!("Failed to copy ca-montreal.ovpn to remote system");
-        }
+        let config_content = std::fs::read(&config_file)
+            .with_context(|| format!("Failed to read config file: {}", config_file.display()))?;
 
-        // Move and set permissions (no sudo needed in user's home directory)
-        let move_config_cmd = format!(
-            r#"mkdir -p "/home/{}/config/vpn" && mv ~/ca-montreal.ovpn.tmp "/home/{}/config/vpn/ca-montreal.ovpn" && chmod 644 "/home/{}/config/vpn/ca-montreal.ovpn""#,
-            vpn_user, vpn_user, vpn_user
-        );
-        let mut move_config = Command::new("ssh");
-        if use_key_auth {
-            move_config.args([
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-o",
-                "PreferredAuthentications=publickey",
-                "-o",
-                "PasswordAuthentication=no",
-                &host_with_user,
-                "bash",
-                "-c",
-                &move_config_cmd,
-            ]);
-        } else {
-            move_config.args([
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-o",
-                "PreferredAuthentications=publickey,keyboard-interactive,password",
-                &host_with_user,
-                "bash",
-                "-c",
-                &move_config_cmd,
-            ]);
-        }
-        move_config.stdout(Stdio::null());
-        move_config.stderr(Stdio::inherit());
-        let move_config_status = move_config.status()?;
-        if !move_config_status.success() {
-            anyhow::bail!("Failed to move ca-montreal.ovpn to $HOME/config/vpn");
-        }
+        ssh_conn.write_file(
+            &format!("{}/ca-montreal.ovpn", vpn_config_dir),
+            &config_content,
+        )?;
+        ssh_conn
+            .execute_shell_interactive(&format!("chmod 644 {}/ca-montreal.ovpn", vpn_config_dir))?;
         println!("✓ Copied ca-montreal.ovpn to remote system");
     }
 
     // Copy compose file to remote system (keep in home directory for user access)
-    let setup_cmd = r#"cat > "$HOME/vpn/docker-compose.yml" || cat > "$(eval echo ~$USER)/vpn/docker-compose.yml""#;
-
-    let mut cmd = Command::new("ssh");
-    if use_key_auth {
-        cmd.args([
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "PreferredAuthentications=publickey",
-            "-o",
-            "PasswordAuthentication=no",
-            &host_with_user,
-            "bash",
-            "-c",
-            &setup_cmd,
-        ]);
-    } else {
-        cmd.args([
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "PreferredAuthentications=publickey,keyboard-interactive,password",
-            &host_with_user,
-            "bash",
-            "-c",
-            &setup_cmd,
-        ]);
-    }
-
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::inherit());
-
-    let mut child = cmd.spawn()?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(compose_content.as_bytes())?;
-        stdin.flush()?;
-        drop(stdin);
-    }
-
-    let status = child.wait()?;
-    if !status.success() {
-        anyhow::bail!("Failed to copy VPN compose file to remote system");
-    }
-
+    ssh_conn.mkdir_p("$HOME/vpn")?;
+    ssh_conn.write_file("$HOME/vpn/docker-compose.yml", compose_content.as_bytes())?;
     println!("✓ Copied VPN compose file to remote system");
 
     // Create .env file on remote system with PIA credentials
@@ -480,51 +254,7 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
         "PIA_USERNAME={}\nPIA_PASSWORD={}\n",
         pia_username, pia_password
     );
-    let env_setup_cmd = r#"cat > "$HOME/vpn/.env" || cat > "$(eval echo ~$USER)/vpn/.env""#;
-
-    let mut env_cmd = Command::new("ssh");
-    if use_key_auth {
-        env_cmd.args([
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "PreferredAuthentications=publickey",
-            "-o",
-            "PasswordAuthentication=no",
-            &host_with_user,
-            "bash",
-            "-c",
-            &env_setup_cmd,
-        ]);
-    } else {
-        env_cmd.args([
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "PreferredAuthentications=publickey,keyboard-interactive,password",
-            &host_with_user,
-            "bash",
-            "-c",
-            &env_setup_cmd,
-        ]);
-    }
-
-    env_cmd.stdin(Stdio::piped());
-    env_cmd.stdout(Stdio::null());
-    env_cmd.stderr(Stdio::inherit());
-
-    let mut env_child = env_cmd.spawn()?;
-    if let Some(mut stdin) = env_child.stdin.take() {
-        stdin.write_all(env_content.as_bytes())?;
-        stdin.flush()?;
-        drop(stdin);
-    }
-
-    let env_status = env_child.wait()?;
-    if !env_status.success() {
-        anyhow::bail!("Failed to create .env file on remote system");
-    }
-
+    ssh_conn.write_file("$HOME/vpn/.env", env_content.as_bytes())?;
     println!("✓ Created .env file on remote system");
 
     println!();

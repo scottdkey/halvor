@@ -1,14 +1,27 @@
 mod backup;
 mod config;
 mod config_manager;
+mod exec;
 mod npm;
 mod provision;
 mod smb;
 mod tailscale;
+mod update;
 mod vpn;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+
+fn check_for_updates() {
+    // Check for updates in background (non-blocking)
+    if let Ok(Some(new_version)) = update::check_for_updates(env!("CARGO_PKG_VERSION")) {
+        if let Ok(true) = update::prompt_for_update(&new_version, env!("CARGO_PKG_VERSION")) {
+            if let Err(e) = update::download_and_install_update(&new_version) {
+                eprintln!("Failed to install update: {}", e);
+            }
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "hal")]
@@ -123,6 +136,9 @@ enum ConfigCommands {
 }
 
 fn main() -> Result<()> {
+    // Check for updates (non-blocking, only in production mode)
+    check_for_updates();
+
     let cli = Cli::parse();
 
     match cli.command {

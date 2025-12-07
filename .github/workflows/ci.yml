@@ -39,6 +39,16 @@ on:
         required: false
         type: boolean
         default: false
+      build_cli_windows:
+        description: "Build CLI (Windows)"
+        required: false
+        type: boolean
+        default: false
+      release_cli_windows:
+        description: "Release CLI (Windows)"
+        required: false
+        type: boolean
+        default: false
 
 # Ensure workflow has permissions to write packages and create releases
 permissions:
@@ -321,14 +331,65 @@ jobs:
             ${{ runner.os }}-cargo-${{ matrix.target }}-
 
       - name: Build Rust CLI
-        run: |
-          cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: hal-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/hal
+          retention-days: 90
+          if-no-files-found: error
+
+  build-rust-cli-windows:
+    name: Build CLI (Windows)
+    runs-on: windows-latest
+    needs: [check-changes, prepare-release]
+    # Build on PRs (to validate), manual dispatch, or when src files change
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'workflow_dispatch' && (inputs.build_cli_windows == true || inputs.release == true)) ||
+      needs.check-changes.outputs.src == 'true' ||
+      needs.prepare-release.outputs.should_release == 'true'
+    permissions:
+      contents: read
+      actions: write
+
+    strategy:
+      matrix:
+        target:
+          - x86_64-pc-windows-msvc
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.target }}-
+
+      - name: Build Rust CLI
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hal-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/hal.exe
           retention-days: 90
           if-no-files-found: error
 
@@ -394,12 +455,14 @@ jobs:
         prepare-release,
         build-rust-cli-linux,
         build-rust-cli-macos,
+        build-rust-cli-windows,
         build-docker-image,
       ]
     if: |
       needs.prepare-release.outputs.should_release == 'true' &&
       (needs.build-rust-cli-linux.result == 'success' || needs.build-rust-cli-linux.result == 'skipped') &&
       (needs.build-rust-cli-macos.result == 'success' || needs.build-rust-cli-macos.result == 'skipped') &&
+      (needs.build-rust-cli-windows.result == 'success' || needs.build-rust-cli-windows.result == 'skipped') &&
       (needs.build-docker-image.result == 'success' || needs.build-docker-image.result == 'skipped')
     permissions:
       contents: write
@@ -420,43 +483,65 @@ jobs:
           VERSION="${{ needs.prepare-release.outputs.version }}"
 
           for artifact_dir in artifacts/hal-*/; do
-            if [ -d "$artifact_dir" ] && [ -f "$artifact_dir/hal" ]; then
+            if [ -d "$artifact_dir" ]; then
               ARTIFACT_NAME=$(basename "$artifact_dir")
               TARGET=$(echo "$ARTIFACT_NAME" | sed 's/hal-//')
               
-              case "$TARGET" in
-                *linux-gnu*)
-                  OS="linux"
-                  ARCH=$(echo "$TARGET" | sed 's/.*-\(.*\)-.*/\1/' | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
-                  EXT=""
-                  ;;
-                *linux-musl*)
-                  OS="linux"
-                  ARCH="amd64"
-                  EXT="musl"
-                  ;;
-                *apple-darwin*)
-                  OS="darwin"
-                  ARCH=$(echo "$TARGET" | sed 's/.*-\(.*\)-.*/\1/' | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
-                  EXT=""
-                  ;;
-                *)
-                  echo "Unknown target: $TARGET"
-                  continue
-                  ;;
-              esac
-              
-              mkdir -p "release/${OS}-${ARCH}${EXT:+-$EXT}"
-              cp "$artifact_dir/hal" "release/${OS}-${ARCH}${EXT:+-$EXT}/hal"
-              chmod +x "release/${OS}-${ARCH}${EXT:+-$EXT}/hal"
-              
-              if [ -n "$EXT" ]; then
-                ARCHIVE_NAME="hal-${VERSION}-${OS}-${ARCH}-${EXT}.tar.gz"
+              # Check for Windows executable (.exe)
+              if [ -f "$artifact_dir/hal.exe" ]; then
+                BINARY_NAME="hal.exe"
+                OS="windows"
+                ARCH="amd64"
+                EXT=""
+              elif [ -f "$artifact_dir/hal" ]; then
+                BINARY_NAME="hal"
+                case "$TARGET" in
+                  *linux-gnu*)
+                    OS="linux"
+                    ARCH=$(echo "$TARGET" | sed 's/.*-\(.*\)-.*/\1/' | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
+                    EXT=""
+                    ;;
+                  *linux-musl*)
+                    OS="linux"
+                    ARCH="amd64"
+                    EXT="musl"
+                    ;;
+                  *apple-darwin*)
+                    OS="darwin"
+                    ARCH=$(echo "$TARGET" | sed 's/.*-\(.*\)-.*/\1/' | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
+                    EXT=""
+                    ;;
+                  *)
+                    echo "Unknown target: $TARGET"
+                    continue
+                    ;;
+                esac
               else
-                ARCHIVE_NAME="hal-${VERSION}-${OS}-${ARCH}.tar.gz"
+                echo "No binary found in $artifact_dir"
+                continue
               fi
               
-              tar -czf "$ARCHIVE_NAME" -C "release/${OS}-${ARCH}${EXT:+-$EXT}" hal
+              mkdir -p "release/${OS}-${ARCH}${EXT:+-$EXT}"
+              cp "$artifact_dir/$BINARY_NAME" "release/${OS}-${ARCH}${EXT:+-$EXT}/$BINARY_NAME"
+              
+              # Only chmod on Unix systems
+              if [ "$OS" != "windows" ]; then
+                chmod +x "release/${OS}-${ARCH}${EXT:+-$EXT}/$BINARY_NAME"
+              fi
+              
+              if [ "$OS" == "windows" ]; then
+                ARCHIVE_NAME="hal-${VERSION}-${OS}-${ARCH}.zip"
+                cd "release/${OS}-${ARCH}${EXT:+-$EXT}"
+                zip -r "../../$ARCHIVE_NAME" "$BINARY_NAME"
+                cd ../..
+              else
+                if [ -n "$EXT" ]; then
+                  ARCHIVE_NAME="hal-${VERSION}-${OS}-${ARCH}-${EXT}.tar.gz"
+                else
+                  ARCHIVE_NAME="hal-${VERSION}-${OS}-${ARCH}.tar.gz"
+                fi
+                tar -czf "$ARCHIVE_NAME" -C "release/${OS}-${ARCH}${EXT:+-$EXT}" "$BINARY_NAME"
+              fi
               echo "Created: $ARCHIVE_NAME"
             fi
           done
@@ -478,6 +563,7 @@ jobs:
             ```
           files: |
             hal-*.tar.gz
+            hal-*.zip
           draft: false
           prerelease: false
 
@@ -706,6 +792,7 @@ jobs:
         prepare-release,
         build-rust-cli-linux,
         build-rust-cli-macos,
+        build-rust-cli-windows,
         build-docker-image,
         release-docker-image,
         release-cli-linux,
