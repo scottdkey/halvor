@@ -134,6 +134,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Set up remote URL with token for pushing
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
 
       - name: Get current version
         id: current_version
@@ -159,11 +161,20 @@ jobs:
         if: steps.check_release.outputs.should_release == 'true' && github.event_name == 'workflow_dispatch'
         id: increment
         run: |
+          echo "Debug: Event name: ${{ github.event_name }}"
+          echo "Debug: Should release: ${{ steps.check_release.outputs.should_release }}"
+          echo "Debug: Release input: ${{ github.event.inputs.release }}"
+
           CURRENT_VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
           echo "Current version: $CURRENT_VERSION"
 
           # Increment patch version (0.0.2 -> 0.0.3)
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+          if [ -z "$MAJOR" ] || [ -z "$MINOR" ] || [ -z "$PATCH" ]; then
+            echo "Error: Failed to parse version $CURRENT_VERSION"
+            exit 1
+          fi
+
           NEW_PATCH=$((PATCH + 1))
           NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
 
@@ -177,12 +188,24 @@ jobs:
           echo "Updated Cargo.toml:"
           grep '^version = ' Cargo.toml
 
+          # Double-check the version was updated correctly
+          VERIFIED_VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          if [ "$VERIFIED_VERSION" != "$NEW_VERSION" ]; then
+            echo "Error: Version update failed. Expected $NEW_VERSION, got $VERIFIED_VERSION"
+            exit 1
+          fi
+          echo "✓ Version successfully updated to $VERIFIED_VERSION"
+
       - name: Commit version bump
-        if: steps.check_release.outputs.should_release == 'true' && github.event_name == 'workflow_dispatch'
+        if: steps.check_release.outputs.should_release == 'true' && github.event_name == 'workflow_dispatch' && steps.increment.outcome == 'success'
         run: |
+          echo "Committing version bump to ${{ steps.increment.outputs.version }}"
           git add Cargo.toml
-          git commit -m "chore: bump version to ${{ steps.increment.outputs.version }}"
+          git status
+          git commit -m "chore: bump version to ${{ steps.increment.outputs.version }} [skip ci]"
+          echo "Pushing to main branch..."
           git push origin HEAD:main
+          echo "✓ Version bump committed and pushed"
 
       - name: Determine release version
         id: version
