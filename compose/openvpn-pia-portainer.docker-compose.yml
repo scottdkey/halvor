@@ -39,6 +39,11 @@ services:
       - openvpn_logs:/var/log/openvpn
     ports:
       # HTTP proxy port (Privoxy)
+      # Format: "host-port:container-port" or "host-ip:host-port:container-port"
+      # Current: binds to all host interfaces (0.0.0.0:8888)
+      # To bind to specific IP: use "10.10.10.14:8888:8888/tcp"
+      # Access from host at: http://10.10.10.14:8888
+      # Access from other containers at: http://openvpn-pia:8888
       - "8888:8888/tcp"
     networks:
       - vpn_network

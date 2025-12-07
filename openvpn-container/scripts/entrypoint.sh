@@ -203,6 +203,8 @@ trap cleanup SIGTERM SIGINT
 
 # Start OpenVPN
 echo "Starting OpenVPN..."
+# Note: OpenVPN config should include 'redirect-gateway def1' to route all traffic through VPN
+# This ensures container traffic uses VPN IP, while host maintains public IP
 openvpn \
     --config "$OVPN_CONFIG" \
     --auth-user-pass /config/auth.txt \
@@ -245,10 +247,23 @@ echo "✓ Privoxy started (PID: $PRIVOXY_PID)"
 echo ""
 echo "VPN Status:"
 ip addr show tun0 2>/dev/null || echo "  TUN interface: Not available"
-echo "  Privoxy proxy: http://0.0.0.0:8888"
 echo ""
-echo "To view logs, run: docker exec <container> tail-logs.sh"
-echo "  Or inside container: /usr/local/bin/tail-logs.sh"
+echo "Network Configuration:"
+echo "  Container IPs:"
+ip addr show | grep "inet " | grep -v "127.0.0.1" | sed 's/^/    /'
+echo "  Default route:"
+ip route | grep default | sed 's/^/    /'
+echo "  Privoxy listening on:"
+netstat -tlnp 2>/dev/null | grep 8888 || ss -tlnp 2>/dev/null | grep 8888 || echo "    (checking...)"
+echo ""
+echo "Proxy Information:"
+echo "  Privoxy proxy: http://0.0.0.0:8888 (inside container)"
+echo "  Access from host: http://<host-ip>:8888"
+echo "  Access from other containers: http://openvpn-pia:8888"
+echo ""
+echo "Diagnostics:"
+echo "  View logs: docker exec <container> tail-logs.sh"
+echo "  Check proxy: docker exec <container> check-proxy.sh"
 echo ""
 
 # Wait for Privoxy (child process) and monitor OpenVPN
