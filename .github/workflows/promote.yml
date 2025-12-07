@@ -30,11 +30,15 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  issues: write
 
 jobs:
   validate-promotion:
     name: Validate Promotion
     runs-on: ubuntu-latest
+    outputs:
+      valid: ${{ steps.validate.outputs.valid }}
+      has_changes: ${{ steps.check_changes.outputs.has_changes }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -110,13 +114,13 @@ jobs:
             git log --oneline origin/$TO..origin/$FROM | head -10
           fi
 
-  promote:
-    name: Promote Code
+  create-promotion-pr:
+    name: Create Promotion PR
     runs-on: ubuntu-latest
     needs: validate-promotion
-    if: needs.validate-promotion.outputs.valid == 'true'
-    environment:
-      name: ${{ github.event.inputs.to_branch }}-promotion
+    if: |
+      needs.validate-promotion.outputs.valid == 'true' &&
+      needs.validate-promotion.outputs.has_changes == 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -128,20 +132,161 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
 
-      - name: Fetch all branches
+      - name: Create promotion branch
+        id: create_branch
         run: |
+          FROM="${{ github.event.inputs.from_branch }}"
+          TO="${{ github.event.inputs.to_branch }}"
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          BRANCH_NAME="promote/$FROM-to-$TO-$TIMESTAMP"
+
+          echo "branch=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          echo "Creating promotion branch: $BRANCH_NAME"
+
+          # Fetch all branches
           git fetch --all
 
-      - name: Checkout target branch
-        run: |
-          TO="${{ github.event.inputs.to_branch }}"
-          git checkout -b $TO origin/$TO || git checkout $TO
-          git pull origin $TO
+          # Create branch from target branch
+          git checkout -b $BRANCH_NAME origin/$TO
 
-      - name: Increment version (for beta -> main promotion)
-        if: github.event.inputs.from_branch == 'beta' && github.event.inputs.to_branch == 'main'
+          # Merge source branch into promotion branch
+          git merge --no-ff --no-edit origin/$FROM -m "chore: promote code from $FROM to $TO
+
+          Promoted via GitHub Actions workflow
+          Source: $FROM
+          Target: $TO
+          Triggered by: ${{ github.actor }}
+          Workflow run: ${{ github.run_id }}"
+
+          # Push the promotion branch
+          git push origin $BRANCH_NAME
+
+          echo "✓ Created promotion branch: $BRANCH_NAME"
+
+      - name: Create Pull Request
+        id: create_pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const from = '${{ github.event.inputs.from_branch }}';
+            const to = '${{ github.event.inputs.to_branch }}';
+            const branch = '${{ steps.create_branch.outputs.branch }}';
+
+            const { data: pr } = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Promote code from ${from} to ${to}`,
+              head: branch,
+              base: to,
+              body: `## Promotion: ${from} → ${to}
+              
+              This PR promotes code from the \`${from}\` branch to the \`${to}\` branch.
+              
+              **Source:** \`${from}\`
+              **Target:** \`${to}\`
+              **Triggered by:** @${{ github.actor }}
+              **Workflow run:** ${{ github.run_id }}
+              
+              ${to === 'main' ? '⚠️ **Note:** After this PR is merged, the version will be automatically incremented.' : ''}
+              
+              ---
+              *This PR was created automatically by the promotion workflow.*
+              `,
+              maintainer_can_modify: false
+            });
+
+            core.setOutput('pr_number', pr.number);
+            core.setOutput('pr_url', pr.html_url);
+            console.log(`Created PR #${pr.number}: ${pr.html_url}`);
+
+  approve-and-merge-pr:
+    name: Approve and Merge PR
+    runs-on: ubuntu-latest
+    needs: create-promotion-pr
+    if: needs.create-promotion-pr.result == 'success'
+    environment:
+      name: ${{ github.event.inputs.to_branch }}-promotion
+    steps:
+      - name: Wait for PR approval
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Approval Required: Merge Promotion PR"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "A pull request has been created to promote code:"
+          echo "  From: ${{ github.event.inputs.from_branch }}"
+          echo "  To: ${{ github.event.inputs.to_branch }}"
+          echo ""
+          echo "PR: ${{ needs.create-promotion-pr.outputs.pr_url }}"
+          echo ""
+          echo "Please review and approve the PR to continue with the merge."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      - name: Merge Pull Request
+        id: merge_pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = ${{ needs.create-promotion-pr.outputs.pr_number }};
+            const to = '${{ github.event.inputs.to_branch }}';
+
+            // Check if PR is mergeable
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+
+            if (pr.state !== 'open') {
+              core.setFailed(`PR #${prNumber} is not open (state: ${pr.state})`);
+              return;
+            }
+
+            if (!pr.mergeable) {
+              core.setFailed(`PR #${prNumber} is not mergeable. Please resolve conflicts.`);
+              return;
+            }
+
+            // Merge the PR
+            await github.rest.pulls.merge({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              merge_method: 'merge',
+              commit_title: `Promote code from ${{ github.event.inputs.from_branch }} to ${to}`
+            });
+
+            console.log(`✓ Successfully merged PR #${prNumber}`);
+            core.setOutput('merged', 'true');
+
+  increment-version-after-merge:
+    name: Increment Version After Merge
+    runs-on: ubuntu-latest
+    needs: [create-promotion-pr, approve-and-merge-pr]
+    if: |
+      needs.approve-and-merge-pr.result == 'success' &&
+      github.event.inputs.from_branch == 'beta' &&
+      github.event.inputs.to_branch == 'main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: main
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+
+      - name: Pull latest main
+        run: |
+          git pull origin main
+
+      - name: Increment version
         id: increment_version
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -153,10 +298,9 @@ jobs:
           CURRENT_VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
           echo "Current version: $CURRENT_VERSION"
 
-          # Get previous version from main branch to compare
-          git fetch origin main:main || true
-          PREVIOUS_VERSION=$(git show main:Cargo.toml 2>/dev/null | grep '^version = ' | sed 's/version = "\(.*\)"/\1/' || echo "$CURRENT_VERSION")
-          echo "Previous version on main: $PREVIOUS_VERSION"
+          # Get previous version from the commit before the merge
+          PREVIOUS_VERSION=$(git show HEAD^:Cargo.toml 2>/dev/null | grep '^version = ' | sed 's/version = "\(.*\)"/\1/' || echo "$CURRENT_VERSION")
+          echo "Previous version (before merge): $PREVIOUS_VERSION"
 
           # Parse versions
           IFS='.' read -r CURR_MAJOR CURR_MINOR CURR_PATCH <<< "$CURRENT_VERSION"
@@ -172,89 +316,53 @@ jobs:
             sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" Cargo.toml
             git add Cargo.toml
             
+            # Commit the version increment with [skip ci] to prevent triggering another build
+            git commit -m "chore: increment version to $NEW_VERSION [skip ci]
+
+          Version incremented as part of promotion from beta to main
+          Previous version: $CURRENT_VERSION
+          New version: $NEW_VERSION"
+            
+            # Push to main
+            git push origin main
+            
             echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
             echo "should_increment=true" >> $GITHUB_OUTPUT
-            echo "✓ Version will be bumped to $NEW_VERSION"
+            echo "✓ Version bumped to $NEW_VERSION and pushed to main"
           else
             echo "Major or minor version changed - not auto-incrementing patch"
             echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
             echo "should_increment=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Merge source branch
-        id: merge
+  create-tag:
+    name: Create Tag
+    runs-on: ubuntu-latest
+    needs: [create-promotion-pr, approve-and-merge-pr]
+    if: |
+      needs.approve-and-merge-pr.result == 'success' &&
+      github.event.inputs.create_tag == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
         run: |
-          FROM="${{ github.event.inputs.from_branch }}"
-          TO="${{ github.event.inputs.to_branch }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
 
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  Promoting code: $FROM -> $TO"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo ""
-
-          # Fetch latest from source branch
-          git fetch origin $FROM
-
-          # Get commit info before merge
-          COMMIT_COUNT=$(git rev-list --count HEAD..origin/$FROM 2>/dev/null || echo "0")
-
-          if [ "$COMMIT_COUNT" == "0" ]; then
-            echo "⚠ No new commits to merge. Target branch is already up to date."
-            echo "merged=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          # Build commit message
-          COMMIT_MSG="chore: promote code from $FROM to $TO
-
-          Promoted via GitHub Actions workflow
-          Source: $FROM
-          Target: $TO
-          Triggered by: ${{ github.actor }}
-          Workflow run: ${{ github.run_id }}"
-
-          # Add version increment to commit message if version was incremented
-          if [ "${{ steps.increment_version.outputs.should_increment }}" == "true" ]; then
-            COMMIT_MSG="$COMMIT_MSG
-
-          Version incremented: ${{ steps.increment_version.outputs.version }} [skip ci]"
-          fi
-
-          # Attempt merge (no-ff to preserve history)
-          if git merge --no-ff --no-edit origin/$FROM -m "$COMMIT_MSG"; then
-            echo "merged=true" >> $GITHUB_OUTPUT
-            echo "✓ Successfully merged $FROM into $TO"
-          else
-            echo "merged=false" >> $GITHUB_OUTPUT
-            echo "✗ Merge failed - there may be conflicts"
-            echo "Please resolve conflicts manually and retry"
-            git merge --abort 2>/dev/null || true
-            exit 1
-          fi
-
-          # If version was incremented, commit it as part of the merge
-          if [ "${{ steps.increment_version.outputs.should_increment }}" == "true" ] && [ -n "$(git status --porcelain Cargo.toml)" ]; then
-            echo "Committing version increment..."
-            git add Cargo.toml
-            git commit --amend --no-edit
-            echo "✓ Version increment included in promotion commit"
-          fi
-
-      - name: Push to target branch
-        if: steps.merge.outputs.merged == 'true'
-        run: |
-          TO="${{ github.event.inputs.to_branch }}"
-          echo "Pushing to $TO branch..."
-          git push origin $TO
-          echo "✓ Successfully pushed to $TO"
-
-      - name: Create tag
-        if: |
-          steps.merge.outputs.merged == 'true' &&
-          github.event.inputs.create_tag == 'true'
+      - name: Create and push tag
         id: create_tag
         run: |
           TO="${{ github.event.inputs.to_branch }}"
+
+          # Fetch latest
+          git fetch origin $TO
+          git checkout $TO
 
           if [ -n "${{ github.event.inputs.tag_name }}" ]; then
             TAG_NAME="${{ github.event.inputs.tag_name }}"
@@ -277,8 +385,14 @@ jobs:
           echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
           echo "✓ Created and pushed tag: $TAG_NAME"
 
+  promotion-summary:
+    name: Promotion Summary
+    runs-on: ubuntu-latest
+    needs:
+      [create-promotion-pr, approve-and-merge-pr, increment-version-after-merge]
+    if: always()
+    steps:
       - name: Create summary
-        if: always()
         run: |
           FROM="${{ github.event.inputs.from_branch }}"
           TO="${{ github.event.inputs.to_branch }}"
@@ -289,14 +403,19 @@ jobs:
           echo ""
           echo "Source branch: $FROM"
           echo "Target branch: $TO"
-          echo "Status: ${{ steps.merge.outputs.merged == 'true' && 'Success' || 'Failed/Skipped' }}"
-          if [ "${{ steps.merge.outputs.merged }}" == "true" ]; then
-            echo "✓ Code successfully promoted from $FROM to $TO"
-            if [ "${{ github.event.inputs.create_tag }}" == "true" ]; then
-              echo "Tag created: ${{ steps.create_tag.outputs.tag }}"
+          echo ""
+          if [ "${{ needs.approve-and-merge-pr.result }}" == "success" ]; then
+            echo "✓ PR created and merged successfully"
+            echo "PR: ${{ needs.create-promotion-pr.outputs.pr_url }}"
+            if [ "$FROM" == "beta" ] && [ "$TO" == "main" ]; then
+              if [ "${{ needs.increment-version-after-merge.result }}" == "success" ]; then
+                echo "✓ Version incremented: ${{ needs.increment-version-after-merge.outputs.version }}"
+              else
+                echo "⚠ Version increment skipped or failed"
+              fi
             fi
           else
-            echo "⚠ No changes to promote or merge failed"
+            echo "⚠ Promotion incomplete or failed"
           fi
           echo ""
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
