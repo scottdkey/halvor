@@ -18,7 +18,8 @@ RUN apk update --no-cache || apk update --no-cache && \
 RUN mkdir -p /etc/openvpn /var/log/openvpn /etc/privoxy /var/log/privoxy /config
 
 # Configure Privoxy
-RUN echo "listen-address 0.0.0.0:8888" >> /etc/privoxy/config && \
+RUN echo "confdir /etc/privoxy" >> /etc/privoxy/config && \
+    echo "listen-address 0.0.0.0:8888" >> /etc/privoxy/config && \
     echo "forward / ." >> /etc/privoxy/config && \
     echo "logfile /var/log/privoxy/logfile" >> /etc/privoxy/config && \
     echo "logdir /var/log/privoxy" >> /etc/privoxy/config

@@ -2,41 +2,6 @@ use anyhow::{Context, Result};
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Platform {
-    Linux,
-    MacOS,
-    Windows,
-}
-
-impl Platform {
-    pub fn detect() -> Self {
-        if cfg!(target_os = "linux") {
-            Platform::Linux
-        } else if cfg!(target_os = "macos") {
-            Platform::MacOS
-        } else if cfg!(target_os = "windows") {
-            Platform::Windows
-        } else {
-            // Fallback detection at runtime
-            let output = Command::new("uname").arg("-s").output().ok();
-
-            if let Some(output) = output {
-                let os = String::from_utf8_lossy(&output.stdout).to_lowercase();
-                if os.contains("linux") {
-                    Platform::Linux
-                } else if os.contains("darwin") {
-                    Platform::MacOS
-                } else {
-                    Platform::Linux // Default fallback
-                }
-            } else {
-                Platform::Linux // Default fallback
-            }
-        }
-    }
-}
-
 /// SSH connection for remote command execution
 pub struct SshConnection {
     host: String,
@@ -72,10 +37,6 @@ impl SshConnection {
             host: host.to_string(),
             use_key_auth,
         })
-    }
-
-    pub fn from_host_user(host: &str, user: &str) -> Result<Self> {
-        Self::new(&format!("{}@{}", user, host))
     }
 
     fn build_ssh_args(&self) -> Vec<String> {
@@ -254,11 +215,6 @@ impl SshConnection {
         let output = self.execute_simple("test", &["-f", path])?;
         Ok(output.status.success())
     }
-
-    pub fn dir_exists(&self, path: &str) -> Result<bool> {
-        let output = self.execute_simple("test", &["-d", path])?;
-        Ok(output.status.success())
-    }
 }
 
 /// Escape a string for safe use in shell commands
@@ -319,12 +275,5 @@ pub mod local {
         let path_display = path_ref.display();
         std::fs::read_to_string(path_ref)
             .with_context(|| format!("Failed to read file: {}", path_display))
-    }
-
-    pub fn write_file(path: impl AsRef<std::path::Path>, content: &[u8]) -> Result<()> {
-        let path_ref = path.as_ref();
-        let path_display = path_ref.display();
-        std::fs::write(path_ref, content)
-            .with_context(|| format!("Failed to write file: {}", path_display))
     }
 }

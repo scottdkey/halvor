@@ -106,6 +106,11 @@ enum VpnCommands {
         /// Hostname to deploy VPN to
         hostname: String,
     },
+    /// Verify VPN is working correctly
+    Verify {
+        /// Hostname where VPN is running
+        hostname: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -205,6 +210,11 @@ fn main() -> Result<()> {
                 let config_dir = config::find_homelab_dir()?;
                 let config = config::load_env_config(&config_dir)?;
                 vpn::deploy_vpn(&hostname, &config)?;
+            }
+            VpnCommands::Verify { hostname } => {
+                let config_dir = config::find_homelab_dir()?;
+                let config = config::load_env_config(&config_dir)?;
+                vpn::verify_vpn(&hostname, &config)?;
             }
         },
         Commands::Config { command } => match command {

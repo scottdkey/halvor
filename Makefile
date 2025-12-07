@@ -54,19 +54,25 @@ HOST_ARCH := $(shell uname -m)
 
 # Build all Linux targets
 build-linux:
-	@echo "Building Linux targets..."
-	@echo "Host platform: $(HOST_OS) $(HOST_ARCH)"
-	@if [ "$(HOST_OS)" = "Darwin" ]; then \
+	@if ! command -v cargo >/dev/null 2>&1; then \
+		echo "Cargo not found. Installing Rust..."; \
+		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable; \
+		. $$HOME/.cargo/env && cargo --version; \
+	fi
+	@. $$HOME/.cargo/env 2>/dev/null || true; \
+	echo "Building Linux targets..."; \
+	echo "Host platform: $(HOST_OS) $(HOST_ARCH)"; \
+	if [ "$(HOST_OS)" = "Darwin" ]; then \
 		echo "Detected macOS host - setting up cross-compilation..."; \
 		$(MAKE) setup-linux-cross-compile; \
-	fi
-	@echo "Building x86_64-unknown-linux-gnu..."
-	@$(MAKE) build-linux-target TARGET=x86_64-unknown-linux-gnu
-	@echo "Building x86_64-unknown-linux-musl..."
-	@$(MAKE) build-linux-target TARGET=x86_64-unknown-linux-musl
-	@echo "Building aarch64-unknown-linux-gnu..."
-	@$(MAKE) build-linux-target TARGET=aarch64-unknown-linux-gnu
-	@echo "✓ All Linux builds complete"
+	fi; \
+	echo "Building x86_64-unknown-linux-gnu..."; \
+	$(MAKE) build-linux-target TARGET=x86_64-unknown-linux-gnu; \
+	echo "Building x86_64-unknown-linux-musl..."; \
+	$(MAKE) build-linux-target TARGET=x86_64-unknown-linux-musl; \
+	echo "Building aarch64-unknown-linux-gnu..."; \
+	$(MAKE) build-linux-target TARGET=aarch64-unknown-linux-gnu; \
+	echo "✓ All Linux builds complete"
 
 # Setup cross-compilation tools for Linux on macOS
 setup-linux-cross-compile:
@@ -107,7 +113,8 @@ setup-linux-cross-compile:
 
 # Build a specific Linux target with proper cross-compilation setup
 build-linux-target:
-	@if [ "$(HOST_OS)" = "Darwin" ]; then \
+	@. $$HOME/.cargo/env 2>/dev/null || true; \
+	if [ "$(HOST_OS)" = "Darwin" ]; then \
 		echo "Cross-compiling from macOS to $(TARGET)..."; \
 		unset MACOSX_DEPLOYMENT_TARGET || true; \
 		if [ "$(TARGET)" = "x86_64-unknown-linux-gnu" ]; then \
@@ -178,8 +185,14 @@ build-macos:
 
 # Build Windows target
 build-windows:
-	@echo "Building Windows target..."
-	@if ! rustup target list --installed | grep -q "x86_64-pc-windows-msvc"; then \
+	@if ! command -v cargo >/dev/null 2>&1; then \
+		echo "Cargo not found. Installing Rust..."; \
+		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable; \
+		. $$HOME/.cargo/env && cargo --version; \
+	fi
+	@. $$HOME/.cargo/env 2>/dev/null || true; \
+	echo "Building Windows target..."; \
+	if ! rustup target list --installed | grep -q "x86_64-pc-windows-msvc"; then \
 		echo "Installing Rust target: x86_64-pc-windows-msvc..."; \
 		rustup target add x86_64-pc-windows-msvc; \
 	fi

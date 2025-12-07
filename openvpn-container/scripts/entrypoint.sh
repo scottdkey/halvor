@@ -253,6 +253,21 @@ else
     echo "✓ OpenVPN initialization completed"
     # Wait a moment for routes to stabilize
     sleep 2
+    
+    # Update DNS to use VPN DNS server if provided
+    VPN_DNS=$(grep "dhcp-option DNS" /var/log/openvpn/openvpn.log | tail -1 | sed -n 's/.*dhcp-option DNS \([0-9.]*\).*/\1/p' || echo "")
+    if [ -n "$VPN_DNS" ]; then
+        echo "Updating DNS to use VPN DNS server: $VPN_DNS"
+        # Backup original resolv.conf
+        cp /etc/resolv.conf /etc/resolv.conf.backup 2>/dev/null || true
+        # Update with VPN DNS (keep Docker's DNS as fallback)
+        echo "# VPN DNS from OpenVPN" > /etc/resolv.conf
+        echo "nameserver $VPN_DNS" >> /etc/resolv.conf
+        echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+        echo "nameserver 127.0.0.11" >> /etc/resolv.conf
+        echo "✓ DNS updated"
+    fi
+    
     # Run quick connectivity test
     echo "Running connectivity test..."
     if curl -s --max-time 5 https://api.ipify.org >/dev/null 2>&1; then

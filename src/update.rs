@@ -10,13 +10,16 @@ const REPO_NAME: &str = "homelab";
 #[derive(Debug, Deserialize)]
 struct Release {
     tag_name: String,
-    assets: Vec<Asset>,
+    #[serde(skip)]
+    _assets: Vec<Asset>,
 }
 
 #[derive(Debug, Deserialize)]
 struct Asset {
-    name: String,
-    browser_download_url: String,
+    #[serde(skip)]
+    _name: String,
+    #[serde(skip)]
+    _browser_download_url: String,
 }
 
 pub fn check_for_updates(current_version: &str) -> Result<Option<String>> {
