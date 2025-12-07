@@ -1,240 +1,8 @@
 use anyhow::{Context, Result};
-use std::io::Write;
 use std::process::{Command, Output, Stdio};
 
-/// SSH connection for remote command execution
-pub struct SshConnection {
-    host: String,
-    use_key_auth: bool,
-}
-
-impl SshConnection {
-    pub fn new(host: &str) -> Result<Self> {
-        // Test if key-based auth works
-        let test_output = Command::new("ssh")
-            .args([
-                "-o",
-                "ConnectTimeout=1",
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                "PreferredAuthentications=publickey",
-                "-o",
-                "PasswordAuthentication=no",
-                "-o",
-                "StrictHostKeyChecking=no",
-                host,
-                "echo",
-                "test",
-            ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .output();
-
-        let use_key_auth = test_output.is_ok() && test_output.unwrap().status.success();
-
-        Ok(Self {
-            host: host.to_string(),
-            use_key_auth,
-        })
-    }
-
-    fn build_ssh_args(&self) -> Vec<String> {
-        let mut args = vec!["-o".to_string(), "StrictHostKeyChecking=no".to_string()];
-
-        if self.use_key_auth {
-            args.extend([
-                "-o".to_string(),
-                "PreferredAuthentications=publickey".to_string(),
-                "-o".to_string(),
-                "PasswordAuthentication=no".to_string(),
-            ]);
-        } else {
-            args.extend([
-                "-o".to_string(),
-                "PreferredAuthentications=publickey,keyboard-interactive,password".to_string(),
-            ]);
-        }
-
-        args.push(self.host.clone());
-        args
-    }
-
-    pub fn execute_simple(&self, program: &str, args: &[&str]) -> Result<Output> {
-        let mut ssh_args = self.build_ssh_args();
-
-        // Execute command directly without shell
-        ssh_args.push(program.to_string());
-        for arg in args {
-            ssh_args.push(arg.to_string());
-        }
-
-        let output = Command::new("ssh")
-            .args(&ssh_args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .stdin(Stdio::null())
-            .output()
-            .with_context(|| format!("Failed to execute command: {}", program))?;
-
-        Ok(output)
-    }
-
-    pub fn execute_shell(&self, command: &str) -> Result<Output> {
-        let mut ssh_args = self.build_ssh_args();
-        ssh_args.push("sh".to_string());
-        ssh_args.push("-c".to_string());
-        ssh_args.push(command.to_string());
-
-        let output = Command::new("ssh")
-            .args(&ssh_args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .stdin(Stdio::null())
-            .output()
-            .with_context(|| format!("Failed to execute shell command"))?;
-
-        Ok(output)
-    }
-
-    pub fn execute_interactive(&self, program: &str, args: &[&str]) -> Result<()> {
-        let mut ssh_args = self.build_ssh_args();
-        ssh_args.push("-tt".to_string()); // Force TTY for interactive
-
-        // Execute command directly
-        ssh_args.push(program.to_string());
-        for arg in args {
-            ssh_args.push(arg.to_string());
-        }
-
-        let status = Command::new("ssh")
-            .args(&ssh_args)
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()
-            .with_context(|| format!("Failed to execute interactive command: {}", program))?;
-
-        if !status.success() {
-            anyhow::bail!(
-                "Command '{}' failed with exit code: {}",
-                program,
-                status.code().unwrap_or(1)
-            );
-        }
-
-        Ok(())
-    }
-
-    pub fn execute_shell_interactive(&self, command: &str) -> Result<()> {
-        let mut ssh_args = self.build_ssh_args();
-        ssh_args.push("-tt".to_string()); // Force TTY for interactive
-        ssh_args.push("sh".to_string());
-        ssh_args.push("-c".to_string());
-        ssh_args.push(command.to_string());
-
-        let status = Command::new("ssh")
-            .args(&ssh_args)
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()
-            .with_context(|| format!("Failed to execute interactive shell command"))?;
-
-        if !status.success() {
-            anyhow::bail!(
-                "Shell command failed with exit code: {}",
-                status.code().unwrap_or(1)
-            );
-        }
-
-        Ok(())
-    }
-
-    pub fn check_command_exists(&self, command: &str) -> Result<bool> {
-        let output = self.execute_simple("command", &["-v", command])?;
-        Ok(output.status.success())
-    }
-
-    pub fn is_linux(&self) -> Result<bool> {
-        let output = self.execute_simple("uname", &[])?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(stdout.trim() != "Darwin")
-    }
-
-    pub fn read_file(&self, path: &str) -> Result<String> {
-        let output = self.execute_simple("cat", &[path])?;
-        if !output.status.success() {
-            anyhow::bail!("Failed to read file: {}", path);
-        }
-        String::from_utf8(output.stdout)
-            .with_context(|| format!("Failed to decode file contents: {}", path))
-    }
-
-    pub fn write_file(&self, path: &str, content: &[u8]) -> Result<()> {
-        let mut ssh_args = self.build_ssh_args();
-        ssh_args.push("sh".to_string());
-        ssh_args.push("-c".to_string());
-        ssh_args.push(format!("cat > {}", shell_escape(path)));
-
-        let mut cmd = Command::new("ssh");
-        cmd.args(&ssh_args);
-        cmd.stdin(Stdio::piped());
-        cmd.stdout(Stdio::null());
-        cmd.stderr(Stdio::inherit());
-
-        let mut child = cmd
-            .spawn()
-            .with_context(|| format!("Failed to spawn SSH command for writing file"))?;
-
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(content)?;
-            stdin.flush()?;
-        }
-
-        let status = child
-            .wait()
-            .with_context(|| format!("Failed to write file: {}", path))?;
-
-        if !status.success() {
-            anyhow::bail!("Failed to write file: {}", path);
-        }
-
-        Ok(())
-    }
-
-    pub fn mkdir_p(&self, path: &str) -> Result<()> {
-        let output = self.execute_simple("mkdir", &["-p", path])?;
-        if !output.status.success() {
-            anyhow::bail!("Failed to create directory: {}", path);
-        }
-        Ok(())
-    }
-
-    pub fn file_exists(&self, path: &str) -> Result<bool> {
-        let output = self.execute_simple("test", &["-f", path])?;
-        Ok(output.status.success())
-    }
-}
-
-/// Escape a string for safe use in shell commands
-fn shell_escape(s: &str) -> String {
-    // Simple escaping - wrap in single quotes and escape single quotes
-    if s.is_empty() {
-        return "''".to_string();
-    }
-
-    // If string contains no special characters, return as-is
-    if s.chars()
-        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '/' || c == '.' || c == '$')
-    {
-        return s.to_string();
-    }
-
-    // Escape single quotes by ending quote, adding escaped quote, starting new quote
-    let escaped = s.replace('\'', "'\"'\"'");
-    format!("'{}'", escaped)
-}
+// Import SshConnection from ssh module
+use crate::ssh::SshConnection;
 
 /// Local command execution helpers
 pub mod local {
@@ -250,15 +18,9 @@ pub mod local {
             .with_context(|| format!("Failed to execute command: {}", program))
     }
 
+    /// Check if a command exists using native Rust (which crate)
     pub fn check_command_exists(command: &str) -> bool {
-        Command::new("command")
-            .arg("-v")
-            .arg(command)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+        which::which(command).is_ok()
     }
 
     pub fn read_file(path: impl AsRef<std::path::Path>) -> Result<String> {
@@ -268,6 +30,104 @@ pub mod local {
             .with_context(|| format!("Failed to read file: {}", path_display))
     }
 
+    /// List directory contents using native Rust
+    pub fn list_directory(path: impl AsRef<std::path::Path>) -> Result<Vec<String>> {
+        let path_ref = path.as_ref();
+        let mut entries = Vec::new();
+        let dir = std::fs::read_dir(path_ref)
+            .with_context(|| format!("Failed to read directory: {}", path_ref.display()))?;
+        for entry in dir {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            entries.push(name);
+        }
+        Ok(entries)
+    }
+
+    /// Check if a path is a directory using native Rust
+    pub fn is_directory(path: impl AsRef<std::path::Path>) -> bool {
+        path.as_ref().is_dir()
+    }
+
+    /// Check if a path is a file using native Rust
+    pub fn is_file(path: impl AsRef<std::path::Path>) -> bool {
+        path.as_ref().is_file()
+    }
+
+    /// Get current user ID using native Rust (Unix only)
+    #[cfg(unix)]
+    pub fn get_uid() -> Result<u32> {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = std::fs::metadata(".")?;
+        Ok(metadata.uid())
+    }
+
+    /// Get current group ID using native Rust (Unix only)
+    #[cfg(unix)]
+    pub fn get_gid() -> Result<u32> {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = std::fs::metadata(".")?;
+        Ok(metadata.gid())
+    }
+
+    /// Check if running on Linux using native Rust
+    pub fn is_linux() -> bool {
+        cfg!(target_os = "linux")
+    }
+
+    /// Copy a file from source to destination using native Rust
+    pub fn copy_file(
+        from: impl AsRef<std::path::Path>,
+        to: impl AsRef<std::path::Path>,
+    ) -> Result<u64> {
+        let from_ref = from.as_ref();
+        let to_ref = to.as_ref();
+        std::fs::copy(from_ref, to_ref).with_context(|| {
+            format!(
+                "Failed to copy file from {} to {}",
+                from_ref.display(),
+                to_ref.display()
+            )
+        })
+    }
+
+    /// Create a directory and all parent directories using native Rust
+    pub fn create_dir_all(path: impl AsRef<std::path::Path>) -> Result<()> {
+        let path_ref = path.as_ref();
+        std::fs::create_dir_all(path_ref)
+            .with_context(|| format!("Failed to create directory: {}", path_ref.display()))
+    }
+
+    /// Remove a file using native Rust
+    pub fn remove_file(path: impl AsRef<std::path::Path>) -> Result<()> {
+        let path_ref = path.as_ref();
+        std::fs::remove_file(path_ref)
+            .with_context(|| format!("Failed to remove file: {}", path_ref.display()))
+    }
+
+    /// Remove a directory and all its contents using native Rust
+    pub fn remove_dir_all(path: impl AsRef<std::path::Path>) -> Result<()> {
+        let path_ref = path.as_ref();
+        std::fs::remove_dir_all(path_ref)
+            .with_context(|| format!("Failed to remove directory: {}", path_ref.display()))
+    }
+
+    /// Check if a path exists using native Rust
+    pub fn path_exists(path: impl AsRef<std::path::Path>) -> bool {
+        path.as_ref().exists()
+    }
+
+    /// Set file permissions (Unix only)
+    #[cfg(unix)]
+    pub fn set_permissions(path: impl AsRef<std::path::Path>, mode: u32) -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let path_ref = path.as_ref();
+        std::fs::set_permissions(path_ref, std::fs::Permissions::from_mode(mode))
+            .with_context(|| format!("Failed to set permissions for: {}", path_ref.display()))
+    }
+
+    /// Execute a shell command (only when absolutely necessary)
+    /// Prefer using execute() with specific programs instead
     pub fn execute_shell(command: &str) -> Result<Output> {
         use std::process::Command;
         let output = Command::new("sh")
@@ -316,6 +176,117 @@ pub trait CommandExecutor {
 
     /// Get the current username (for local) or use $USER (for remote)
     fn get_username(&self) -> Result<String>;
+
+    /// List directory contents (native Rust for local, ls command for remote)
+    fn list_directory(&self, path: &str) -> Result<Vec<String>>;
+
+    /// Check if path is a directory (native Rust for local, test -d for remote)
+    fn is_directory(&self, path: &str) -> Result<bool>;
+
+    /// Get current user ID (native Rust for local, id -u for remote)
+    #[cfg(unix)]
+    fn get_uid(&self) -> Result<u32>;
+
+    /// Get current group ID (native Rust for local, id -g for remote)
+    #[cfg(unix)]
+    fn get_gid(&self) -> Result<u32>;
+}
+
+/// Package manager types
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackageManager {
+    Apt,
+    Yum,
+    Dnf,
+    Brew,
+    Unknown,
+}
+
+impl PackageManager {
+    /// Detect the package manager available on the system
+    pub fn detect<E: CommandExecutor>(exec: &E) -> Result<Self> {
+        if exec.check_command_exists("apt-get")? {
+            Ok(PackageManager::Apt)
+        } else if exec.check_command_exists("yum")? {
+            Ok(PackageManager::Yum)
+        } else if exec.check_command_exists("dnf")? {
+            Ok(PackageManager::Dnf)
+        } else if exec.check_command_exists("brew")? {
+            Ok(PackageManager::Brew)
+        } else {
+            Ok(PackageManager::Unknown)
+        }
+    }
+
+    /// Install a package using the detected package manager
+    pub fn install_package<E: CommandExecutor>(&self, exec: &E, package: &str) -> Result<()> {
+        match self {
+            PackageManager::Apt => {
+                exec.execute_interactive("sudo", &["apt-get", "update"])?;
+                exec.execute_interactive("sudo", &["apt-get", "install", "-y", package])?;
+            }
+            PackageManager::Yum => {
+                exec.execute_interactive("sudo", &["yum", "install", "-y", package])?;
+            }
+            PackageManager::Dnf => {
+                exec.execute_interactive("sudo", &["dnf", "install", "-y", package])?;
+            }
+            PackageManager::Brew => {
+                exec.execute_interactive("brew", &["install", package])?;
+            }
+            PackageManager::Unknown => {
+                anyhow::bail!(
+                    "No supported package manager found. Please install {} manually.",
+                    package
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Install multiple packages at once
+    pub fn _install_packages<E: CommandExecutor>(&self, exec: &E, packages: &[&str]) -> Result<()> {
+        match self {
+            PackageManager::Apt => {
+                exec.execute_interactive("sudo", &["apt-get", "update"])?;
+                let mut args = vec!["apt-get", "install", "-y"];
+                args.extend(packages.iter().copied());
+                exec.execute_interactive("sudo", &args)?;
+            }
+            PackageManager::Yum => {
+                let mut args = vec!["yum", "install", "-y"];
+                args.extend(packages.iter().copied());
+                exec.execute_interactive("sudo", &args)?;
+            }
+            PackageManager::Dnf => {
+                let mut args = vec!["dnf", "install", "-y"];
+                args.extend(packages.iter().copied());
+                exec.execute_interactive("sudo", &args)?;
+            }
+            PackageManager::Brew => {
+                let mut args = vec!["brew", "install"];
+                args.extend(packages.iter().copied());
+                exec.execute_interactive("brew", &args)?;
+            }
+            PackageManager::Unknown => {
+                anyhow::bail!(
+                    "No supported package manager found. Please install packages manually."
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Get display name for the package manager
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            PackageManager::Apt => "apt (Debian/Ubuntu)",
+            PackageManager::Yum => "yum (RHEL/CentOS)",
+            PackageManager::Dnf => "dnf (Fedora)",
+            PackageManager::Brew => "brew (macOS)",
+            PackageManager::Unknown => "unknown",
+        }
+    }
 }
 
 /// Executor that can be either local or remote (SSH)
@@ -455,12 +426,7 @@ impl CommandExecutor for Executor {
 
     fn is_linux(&self) -> Result<bool> {
         match self {
-            Executor::Local => {
-                #[cfg(target_os = "linux")]
-                return Ok(true);
-                #[cfg(not(target_os = "linux"))]
-                return Ok(false);
-            }
+            Executor::Local => Ok(local::is_linux()),
             Executor::Remote(exec) => exec.is_linux(),
         }
     }
@@ -496,7 +462,7 @@ impl CommandExecutor for Executor {
 
     fn file_exists(&self, path: &str) -> Result<bool> {
         match self {
-            Executor::Local => Ok(std::path::Path::new(path).exists()),
+            Executor::Local => Ok(local::is_file(path)),
             Executor::Remote(exec) => exec.file_exists(path),
         }
     }
@@ -524,6 +490,36 @@ impl CommandExecutor for Executor {
         match self {
             Executor::Local => Ok(whoami::username()),
             Executor::Remote(exec) => exec.get_username(),
+        }
+    }
+
+    fn list_directory(&self, path: &str) -> Result<Vec<String>> {
+        match self {
+            Executor::Local => local::list_directory(path),
+            Executor::Remote(exec) => exec.list_directory(path),
+        }
+    }
+
+    fn is_directory(&self, path: &str) -> Result<bool> {
+        match self {
+            Executor::Local => Ok(local::is_directory(path)),
+            Executor::Remote(exec) => exec.is_directory(path),
+        }
+    }
+
+    #[cfg(unix)]
+    fn get_uid(&self) -> Result<u32> {
+        match self {
+            Executor::Local => local::get_uid(),
+            Executor::Remote(exec) => exec.get_uid(),
+        }
+    }
+
+    #[cfg(unix)]
+    fn get_gid(&self) -> Result<u32> {
+        match self {
+            Executor::Local => local::get_gid(),
+            Executor::Remote(exec) => exec.get_gid(),
         }
     }
 }
@@ -574,5 +570,23 @@ impl CommandExecutor for SshConnection {
         let output = self.execute_simple("whoami", &[])?;
         let username = String::from_utf8(output.stdout)?.trim().to_string();
         Ok(username)
+    }
+
+    fn list_directory(&self, path: &str) -> Result<Vec<String>> {
+        SshConnection::list_directory(self, path)
+    }
+
+    fn is_directory(&self, path: &str) -> Result<bool> {
+        SshConnection::is_directory(self, path)
+    }
+
+    #[cfg(unix)]
+    fn get_uid(&self) -> Result<u32> {
+        SshConnection::get_uid(self)
+    }
+
+    #[cfg(unix)]
+    fn get_gid(&self) -> Result<u32> {
+        SshConnection::get_gid(self)
     }
 }

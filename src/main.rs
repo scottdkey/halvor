@@ -8,6 +8,7 @@ mod npm;
 mod portainer;
 mod provision;
 mod smb;
+mod ssh;
 mod tailscale;
 mod update;
 mod vpn;

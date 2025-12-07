@@ -94,19 +94,17 @@ fn install_debian<E: CommandExecutor>(exec: &E) -> Result<()> {
     // Download and install GPG key
     install_gpg_key(exec, "https://download.docker.com/linux/debian/gpg")?;
 
-    // Get codename
-    let codename =
-        if let Ok(output) = exec.execute_simple("grep", &["VERSION_CODENAME", "/etc/os-release"]) {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            stdout
-                .split('=')
-                .nth(1)
-                .unwrap_or("bookworm")
-                .trim_matches('"')
-                .to_string()
-        } else {
-            "bookworm".to_string()
-        };
+    // Get codename using native Rust (read and parse file)
+    let codename = if let Ok(os_release) = exec.read_file("/etc/os-release") {
+        os_release
+            .lines()
+            .find(|line| line.starts_with("VERSION_CODENAME="))
+            .and_then(|line| line.split('=').nth(1))
+            .map(|s| s.trim_matches('"').to_string())
+            .unwrap_or_else(|| "bookworm".to_string())
+    } else {
+        "bookworm".to_string()
+    };
 
     // Get architecture
     let arch_output = exec.execute_simple("dpkg", &["--print-architecture"])?;
@@ -265,14 +263,32 @@ pub fn configure_permissions<E: CommandExecutor>(exec: &E) -> Result<()> {
         return Ok(());
     }
 
-    // Check if user is in docker group
-    let groups_output = exec.execute_simple("groups", &[])?;
-    let groups = String::from_utf8_lossy(&groups_output.stdout);
-    let in_group = groups.contains("docker");
+    // Check if user is in docker group using native Rust (Unix only)
+    let username = exec.get_username()?;
+    #[cfg(unix)]
+    let in_group = {
+        use std::fs;
+        if let Ok(group_content) = fs::read_to_string("/etc/group") {
+            group_content
+                .lines()
+                .any(|line| line.starts_with("docker:") && line.contains(&username))
+        } else {
+            // Fallback to groups command if file read fails
+            let groups_output = exec.execute_simple("groups", &[])?;
+            let groups = String::from_utf8_lossy(&groups_output.stdout);
+            groups.contains("docker")
+        }
+    };
+    #[cfg(not(unix))]
+    let in_group = {
+        // On non-Unix, use groups command
+        let groups_output = exec.execute_simple("groups", &[])?;
+        let groups = String::from_utf8_lossy(&groups_output.stdout);
+        groups.contains("docker")
+    };
 
     if !in_group {
         println!("Adding user to docker group...");
-        let username = exec.get_username()?;
         exec.execute_interactive("sudo", &["usermod", "-aG", "docker", &username])?;
         println!("✓ User added to docker group");
         println!("Note: You may need to log out and back in for changes to take effect");
@@ -586,4 +602,60 @@ pub fn is_container_running<E: CommandExecutor>(exec: &E, container_name: &str) 
     )?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(stdout.trim().contains(container_name))
+}
+
+/// Detect the docker compose command to use
+/// Returns "docker compose" (plugin) if available, otherwise "docker-compose" (standalone)
+pub fn get_compose_command<E: CommandExecutor>(exec: &E) -> Result<String> {
+    // First try "docker compose version" to check if the plugin is available
+    if exec.check_command_exists("docker")? {
+        let output = exec.execute_simple("docker", &["compose", "version"]);
+        if let Ok(output) = output {
+            if output.status.success() {
+                return Ok("docker compose".to_string());
+            }
+        }
+    }
+
+    // Fall back to standalone docker-compose
+    if exec.check_command_exists("docker-compose")? {
+        Ok("docker-compose".to_string())
+    } else {
+        anyhow::bail!("Neither 'docker compose' nor 'docker-compose' is available");
+    }
+}
+
+/// Stop a single container by name
+pub fn stop_container<E: CommandExecutor>(exec: &E, container_name: &str) -> Result<()> {
+    let output = exec.execute_simple("docker", &["stop", container_name])?;
+    if !output.status.success() {
+        // Try with sudo
+        let sudo_output = exec.execute_simple("sudo", &["docker", "stop", container_name])?;
+        if !sudo_output.status.success() {
+            anyhow::bail!("Failed to stop container: {}", container_name);
+        }
+    }
+    Ok(())
+}
+
+/// Remove a single container by name
+pub fn remove_container<E: CommandExecutor>(exec: &E, container_name: &str) -> Result<()> {
+    let output = exec.execute_simple("docker", &["rm", container_name])?;
+    if !output.status.success() {
+        // Try with sudo
+        let sudo_output = exec.execute_simple("sudo", &["docker", "rm", container_name])?;
+        if !sudo_output.status.success() {
+            anyhow::bail!("Failed to remove container: {}", container_name);
+        }
+    }
+    Ok(())
+}
+
+/// Stop and remove a container by name (convenience function)
+pub fn stop_and_remove_container<E: CommandExecutor>(exec: &E, container_name: &str) -> Result<()> {
+    // Stop first (ignore errors if already stopped)
+    stop_container(exec, container_name).ok();
+    // Then remove
+    remove_container(exec, container_name)?;
+    Ok(())
 }

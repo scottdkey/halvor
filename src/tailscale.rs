@@ -1,6 +1,6 @@
-use crate::config;
+use crate::config::{self, EnvConfig, HostConfig};
 use crate::exec::CommandExecutor;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::process::Command;
 
 pub fn install_tailscale() -> Result<()> {
@@ -106,25 +106,52 @@ pub fn check_and_install_remote<E: CommandExecutor>(exec: &E) -> Result<()> {
 
     println!("Tailscale not found. Installing Tailscale...");
 
-    if exec.check_command_exists("apt-get")?
-        || exec.check_command_exists("yum")?
-        || exec.check_command_exists("dnf")?
-    {
-        // Download Tailscale install script and execute it
-        // Note: This requires SshConnection for download_and_execute_script
-        // For now, use curl to download and execute
-        let install_cmd = "curl -fsSL https://tailscale.com/install.sh | sh";
-        let output = exec.execute_shell(install_cmd)?;
-        if !output.status.success() {
-            anyhow::bail!("Failed to install Tailscale");
+    // Detect package manager
+    let pkg_mgr = crate::exec::PackageManager::detect(exec)?;
+
+    match pkg_mgr {
+        crate::exec::PackageManager::Apt
+        | crate::exec::PackageManager::Yum
+        | crate::exec::PackageManager::Dnf => {
+            // For Linux, use Tailscale's install script
+            println!(
+                "Detected {} - using Tailscale install script",
+                pkg_mgr.display_name()
+            );
+            let install_cmd = "curl -fsSL https://tailscale.com/install.sh | sh";
+            let output = exec.execute_shell(install_cmd)?;
+            if !output.status.success() {
+                anyhow::bail!("Failed to install Tailscale");
+            }
         }
-    } else if exec.check_command_exists("brew")? {
-        exec.execute_interactive("brew", &["install", "tailscale"])?;
-    } else {
-        anyhow::bail!("Unsupported package manager. Please install Tailscale manually.");
+        crate::exec::PackageManager::Brew => {
+            println!(
+                "Detected {} - installing via Homebrew",
+                pkg_mgr.display_name()
+            );
+            pkg_mgr.install_package(exec, "tailscale")?;
+        }
+        crate::exec::PackageManager::Unknown => {
+            anyhow::bail!(
+                "No supported package manager found. Please install Tailscale manually from: https://tailscale.com/download"
+            );
+        }
     }
 
     println!("✓ Tailscale installed");
     println!("Note: Run 'sudo tailscale up' to connect to your tailnet");
     Ok(())
+}
+
+/// Get host configuration from config with helpful error message
+/// This is used across modules that need to access host configuration
+pub fn get_host_config<'a>(config: &'a EnvConfig, hostname: &str) -> Result<&'a HostConfig> {
+    config.hosts.get(hostname).with_context(|| {
+        format!(
+            "Host '{}' not found in .env\n\nAdd configuration to .env:\n  HOST_{}_IP=\"<ip-address>\"\n  HOST_{}_TAILSCALE=\"<tailscale-hostname>\"",
+            hostname,
+            hostname.to_uppercase(),
+            hostname.to_uppercase()
+        )
+    })
 }

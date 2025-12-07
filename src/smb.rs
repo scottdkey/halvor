@@ -117,16 +117,9 @@ fn install_smb_client<E: CommandExecutor>(exec: &E) -> Result<()> {
     }
 
     // Detect package manager and install
-    if exec.check_command_exists("apt-get")? {
-        exec.execute_interactive("sudo", &["apt-get", "update"])?;
-        exec.execute_interactive("sudo", &["apt-get", "install", "-y", "cifs-utils"])?;
-    } else if exec.check_command_exists("yum")? {
-        exec.execute_interactive("sudo", &["yum", "install", "-y", "cifs-utils"])?;
-    } else if exec.check_command_exists("dnf")? {
-        exec.execute_interactive("sudo", &["dnf", "install", "-y", "cifs-utils"])?;
-    } else {
-        anyhow::bail!("Unsupported package manager for SMB client installation");
-    }
+    let pkg_mgr = crate::exec::PackageManager::detect(exec)?;
+    println!("Detected package manager: {}", pkg_mgr.display_name());
+    pkg_mgr.install_package(exec, "cifs-utils")?;
 
     println!("✓ SMB client installed");
     Ok(())
@@ -135,15 +128,9 @@ fn install_smb_client<E: CommandExecutor>(exec: &E) -> Result<()> {
 fn cleanup_old_mounts<E: CommandExecutor>(exec: &E) -> Result<()> {
     println!("=== Cleaning up old mounts ===");
 
-    // List directories in /mnt/smb
-    let list_output = exec.execute_simple("ls", &["-1", "/mnt/smb"])?;
-    if !list_output.status.success() {
-        // Directory doesn't exist yet, nothing to clean up
-        return Ok(());
-    }
-
-    let dirs_str = String::from_utf8_lossy(&list_output.stdout);
-    for server_dir in dirs_str.lines() {
+    // List directories in /mnt/smb using native Rust
+    let dirs = exec.list_directory("/mnt/smb")?;
+    for server_dir in dirs {
         let server_dir = server_dir.trim();
         if server_dir.is_empty() {
             continue;
@@ -232,16 +219,26 @@ fn setup_smb_share<E: CommandExecutor>(
         }
     }
 
-    // Get user ID and group ID
-    let uid_output = exec.execute_simple("id", &["-u"])?;
-    let uid = String::from_utf8_lossy(&uid_output.stdout)
-        .trim()
-        .to_string();
-
-    let gid_output = exec.execute_simple("id", &["-g"])?;
-    let gid = String::from_utf8_lossy(&gid_output.stdout)
-        .trim()
-        .to_string();
+    // Get user ID and group ID using native Rust
+    #[cfg(unix)]
+    let (uid, gid) = {
+        let uid_val = exec.get_uid()?;
+        let gid_val = exec.get_gid()?;
+        (uid_val.to_string(), gid_val.to_string())
+    };
+    #[cfg(not(unix))]
+    let (uid, gid) = {
+        // Fallback to commands on non-Unix
+        let uid_output = exec.execute_simple("id", &["-u"])?;
+        let uid = String::from_utf8_lossy(&uid_output.stdout)
+            .trim()
+            .to_string();
+        let gid_output = exec.execute_simple("id", &["-g"])?;
+        let gid = String::from_utf8_lossy(&gid_output.stdout)
+            .trim()
+            .to_string();
+        (uid, gid)
+    };
 
     // Build mount options
     let mut mount_opts = format!(
@@ -357,16 +354,13 @@ fn uninstall_smb_mounts_remote<E: CommandExecutor>(exec: &E, config: &EnvConfig)
             remove_fstab_entry(exec, &mount_point)?;
             println!("✓ Removed {} from /etc/fstab", mount_point);
 
-            // Remove mount point directory
-            let dir_check = exec.execute_simple("test", &["-d", &mount_point]);
-            if let Ok(output) = dir_check {
-                if output.status.success() {
-                    let rmdir_result = exec.execute_simple("sudo", &["rmdir", &mount_point]);
-                    if rmdir_result.is_ok() && rmdir_result.as_ref().unwrap().status.success() {
-                        println!("✓ Removed mount point {}", mount_point);
-                    } else {
-                        println!("Mount point {} not empty, leaving it", mount_point);
-                    }
+            // Remove mount point directory using native Rust check
+            if exec.is_directory(&mount_point)? {
+                let rmdir_result = exec.execute_simple("sudo", &["rmdir", &mount_point]);
+                if rmdir_result.is_ok() && rmdir_result.as_ref().unwrap().status.success() {
+                    println!("✓ Removed mount point {}", mount_point);
+                } else {
+                    println!("Mount point {} not empty, leaving it", mount_point);
                 }
             }
         }

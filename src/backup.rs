@@ -1,5 +1,5 @@
 use crate::exec::{CommandExecutor, Executor};
-use crate::{config::EnvConfig, docker};
+use crate::{config::EnvConfig, docker, tailscale};
 use anyhow::{Context, Result};
 use std::time::SystemTime;
 
@@ -11,14 +11,7 @@ pub fn backup_host(hostname: &str, config: &EnvConfig) -> Result<()> {
     let is_local = exec.is_local();
 
     // Get backup path from config (required)
-    let host_config = config.hosts.get(hostname).with_context(|| {
-        format!(
-            "Host '{}' not found in .env\n\nAdd configuration to .env:\n  HOST_{}_IP=\"<ip-address>\"\n  HOST_{}_TAILSCALE=\"<tailscale-hostname>\"",
-            hostname,
-            hostname.to_uppercase(),
-            hostname.to_uppercase()
-        )
-    })?;
+    let host_config = tailscale::get_host_config(config, hostname)?;
 
     let backup_base = host_config.backup_path.as_ref().with_context(|| {
         format!(
@@ -54,10 +47,7 @@ pub fn list_backups(hostname: &str, config: &EnvConfig) -> Result<()> {
     let is_local = exec.is_local();
 
     // Get backup path from config (required)
-    let host_config = config
-        .hosts
-        .get(hostname)
-        .with_context(|| format!("Host '{}' not found in .env", hostname))?;
+    let host_config = tailscale::get_host_config(config, hostname)?;
 
     let backup_base = host_config.backup_path.as_ref().with_context(|| {
         format!(
@@ -87,10 +77,7 @@ pub fn restore_host(hostname: &str, backup_name: Option<&str>, config: &EnvConfi
     let _is_local = exec.is_local();
 
     // Get backup path from config (required)
-    let host_config = config
-        .hosts
-        .get(hostname)
-        .with_context(|| format!("Host '{}' not found in .env", hostname))?;
+    let host_config = tailscale::get_host_config(config, hostname)?;
 
     let backup_base = host_config.backup_path.as_ref().with_context(|| {
         format!(
@@ -134,11 +121,10 @@ fn perform_backup<E: CommandExecutor>(exec: &E, hostname: &str, backup_base: &st
     println!("Backup Directory: {}", backup_dir);
     println!();
 
-    // Check if backup base directory exists (parent of backup_base)
+    // Check if backup base directory exists (parent of backup_base) using native Rust
     if let Some(parent) = std::path::Path::new(backup_base).parent() {
         let parent_str = parent.to_string_lossy();
-        let check_mount = exec.execute_simple("test", &["-d", &parent_str])?;
-        if !check_mount.status.success() {
+        if !exec.is_directory(&parent_str)? {
             anyhow::bail!(
                 "Error: Backup base directory {} does not exist or is not mounted\nMake sure SMB mount is set up: hal smb {} setup",
                 parent_str,
@@ -147,9 +133,8 @@ fn perform_backup<E: CommandExecutor>(exec: &E, hostname: &str, backup_base: &st
         }
     }
 
-    // Create backup base directory if it doesn't exist
-    let dir_exists = exec.execute_simple("test", &["-d", backup_base])?;
-    if !dir_exists.status.success() {
+    // Create backup base directory if it doesn't exist using native Rust
+    if !exec.is_directory(backup_base)? {
         println!("Creating backup base directory: {}", backup_base);
         exec.mkdir_p(backup_base)?;
         println!("✓ Created backup base directory");
@@ -213,9 +198,8 @@ fn perform_backup<E: CommandExecutor>(exec: &E, hostname: &str, backup_base: &st
             let mounts = docker::get_bind_mounts(exec, container)?;
 
             for mount_path in &mounts {
-                // Check if mount path is a directory
-                let check_dir = exec.execute_simple("test", &["-d", mount_path])?;
-                if check_dir.status.success() {
+                // Check if mount path is a directory using native Rust
+                if exec.is_directory(mount_path)? {
                     let mount_name = mount_path
                         .split('/')
                         .last()
@@ -306,28 +290,21 @@ fn perform_backup<E: CommandExecutor>(exec: &E, hostname: &str, backup_base: &st
 fn list_backup_directories<E: CommandExecutor>(exec: &E, backup_base: &str) -> Result<()> {
     println!("=== Available Backups ===");
 
-    // Check if backup directory exists
-    let dir_check = exec.execute_simple("test", &["-d", backup_base])?;
-    if !dir_check.status.success() {
+    // Check if backup directory exists using native Rust
+    if !exec.is_directory(backup_base)? {
         anyhow::bail!(
             "Error: Backup directory {} does not exist or is not mounted",
             backup_base
         );
     }
 
-    // List backup directories
-    let find_output = exec.execute_shell(&format!(
-        "find {} -mindepth 1 -maxdepth 1 -type d",
-        backup_base
-    ))?;
-
-    if !find_output.status.success() {
-        println!("No backups found");
-        return Ok(());
-    }
-
-    let find_str = String::from_utf8_lossy(&find_output.stdout);
-    let backup_dirs: Vec<&str> = find_str.lines().filter(|l| !l.trim().is_empty()).collect();
+    // List backup directories using native Rust
+    let backup_dirs = exec.list_directory(backup_base)?;
+    let backup_dirs: Vec<String> = backup_dirs
+        .into_iter()
+        .map(|name| format!("{}/{}", backup_base, name))
+        .filter(|path| exec.is_directory(path).unwrap_or(false))
+        .collect();
 
     if backup_dirs.is_empty() {
         println!("No backups found");
@@ -386,11 +363,10 @@ fn perform_restore<E: CommandExecutor>(
     println!("Backup Directory: {}", backup_dir);
     println!();
 
-    // Check if backup base directory exists (parent of backup_base)
+    // Check if backup base directory exists (parent of backup_base) using native Rust
     if let Some(parent) = std::path::Path::new(backup_base).parent() {
         let parent_str = parent.to_string_lossy();
-        let check_mount = exec.execute_simple("test", &["-d", &parent_str])?;
-        if !check_mount.status.success() {
+        if !exec.is_directory(&parent_str)? {
             anyhow::bail!(
                 "Error: Backup base directory {} does not exist or is not mounted\nMake sure SMB mount is set up: hal smb <hostname> setup",
                 parent_str
@@ -398,26 +374,23 @@ fn perform_restore<E: CommandExecutor>(
         }
     }
 
-    // Create backup base directory if it doesn't exist
-    let dir_exists = exec.execute_simple("test", &["-d", backup_base])?;
-    if !dir_exists.status.success() {
+    // Create backup base directory if it doesn't exist using native Rust
+    if !exec.is_directory(backup_base)? {
         exec.mkdir_p(backup_base)?;
         println!("Created backup base directory: {}", backup_base);
     }
 
-    // Check if backup exists
-    let backup_exists = exec.execute_simple("test", &["-d", &backup_dir])?;
-    if !backup_exists.status.success() {
+    // Check if backup exists using native Rust
+    if !exec.is_directory(&backup_dir)? {
         println!("Error: Backup directory does not exist: {}", backup_dir);
         println!("Available backups:");
-        let list_output = exec.execute_shell(&format!("ls -1 {}", backup_base))?;
-        if list_output.status.success() {
-            let list_str = String::from_utf8_lossy(&list_output.stdout);
-            for line in list_str.lines() {
-                println!("  {}", line);
-            }
-        } else {
+        let dirs = exec.list_directory(backup_base)?;
+        if dirs.is_empty() {
             println!("  (none)");
+        } else {
+            for dir in dirs {
+                println!("  {}", dir);
+            }
         }
         anyhow::bail!("Backup directory does not exist: {}", backup_dir);
     }

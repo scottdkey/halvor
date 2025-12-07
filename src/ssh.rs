@@ -1,15 +1,290 @@
 use crate::config::{self, EnvConfig};
+use crate::exec::local;
+use crate::tailscale;
 use anyhow::{Context, Result};
 use std::io::{self, Write};
-use std::process::{Command, Stdio};
-use which;
+use std::process::{Command, Output, Stdio};
 
-pub fn remove_ssh_host_key(host: &str) -> Result<()> {
+/// SSH connection for remote command execution
+pub struct SshConnection {
+    host: String,
+    pub(crate) use_key_auth: bool,
+}
+
+impl SshConnection {
+    pub fn new(host: &str) -> Result<Self> {
+        // Test if key-based auth works
+        let test_output = Command::new("ssh")
+            .args([
+                "-o",
+                "ConnectTimeout=1",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "PreferredAuthentications=publickey",
+                "-o",
+                "PasswordAuthentication=no",
+                "-o",
+                "StrictHostKeyChecking=no",
+                host,
+                "echo",
+                "test",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .output();
+
+        let use_key_auth = test_output.is_ok() && test_output.unwrap().status.success();
+
+        Ok(Self {
+            host: host.to_string(),
+            use_key_auth,
+        })
+    }
+
+    fn build_ssh_args(&self) -> Vec<String> {
+        let mut args = vec!["-o".to_string(), "StrictHostKeyChecking=no".to_string()];
+
+        if self.use_key_auth {
+            args.extend([
+                "-o".to_string(),
+                "PreferredAuthentications=publickey".to_string(),
+                "-o".to_string(),
+                "PasswordAuthentication=no".to_string(),
+            ]);
+        } else {
+            args.extend([
+                "-o".to_string(),
+                "PreferredAuthentications=publickey,keyboard-interactive,password".to_string(),
+            ]);
+        }
+
+        args.push(self.host.clone());
+        args
+    }
+
+    pub fn execute_simple(&self, program: &str, args: &[&str]) -> Result<Output> {
+        let mut ssh_args = self.build_ssh_args();
+
+        // Execute command directly without shell
+        ssh_args.push(program.to_string());
+        for arg in args {
+            ssh_args.push(arg.to_string());
+        }
+
+        let output = Command::new("ssh")
+            .args(&ssh_args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .stdin(Stdio::null())
+            .output()
+            .with_context(|| format!("Failed to execute command: {}", program))?;
+
+        Ok(output)
+    }
+
+    pub fn execute_shell(&self, command: &str) -> Result<Output> {
+        let mut ssh_args = self.build_ssh_args();
+        ssh_args.push("sh".to_string());
+        ssh_args.push("-c".to_string());
+        ssh_args.push(command.to_string());
+
+        let output = Command::new("ssh")
+            .args(&ssh_args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .stdin(Stdio::null())
+            .output()
+            .with_context(|| format!("Failed to execute shell command"))?;
+
+        Ok(output)
+    }
+
+    pub fn execute_interactive(&self, program: &str, args: &[&str]) -> Result<()> {
+        let mut ssh_args = self.build_ssh_args();
+        ssh_args.push("-tt".to_string()); // Force TTY for interactive
+
+        // Execute command directly
+        ssh_args.push(program.to_string());
+        for arg in args {
+            ssh_args.push(arg.to_string());
+        }
+
+        let status = Command::new("ssh")
+            .args(&ssh_args)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()
+            .with_context(|| format!("Failed to execute interactive command: {}", program))?;
+
+        if !status.success() {
+            anyhow::bail!(
+                "Command '{}' failed with exit code: {}",
+                program,
+                status.code().unwrap_or(1)
+            );
+        }
+
+        Ok(())
+    }
+
+    pub fn execute_shell_interactive(&self, command: &str) -> Result<()> {
+        let mut ssh_args = self.build_ssh_args();
+        ssh_args.push("-tt".to_string()); // Force TTY for interactive
+        ssh_args.push("sh".to_string());
+        ssh_args.push("-c".to_string());
+        ssh_args.push(command.to_string());
+
+        let status = Command::new("ssh")
+            .args(&ssh_args)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()
+            .with_context(|| format!("Failed to execute interactive shell command"))?;
+
+        if !status.success() {
+            anyhow::bail!(
+                "Shell command failed with exit code: {}",
+                status.code().unwrap_or(1)
+            );
+        }
+
+        Ok(())
+    }
+
+    pub fn check_command_exists(&self, command: &str) -> Result<bool> {
+        let output = self.execute_simple("command", &["-v", command])?;
+        Ok(output.status.success())
+    }
+
+    pub fn is_linux(&self) -> Result<bool> {
+        // For remote, we still need to check via command
+        let output = self.execute_simple("uname", &[])?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(stdout.trim() != "Darwin")
+    }
+
+    pub fn read_file(&self, path: &str) -> Result<String> {
+        let output = self.execute_simple("cat", &[path])?;
+        if !output.status.success() {
+            anyhow::bail!("Failed to read file: {}", path);
+        }
+        String::from_utf8(output.stdout)
+            .with_context(|| format!("Failed to decode file contents: {}", path))
+    }
+
+    pub fn write_file(&self, path: &str, content: &[u8]) -> Result<()> {
+        let mut ssh_args = self.build_ssh_args();
+        ssh_args.push("sh".to_string());
+        ssh_args.push("-c".to_string());
+        ssh_args.push(format!("cat > {}", shell_escape(path)));
+
+        let mut cmd = Command::new("ssh");
+        cmd.args(&ssh_args);
+        cmd.stdin(Stdio::piped());
+        cmd.stdout(Stdio::null());
+        cmd.stderr(Stdio::inherit());
+
+        let mut child = cmd
+            .spawn()
+            .with_context(|| format!("Failed to spawn SSH command for writing file"))?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(content)?;
+            stdin.flush()?;
+        }
+
+        let status = child
+            .wait()
+            .with_context(|| format!("Failed to write file: {}", path))?;
+
+        if !status.success() {
+            anyhow::bail!("Failed to write file: {}", path);
+        }
+
+        Ok(())
+    }
+
+    pub fn mkdir_p(&self, path: &str) -> Result<()> {
+        let output = self.execute_simple("mkdir", &["-p", path])?;
+        if !output.status.success() {
+            anyhow::bail!("Failed to create directory: {}", path);
+        }
+        Ok(())
+    }
+
+    pub fn file_exists(&self, path: &str) -> Result<bool> {
+        let output = self.execute_simple("test", &["-f", path])?;
+        Ok(output.status.success())
+    }
+
+    pub fn list_directory(&self, path: &str) -> Result<Vec<String>> {
+        let output = self.execute_simple("ls", &["-1", path])?;
+        if !output.status.success() {
+            return Ok(Vec::new());
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(stdout
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|s| s.trim().to_string())
+            .collect())
+    }
+
+    pub fn is_directory(&self, path: &str) -> Result<bool> {
+        let output = self.execute_simple("test", &["-d", path])?;
+        Ok(output.status.success())
+    }
+
+    #[cfg(unix)]
+    pub fn get_uid(&self) -> Result<u32> {
+        let output = self.execute_simple("id", &["-u"])?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        stdout
+            .trim()
+            .parse::<u32>()
+            .with_context(|| format!("Failed to parse UID: {}", stdout))
+    }
+
+    #[cfg(unix)]
+    pub fn get_gid(&self) -> Result<u32> {
+        let output = self.execute_simple("id", &["-g"])?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        stdout
+            .trim()
+            .parse::<u32>()
+            .with_context(|| format!("Failed to parse GID: {}", stdout))
+    }
+}
+
+/// Escape a string for safe use in shell commands
+fn shell_escape(s: &str) -> String {
+    // Simple escaping - wrap in single quotes and escape single quotes
+    if s.is_empty() {
+        return "''".to_string();
+    }
+
+    // If string contains no special characters, return as-is
+    if s.chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '/' || c == '.' || c == '$')
+    {
+        return s.to_string();
+    }
+
+    // Escape single quotes by ending quote, adding escaped quote, starting new quote
+    let escaped = s.replace('\'', "'\"'\"'");
+    format!("'{}'", escaped)
+}
+
+fn _remove_ssh_host_key(host: &str) -> Result<()> {
     println!("Removing host key for {} from known_hosts...", host);
 
-    let status = Command::new("ssh-keygen").args(["-R", host]).status()?;
+    // Use exec::local for local command execution
+    let output = local::execute("ssh-keygen", &["-R", host])?;
 
-    if status.success() {
+    if output.status.success() {
         println!("✓ Removed host key for {}", host);
         Ok(())
     } else {
@@ -17,7 +292,7 @@ pub fn remove_ssh_host_key(host: &str) -> Result<()> {
     }
 }
 
-pub fn prompt_remove_host_key(host: &str) -> Result<bool> {
+fn _prompt_remove_host_key(host: &str) -> Result<bool> {
     print!("Remove host key for {} from known_hosts? [y/N]: ", host);
     io::stdout().flush()?;
 
@@ -28,41 +303,17 @@ pub fn prompt_remove_host_key(host: &str) -> Result<bool> {
     Ok(response == "y" || response == "yes")
 }
 
-fn connect_ssh_key_based(host: &str, user: Option<&str>, ssh_args: &[String]) -> Result<()> {
-    // First, test if key-based auth works (silently)
+fn _connect_ssh_key_based(host: &str, user: Option<&str>, ssh_args: &[String]) -> Result<()> {
+    // First, test if key-based auth works using SshConnection
     let host_str = if let Some(u) = user {
         format!("{}@{}", u, host)
     } else {
         host.to_string()
     };
 
-    // Quick test to see if key-based auth is available
-    let test_output = Command::new("ssh")
-        .args([
-            "-o",
-            "ConnectTimeout=1",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "PreferredAuthentications=publickey",
-            "-o",
-            "PasswordAuthentication=no",
-            "-o",
-            "StrictHostKeyChecking=no",
-            &host_str,
-            "echo",
-            "test",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .output();
-
-    // If test fails, key-based auth isn't available
-    if let Ok(result) = test_output {
-        if !result.status.success() {
-            anyhow::bail!("Key-based authentication not available");
-        }
-    } else {
+    // Use SshConnection to test key-based auth
+    let ssh_conn = SshConnection::new(&host_str)?;
+    if !ssh_conn.use_key_auth {
         anyhow::bail!("Key-based authentication not available");
     }
 
@@ -105,7 +356,7 @@ fn connect_ssh_key_based(host: &str, user: Option<&str>, ssh_args: &[String]) ->
     }
 }
 
-pub fn connect_ssh(host: &str, user: Option<&str>, ssh_args: &[String]) -> Result<()> {
+fn _connect_ssh(host: &str, user: Option<&str>, ssh_args: &[String]) -> Result<()> {
     let mut cmd = Command::new("ssh");
 
     // Add options to allow password authentication (fallback)
@@ -149,11 +400,7 @@ pub fn connect_ssh(host: &str, user: Option<&str>, ssh_args: &[String]) -> Resul
     }
 }
 
-pub fn copy_ssh_key(
-    host: &str,
-    server_user: Option<&str>,
-    target_user: Option<&str>,
-) -> Result<()> {
+fn _copy_ssh_key(host: &str, server_user: Option<&str>, target_user: Option<&str>) -> Result<()> {
     // Determine server username (to SSH into the server)
     let default_server_user = config::get_default_username();
     let server_username = if let Some(u) = server_user {
@@ -205,7 +452,7 @@ pub fn copy_ssh_key(
     );
 
     // Find the public key file using config module
-    let home = config::get_home_dir()?;
+    let home = crate::config_manager::get_home_dir()?;
     let home_str = home.to_string_lossy().to_string();
 
     let pubkey_paths = [
@@ -235,19 +482,9 @@ pub fn copy_ssh_key(
             "Checking if user '{}' exists on remote system...",
             target_username
         );
-        let mut check_cmd = Command::new("ssh");
-        check_cmd.arg("-o").arg("StrictHostKeyChecking=no");
-        check_cmd
-            .arg("-o")
-            .arg("PreferredAuthentications=keyboard-interactive,password");
-        check_cmd.arg("-t");
-        check_cmd.arg(&host_str);
-        check_cmd.arg(&check_user_cmd);
-
-        check_cmd.stdout(Stdio::null());
-        check_cmd.stderr(Stdio::null());
-
-        let user_exists = check_cmd.status()?.success();
+        // Use SshConnection for non-interactive command execution
+        let ssh_conn = SshConnection::new(&host_str)?;
+        let user_exists = ssh_conn.execute_shell(&check_user_cmd)?.status.success();
 
         if !user_exists {
             // User doesn't exist, create it and set a password
@@ -275,23 +512,13 @@ pub fn copy_ssh_key(
                 target_username, target_username, password
             );
 
-            let mut create_cmd = Command::new("ssh");
-            create_cmd.arg("-o").arg("StrictHostKeyChecking=no");
-            create_cmd
-                .arg("-o")
-                .arg("PreferredAuthentications=keyboard-interactive,password");
-            create_cmd.arg("-t");
-            create_cmd.arg(&host_str);
-            create_cmd.arg(&create_user_cmd);
-
-            create_cmd.stdin(Stdio::inherit());
-            create_cmd.stdout(Stdio::inherit());
-            create_cmd.stderr(Stdio::inherit());
-
-            let create_status = create_cmd.status()?;
-            if !create_status.success() {
-                anyhow::bail!("Failed to create user {} on {}", target_username, host);
-            }
+            // Use SshConnection for interactive command execution (needs TTY for sudo)
+            let ssh_conn = SshConnection::new(&host_str)?;
+            ssh_conn
+                .execute_shell_interactive(&create_user_cmd)
+                .with_context(|| {
+                    format!("Failed to create user {} on {}", target_username, host)
+                })?;
 
             println!("✓ User '{}' created with password", target_username);
         } else {
@@ -305,19 +532,9 @@ pub fn copy_ssh_key(
                 target_username
             );
 
-            let mut password_check_cmd = Command::new("ssh");
-            password_check_cmd.arg("-o").arg("StrictHostKeyChecking=no");
-            password_check_cmd
-                .arg("-o")
-                .arg("PreferredAuthentications=keyboard-interactive,password");
-            password_check_cmd.arg("-t");
-            password_check_cmd.arg(&host_str);
-            password_check_cmd.arg(&check_password_cmd);
-
-            password_check_cmd.stdout(Stdio::piped());
-            password_check_cmd.stderr(Stdio::null());
-
-            let password_check_output = password_check_cmd.output()?;
+            // Use SshConnection for non-interactive command execution
+            let ssh_conn = SshConnection::new(&host_str)?;
+            let password_check_output = ssh_conn.execute_shell(&check_password_cmd)?;
             let password_status_str = String::from_utf8_lossy(&password_check_output.stdout);
             let password_status = password_status_str.trim();
 
@@ -340,21 +557,12 @@ pub fn copy_ssh_key(
                         let set_password_cmd =
                             format!(r#"echo '{}:{}' | sudo chpasswd"#, target_username, password);
 
-                        let mut set_pwd_cmd = Command::new("ssh");
-                        set_pwd_cmd.arg("-o").arg("StrictHostKeyChecking=no");
-                        set_pwd_cmd
-                            .arg("-o")
-                            .arg("PreferredAuthentications=keyboard-interactive,password");
-                        set_pwd_cmd.arg("-t");
-                        set_pwd_cmd.arg(&host_str);
-                        set_pwd_cmd.arg(&set_password_cmd);
-
-                        set_pwd_cmd.stdin(Stdio::inherit());
-                        set_pwd_cmd.stdout(Stdio::inherit());
-                        set_pwd_cmd.stderr(Stdio::inherit());
-
-                        let set_pwd_status = set_pwd_cmd.status()?;
-                        if set_pwd_status.success() {
+                        // Use SshConnection for interactive command execution (needs TTY for sudo)
+                        let ssh_conn = SshConnection::new(&host_str)?;
+                        if ssh_conn
+                            .execute_shell_interactive(&set_password_cmd)
+                            .is_ok()
+                        {
                             println!("✓ Password set for user '{}'", target_username);
                         } else {
                             eprintln!(
@@ -390,56 +598,44 @@ pub fn copy_ssh_key(
         );
 
         println!("Installing SSH key for user '{}'...", target_username);
-        let mut ssh_cmd = Command::new("ssh");
-        ssh_cmd.arg("-o").arg("StrictHostKeyChecking=no");
-        ssh_cmd
-            .arg("-o")
-            .arg("PreferredAuthentications=keyboard-interactive,password");
-        ssh_cmd.arg("-t"); // Force pseudo-terminal for sudo prompts
-        ssh_cmd.arg(&host_str);
-        ssh_cmd.arg(&append_cmd);
+        // Use SshConnection for interactive command execution (needs TTY for sudo)
+        let ssh_conn = SshConnection::new(&host_str)?;
+        ssh_conn
+            .execute_shell_interactive(&append_cmd)
+            .with_context(|| {
+                format!(
+                    "Failed to install SSH key for user {} on {}",
+                    target_username, host
+                )
+            })?;
 
-        ssh_cmd.stdin(Stdio::inherit());
-        ssh_cmd.stdout(Stdio::inherit());
-        ssh_cmd.stderr(Stdio::inherit());
-
-        let status = ssh_cmd.status()?;
-
-        if status.success() {
-            println!(
-                "✓ SSH key copied successfully to {}@{} (installed for user: {})",
-                server_username, host, target_username
-            );
-            Ok(())
-        } else {
-            anyhow::bail!(
-                "Failed to install SSH key for user {} on {}",
-                target_username,
-                host
-            );
-        }
+        println!(
+            "✓ SSH key copied successfully to {}@{} (installed for user: {})",
+            server_username, host, target_username
+        );
+        Ok(())
     } else {
         // Same user, use standard ssh-copy-id
-        if which::which("ssh-copy-id").is_err() {
+        if !local::check_command_exists("ssh-copy-id") {
             anyhow::bail!(
                 "ssh-copy-id not found. Please install openssh-client or openssh-clients"
             );
         }
 
-        let mut cmd = Command::new("ssh-copy-id");
-        cmd.arg("-o").arg("StrictHostKeyChecking=no");
-        cmd.arg("-o")
-            .arg("PreferredAuthentications=keyboard-interactive,password");
-        cmd.arg("-f"); // Force mode - don't check if key is already installed
-        cmd.arg(&host_str);
+        // Use exec::local for local command execution
+        let output = local::execute(
+            "ssh-copy-id",
+            &[
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "PreferredAuthentications=keyboard-interactive,password",
+                "-f", // Force mode - don't check if key is already installed
+                &host_str,
+            ],
+        )?;
 
-        cmd.stdin(Stdio::inherit());
-        cmd.stdout(Stdio::inherit());
-        cmd.stderr(Stdio::inherit());
-
-        let status = cmd.status()?;
-
-        if status.success() {
+        if output.status.success() {
             println!("✓ SSH key copied successfully to {}", host_str);
             Ok(())
         } else {
@@ -448,7 +644,7 @@ pub fn copy_ssh_key(
     }
 }
 
-pub fn ssh_to_host(
+pub fn _ssh_to_host(
     hostname: &str,
     user: Option<String>,
     fix_keys: bool,
@@ -456,22 +652,16 @@ pub fn ssh_to_host(
     ssh_args: &[String],
     config: &EnvConfig,
 ) -> Result<()> {
-    use crate::config::list_available_hosts;
-
     // If hostname is empty, list available hosts
     if hostname.is_empty() {
-        list_available_hosts(config);
+        println!("Available hosts:");
+        for (host, _) in &config.hosts {
+            println!("  - {}", host);
+        }
         anyhow::bail!("Please specify a hostname");
     }
 
-    let host_config = config.hosts.get(hostname).with_context(|| {
-        format!(
-            "Host '{}' not found in .env\n\nAdd configuration to .env:\n  HOST_{}_IP=\"<ip-address>\"\n  HOST_{}_TAILSCALE=\"<tailscale-hostname>\"",
-            hostname,
-            hostname.to_uppercase(),
-            hostname.to_uppercase()
-        )
-    })?;
+    let host_config = tailscale::get_host_config(config, hostname)?;
 
     // Collect all possible host addresses
     let mut all_hosts = Vec::new();
@@ -480,15 +670,15 @@ pub fn ssh_to_host(
     }
     if let Some(tailscale) = &host_config.tailscale {
         all_hosts.push(tailscale.clone());
-        all_hosts.push(format!("{}.{}", tailscale, config.tailnet_base));
+        all_hosts.push(format!("{}.{}", tailscale, config._tailnet_base));
     }
 
     // If fix_keys is enabled, remove host keys for all possible addresses
     if fix_keys {
         println!("Fix keys mode enabled. Removing host keys for all configured addresses...");
         for host in &all_hosts {
-            if prompt_remove_host_key(host)? {
-                remove_ssh_host_key(host)?;
+            if _prompt_remove_host_key(host)? {
+                _remove_ssh_host_key(host)?;
             }
         }
     }
@@ -545,7 +735,7 @@ pub fn ssh_to_host(
             input.trim().to_string()
         };
 
-        copy_ssh_key(
+        _copy_ssh_key(
             target_host,
             username_for_keys.as_deref(), // Server username (to SSH into)
             Some(&target_username),       // Target username (where to install key)
@@ -573,8 +763,8 @@ pub fn ssh_to_host(
     if let Some(tailscale) = &host_config.tailscale {
         hosts_to_try.push((tailscale.clone(), format!("Tailscale: {}", tailscale)));
         hosts_to_try.push((
-            format!("{}.{}", tailscale, config.tailnet_base),
-            format!("Tailscale FQDN: {}.{}", tailscale, config.tailnet_base),
+            format!("{}.{}", tailscale, config._tailnet_base),
+            format!("Tailscale FQDN: {}.{}", tailscale, config._tailnet_base),
         ));
     }
 
@@ -588,7 +778,7 @@ pub fn ssh_to_host(
         let default_username = config::get_default_username();
 
         // Try with default username first
-        match connect_ssh_key_based(host, Some(&default_username), ssh_args) {
+        match _connect_ssh_key_based(host, Some(&default_username), ssh_args) {
             Ok(_) => return Ok(()),
             Err(_) => {} // Key-based auth failed, continue
         }
@@ -596,7 +786,7 @@ pub fn ssh_to_host(
         // If username was explicitly provided via flag, try that too
         if let Some(ref u) = username {
             if u != &default_username {
-                match connect_ssh_key_based(host, Some(u), ssh_args) {
+                match _connect_ssh_key_based(host, Some(u), ssh_args) {
                     Ok(_) => return Ok(()),
                     Err(_) => {} // Key-based auth failed, continue
                 }
@@ -615,7 +805,7 @@ pub fn ssh_to_host(
         };
         // Try to connect with password authentication as fallback
         // This will allow interactive password prompts
-        match connect_ssh(host, final_username.as_deref(), ssh_args) {
+        match _connect_ssh(host, final_username.as_deref(), ssh_args) {
             Ok(_) => {
                 // Connection succeeded, we're done
                 return Ok(());

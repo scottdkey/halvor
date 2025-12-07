@@ -45,8 +45,7 @@ pub fn install_host<E: CommandExecutor>(exec: &E, edition: PortainerEdition) -> 
     if let Ok(containers) = docker::list_containers(exec) {
         for container in &containers {
             if container == "portainer" || container == "portainer_agent" {
-                exec.execute_simple("docker", &["stop", container]).ok();
-                exec.execute_simple("docker", &["rm", container]).ok();
+                docker::stop_and_remove_container(exec, container).ok();
             }
         }
     }
@@ -56,12 +55,8 @@ pub fn install_host<E: CommandExecutor>(exec: &E, edition: PortainerEdition) -> 
     // Start Portainer
     exec.mkdir_p("$HOME/portainer")?;
 
-    // Try docker compose, fallback to docker-compose
-    let compose_cmd = if exec.check_command_exists("docker")? {
-        "docker compose"
-    } else {
-        "docker-compose"
-    };
+    // Get docker compose command from docker module
+    let compose_cmd = docker::get_compose_command(exec)?;
 
     exec.execute_shell_interactive(&format!(
         "cd $HOME/portainer && {} down 2>/dev/null || true && {} up -d",
@@ -88,8 +83,7 @@ pub fn install_agent<E: CommandExecutor>(exec: &E) -> Result<()> {
     if let Ok(containers) = docker::list_containers(exec) {
         for container in &containers {
             if container == "portainer" || container == "portainer_agent" {
-                exec.execute_simple("docker", &["stop", container]).ok();
-                exec.execute_simple("docker", &["rm", container]).ok();
+                docker::stop_and_remove_container(exec, container).ok();
             }
         }
     }
@@ -99,12 +93,8 @@ pub fn install_agent<E: CommandExecutor>(exec: &E) -> Result<()> {
     // Start Portainer Agent
     exec.mkdir_p("$HOME/portainer")?;
 
-    // Try docker compose, fallback to docker-compose
-    let compose_cmd = if exec.check_command_exists("docker")? {
-        "docker compose"
-    } else {
-        "docker-compose"
-    };
+    // Get docker compose command from docker module
+    let compose_cmd = docker::get_compose_command(exec)?;
 
     exec.execute_shell_interactive(&format!(
         "cd $HOME/portainer && {} down 2>/dev/null || true && {} up -d",

@@ -1,3 +1,4 @@
+use crate::exec::local;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::env;
@@ -154,7 +155,7 @@ pub fn download_and_install_update(version: &str) -> Result<()> {
 
     // Extract the archive
     let temp_dir = std::env::temp_dir().join(format!("hal-update-extract-{}", version));
-    std::fs::create_dir_all(&temp_dir).context("Failed to create extract directory")?;
+    local::create_dir_all(&temp_dir)?;
 
     let extracted_binary = if cfg!(target_os = "windows") {
         // Extract ZIP file
@@ -198,21 +199,21 @@ pub fn download_and_install_update(version: &str) -> Result<()> {
 
         // Find the hal binary in the extracted files
         let binary_path = temp_dir.join("hal");
-        if !binary_path.exists() {
+        if !local::path_exists(&binary_path) {
             // Try looking in subdirectories
             let mut found = false;
-            for entry in std::fs::read_dir(&temp_dir).context("Failed to read extract directory")? {
-                let entry = entry.context("Failed to read directory entry")?;
-                let path = entry.path();
-                if path.is_dir() {
+            let entries = local::list_directory(&temp_dir)?;
+            for entry_name in entries {
+                let path = temp_dir.join(&entry_name);
+                if local::is_directory(&path) {
                     let candidate = path.join("hal");
-                    if candidate.exists() {
-                        std::fs::copy(&candidate, &binary_path).context("Failed to copy binary")?;
+                    if local::path_exists(&candidate) {
+                        local::copy_file(&candidate, &binary_path)?;
                         found = true;
                         break;
                     }
-                } else if path.file_name().and_then(|n| n.to_str()) == Some("hal") {
-                    std::fs::copy(&path, &binary_path).context("Failed to copy binary")?;
+                } else if entry_name == "hal" {
+                    local::copy_file(&path, &binary_path)?;
                     found = true;
                     break;
                 }
@@ -227,24 +228,22 @@ pub fn download_and_install_update(version: &str) -> Result<()> {
     // Make executable (Unix)
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&extracted_binary, std::fs::Permissions::from_mode(0o755))
-            .context("Failed to set executable permissions")?;
+        local::set_permissions(&extracted_binary, 0o755)?;
     }
 
     println!("Installing update...");
 
     // Backup current executable
-    if current_exe.exists() {
-        std::fs::copy(&current_exe, &backup_path).context("Failed to backup current executable")?;
+    if local::path_exists(&current_exe) {
+        local::copy_file(&current_exe, &backup_path)?;
     }
 
     // Replace current executable
-    std::fs::copy(&extracted_binary, &current_exe).context("Failed to install update")?;
+    local::copy_file(&extracted_binary, &current_exe)?;
 
     // Clean up temp files
-    std::fs::remove_file(&temp_archive).ok();
-    std::fs::remove_dir_all(&temp_dir).ok();
+    local::remove_file(&temp_archive).ok();
+    local::remove_dir_all(&temp_dir).ok();
 
     println!("✓ Update installed successfully!");
     println!("  Backup saved to: {}", backup_path.display());

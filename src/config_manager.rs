@@ -42,7 +42,7 @@ pub fn get_config_file_path() -> Result<PathBuf> {
     Ok(config_dir.join(CONFIG_FILE_NAME))
 }
 
-fn get_home_dir() -> Result<PathBuf> {
+pub fn get_home_dir() -> Result<PathBuf> {
     std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE")) // Windows fallback
         .map(PathBuf::from)
