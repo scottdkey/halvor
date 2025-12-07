@@ -50,13 +50,31 @@ build:
 			curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable; \
 		fi; \
 		if ! command -v cc >/dev/null 2>&1 && ! command -v gcc >/dev/null 2>&1; then \
-			echo "C compiler not found. Installing build-essential..."; \
+			echo "C compiler not found. Installing build dependencies..."; \
 			if command -v apt-get >/dev/null 2>&1; then \
-				sudo apt-get update && sudo apt-get install -y build-essential; \
+				if sudo -n apt-get update >/dev/null 2>&1; then \
+					sudo apt-get install -y build-essential; \
+				else \
+					echo "Error: Passwordless sudo required to install build-essential"; \
+					echo "Run: sudo apt-get update && sudo apt-get install -y build-essential"; \
+					exit 1; \
+				fi; \
 			elif command -v yum >/dev/null 2>&1; then \
-				sudo yum install -y gcc gcc-c++ make; \
+				if sudo -n yum list installed gcc >/dev/null 2>&1; then \
+					sudo yum install -y gcc gcc-c++ make; \
+				else \
+					echo "Error: Passwordless sudo required to install gcc"; \
+					echo "Run: sudo yum install -y gcc gcc-c++ make"; \
+					exit 1; \
+				fi; \
 			elif command -v dnf >/dev/null 2>&1; then \
-				sudo dnf install -y gcc gcc-c++ make; \
+				if sudo -n dnf list installed gcc >/dev/null 2>&1; then \
+					sudo dnf install -y gcc gcc-c++ make; \
+				else \
+					echo "Error: Passwordless sudo required to install gcc"; \
+					echo "Run: sudo dnf install -y gcc gcc-c++ make"; \
+					exit 1; \
+				fi; \
 			fi; \
 		fi; \
 		export PATH="$$HOME/.cargo/bin:$$PATH" && cargo build --release; \
