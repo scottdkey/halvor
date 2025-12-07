@@ -36,6 +36,7 @@ jobs:
           - x86_64-unknown-linux-gnu
           - x86_64-unknown-linux-musl
           - aarch64-unknown-linux-gnu
+          - aarch64-unknown-linux-musl
           - riscv64gc-unknown-linux-gnu
     steps:
       - name: Checkout code
@@ -65,8 +66,60 @@ jobs:
         if: startsWith(matrix.target, 'x86_64-unknown-linux') || startsWith(matrix.target, 'aarch64-unknown-linux') || startsWith(matrix.target, 'riscv64gc-unknown-linux')
         run: |
           sudo apt-get update
-          if [[ "${{ matrix.target }}" == *"musl"* ]]; then
+          if [[ "${{ matrix.target }}" == "x86_64-unknown-linux-musl" ]]; then
             sudo apt-get install -y musl-tools musl-dev
+          elif [[ "${{ matrix.target }}" == "aarch64-unknown-linux-musl" ]]; then
+            # Install dependencies for aarch64 musl cross-compilation
+            sudo apt-get install -y \
+              musl-tools \
+              musl-dev \
+              gcc-aarch64-linux-gnu \
+              g++-aarch64-linux-gnu \
+              build-essential \
+              wget \
+              xz-utils \
+              file
+            # Download and install pre-built musl-cross toolchain for aarch64
+            MUSL_CROSS_DIR="$HOME/musl-cross"
+            mkdir -p "$MUSL_CROSS_DIR/bin"
+            cd "$MUSL_CROSS_DIR"
+            
+            # Try to download a pre-built aarch64 musl toolchain
+            # Using musl.cc or another reliable source
+            echo "Downloading aarch64-linux-musl cross-compiler..."
+            
+            # Try musl.cc pre-built toolchain (if available)
+            TOOLCHAIN_URL="https://musl.cc/aarch64-linux-musl-cross.tgz"
+            if wget -q --spider "$TOOLCHAIN_URL" 2>/dev/null; then
+              wget -q "$TOOLCHAIN_URL" -O aarch64-musl-cross.tgz
+              tar -xzf aarch64-musl-cross.tgz --strip-components=1
+              export PATH="$MUSL_CROSS_DIR/bin:$PATH"
+            else
+              # Alternative: try to install from a PPA or use cross-rs
+              echo "Pre-built toolchain not available, installing cross-rs as fallback..."
+              cargo install cross --git https://github.com/cross-rs/cross
+              # cross will handle the toolchain setup
+            fi
+            
+            # Set up environment variables for aarch64 musl
+            if command -v aarch64-linux-musl-gcc &> /dev/null; then
+              echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc" >> $GITHUB_ENV
+              echo "CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc" >> $GITHUB_ENV
+              echo "PATH=$MUSL_CROSS_DIR/bin:$PATH" >> $GITHUB_ENV
+            elif command -v cross &> /dev/null; then
+              # Use cross-rs if available
+              echo "Using cross-rs for aarch64-unknown-linux-musl"
+              echo "USE_CROSS=true" >> $GITHUB_ENV
+            else
+              # Last resort: try to use a wrapper script
+              echo "⚠️  Creating wrapper for aarch64 musl compilation"
+              printf '#!/bin/bash\n# Wrapper script - this may not work perfectly but it'\''s a fallback\nexec aarch64-linux-gnu-gcc -static "$@"\n' > "$MUSL_CROSS_DIR/bin/aarch64-linux-musl-gcc"
+              chmod +x "$MUSL_CROSS_DIR/bin/aarch64-linux-musl-gcc"
+              export PATH="$MUSL_CROSS_DIR/bin:$PATH"
+              echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc" >> $GITHUB_ENV
+              echo "CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc" >> $GITHUB_ENV
+              echo "PATH=$MUSL_CROSS_DIR/bin:$PATH" >> $GITHUB_ENV
+            fi
           elif [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
             sudo apt-get install -y \
               gcc-aarch64-linux-gnu \
@@ -84,7 +137,22 @@ jobs:
           fi
 
       - name: Build Rust CLI
-        run: cargo build --release --target ${{ matrix.target }}
+        run: |
+          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-musl" ]]; then
+            # Check if we have the cross-compiler or need to use cross-rs
+            if command -v aarch64-linux-musl-gcc &> /dev/null; then
+              echo "Using aarch64-linux-musl-gcc for build"
+              cargo build --release --target ${{ matrix.target }}
+            elif command -v cross &> /dev/null; then
+              echo "Using cross-rs for build"
+              cross build --release --target ${{ matrix.target }}
+            else
+              echo "⚠️  No suitable toolchain found, attempting standard cargo build"
+              cargo build --release --target ${{ matrix.target }}
+            fi
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
