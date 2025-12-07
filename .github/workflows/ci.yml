@@ -1,0 +1,513 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Create a new release (increments version automatically)"
+        required: false
+        type: boolean
+        default: false
+
+# Ensure workflow has permissions to write packages and create releases
+permissions:
+  contents: write
+  packages: write
+  actions: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/vpn
+  RUST_VERSION: stable
+
+jobs:
+  check-changes:
+    name: Check Changed Files
+    runs-on: ubuntu-latest
+    outputs:
+      # dorny/paths-filter always outputs all filter results (true/false)
+      src: ${{ steps.filter.outputs.src }}
+      docker: ${{ steps.filter.outputs.docker }}
+      version_changed: ${{ steps.version_check.outputs.version_changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history for version comparison
+
+      - uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            src:
+              - 'src/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            docker:
+              - 'openvpn-container/**'
+            version:
+              - 'Cargo.toml'
+
+      - name: Check if version changed
+        id: version_check
+        run: |
+          # Default to false
+          VERSION_CHANGED="false"
+
+          # Only check if Cargo.toml was modified
+          # The filter action always outputs all filter results, so this is safe
+          if [ "${{ steps.filter.outputs.version }}" == "true" ]; then
+            # Get current version from Cargo.toml
+            CURRENT_VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+            echo "Current version: $CURRENT_VERSION"
+
+            # Get previous version from git
+            git fetch origin main:main || true
+            PREVIOUS_VERSION=$(git show main:Cargo.toml 2>/dev/null | grep '^version = ' | sed 's/version = "\(.*\)"/\1/' || echo "")
+
+            if [ -n "$PREVIOUS_VERSION" ] && [ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" ]; then
+              VERSION_CHANGED="true"
+              echo "Version changed from $PREVIOUS_VERSION to $CURRENT_VERSION"
+            fi
+          fi
+
+          echo "version_changed=$VERSION_CHANGED" >> $GITHUB_OUTPUT
+
+  prepare-release:
+    name: Prepare Release
+    runs-on: ubuntu-latest
+    needs: check-changes
+    if: always()
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      should_release: ${{ steps.should_release.outputs.value }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Get current version
+        id: current_version
+        run: |
+          VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $VERSION"
+
+      - name: Check if should release
+        id: check_release
+        run: |
+          SHOULD_RELEASE=false
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ "${{ github.event.inputs.release }}" == "true" ]; then
+            SHOULD_RELEASE=true
+            echo "Manual release requested"
+          elif [ "${{ github.event_name }}" == "push" ] && [ "${{ needs.check-changes.outputs.version_changed }}" == "true" ]; then
+            SHOULD_RELEASE=true
+            echo "Version changed - auto-release"
+          fi
+          echo "should_release=$SHOULD_RELEASE" >> $GITHUB_OUTPUT
+
+      - name: Increment version (manual release)
+        if: steps.check_release.outputs.should_release == 'true' && github.event_name == 'workflow_dispatch'
+        id: increment
+        run: |
+          CURRENT_VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "Current version: $CURRENT_VERSION"
+
+          # Increment patch version (0.0.2 -> 0.0.3)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+          NEW_PATCH=$((PATCH + 1))
+          NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
+
+          echo "New version: $NEW_VERSION"
+          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+          # Update Cargo.toml
+          sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" Cargo.toml
+
+          # Verify the change
+          echo "Updated Cargo.toml:"
+          grep '^version = ' Cargo.toml
+
+      - name: Commit version bump
+        if: steps.check_release.outputs.should_release == 'true' && github.event_name == 'workflow_dispatch'
+        run: |
+          git add Cargo.toml
+          git commit -m "chore: bump version to ${{ steps.increment.outputs.version }}"
+          git push origin HEAD:main
+
+      - name: Determine release version
+        id: version
+        run: |
+          if [ "${{ steps.check_release.outputs.should_release }}" == "true" ]; then
+            if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+              VERSION="${{ steps.increment.outputs.version }}"
+            else
+              VERSION="${{ steps.current_version.outputs.version }}"
+            fi
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "Release version: $VERSION"
+          else
+            echo "version=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set should release flag
+        id: should_release
+        run: |
+          echo "value=${{ steps.check_release.outputs.should_release }}" >> $GITHUB_OUTPUT
+
+  build-rust-cli-linux:
+    name: Build CLI (Linux)
+    runs-on: ubuntu-latest
+    needs: [check-changes, prepare-release]
+    # Build on PRs (to validate), manual dispatch, or when src files change
+    if: |
+      github.event_name == 'pull_request' ||
+      github.event_name == 'workflow_dispatch' ||
+      needs.check-changes.outputs.src == 'true' ||
+      needs.prepare-release.outputs.should_release == 'true'
+    permissions:
+      contents: read
+      actions: write
+
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-gnu
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.target }}-
+
+      - name: Install build dependencies (Linux)
+        if: startsWith(matrix.target, 'x86_64-unknown-linux') || startsWith(matrix.target, 'aarch64-unknown-linux')
+        run: |
+          sudo apt-get update
+          if [[ "${{ matrix.target }}" == *"musl"* ]]; then
+            sudo apt-get install -y musl-tools musl-dev
+          elif [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
+            sudo apt-get install -y \
+              gcc-aarch64-linux-gnu \
+              g++-aarch64-linux-gnu
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+            echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+            echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++" >> $GITHUB_ENV
+          fi
+
+      - name: Build Rust CLI
+        run: |
+          unset MACOSX_DEPLOYMENT_TARGET || true
+          export MACOSX_DEPLOYMENT_TARGET=""
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hal-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/hal
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Upload install scripts
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-scripts
+          path: |
+            scripts/install.sh
+            scripts/install.ps1
+            scripts/setup-ssh-hosts.sh
+            scripts/setup-ssh-keys.sh
+          retention-days: 90
+
+  build-rust-cli-macos:
+    name: Build CLI (macOS)
+    runs-on: macos-14
+    needs: [check-changes, prepare-release]
+    # Build on PRs (to validate), manual dispatch, or when src files change
+    if: |
+      github.event_name == 'pull_request' ||
+      github.event_name == 'workflow_dispatch' ||
+      needs.check-changes.outputs.src == 'true' ||
+      needs.prepare-release.outputs.should_release == 'true'
+    permissions:
+      contents: read
+      actions: write
+
+    strategy:
+      matrix:
+        target:
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.target }}-
+
+      - name: Build Rust CLI
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hal-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/hal
+          retention-days: 90
+          if-no-files-found: error
+
+  build-docker-image:
+    name: Build and Push Docker Images
+    runs-on: ubuntu-latest
+    needs: [check-changes, prepare-release]
+    # Build on PRs (to validate), manual dispatch, or when docker files change
+    if: |
+      github.event_name == 'pull_request' ||
+      github.event_name == 'workflow_dispatch' ||
+      needs.check-changes.outputs.docker == 'true' ||
+      needs.prepare-release.outputs.should_release == 'true'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push vpn image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./openvpn-container
+          file: ./openvpn-container/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs:
+      [
+        prepare-release,
+        build-rust-cli-linux,
+        build-rust-cli-macos,
+        build-docker-image,
+      ]
+    if: |
+      needs.prepare-release.outputs.should_release == 'true' &&
+      (needs.build-rust-cli-linux.result == 'success' || needs.build-rust-cli-linux.result == 'skipped') &&
+      (needs.build-rust-cli-macos.result == 'success' || needs.build-rust-cli-macos.result == 'skipped') &&
+      (needs.build-docker-image.result == 'success' || needs.build-docker-image.result == 'skipped')
+    permissions:
+      contents: write
+      actions: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release archives
+        run: |
+          mkdir -p release
+          VERSION="${{ needs.prepare-release.outputs.version }}"
+
+          for artifact_dir in artifacts/hal-*/; do
+            if [ -d "$artifact_dir" ] && [ -f "$artifact_dir/hal" ]; then
+              ARTIFACT_NAME=$(basename "$artifact_dir")
+              TARGET=$(echo "$ARTIFACT_NAME" | sed 's/hal-//')
+              
+              case "$TARGET" in
+                *linux-gnu*)
+                  OS="linux"
+                  ARCH=$(echo "$TARGET" | sed 's/.*-\(.*\)-.*/\1/' | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
+                  EXT=""
+                  ;;
+                *linux-musl*)
+                  OS="linux"
+                  ARCH="amd64"
+                  EXT="musl"
+                  ;;
+                *apple-darwin*)
+                  OS="darwin"
+                  ARCH=$(echo "$TARGET" | sed 's/.*-\(.*\)-.*/\1/' | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
+                  EXT=""
+                  ;;
+                *)
+                  echo "Unknown target: $TARGET"
+                  continue
+                  ;;
+              esac
+              
+              mkdir -p "release/${OS}-${ARCH}${EXT:+-$EXT}"
+              cp "$artifact_dir/hal" "release/${OS}-${ARCH}${EXT:+-$EXT}/hal"
+              chmod +x "release/${OS}-${ARCH}${EXT:+-$EXT}/hal"
+              
+              if [ -n "$EXT" ]; then
+                ARCHIVE_NAME="hal-${VERSION}-${OS}-${ARCH}-${EXT}.tar.gz"
+              else
+                ARCHIVE_NAME="hal-${VERSION}-${OS}-${ARCH}.tar.gz"
+              fi
+              
+              tar -czf "$ARCHIVE_NAME" -C "release/${OS}-${ARCH}${EXT:+-$EXT}" hal
+              echo "Created: $ARCHIVE_NAME"
+            fi
+          done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.prepare-release.outputs.version }}
+          name: Release v${{ needs.prepare-release.outputs.version }}
+          body: |
+            ## Release v${{ needs.prepare-release.outputs.version }}
+
+            ### Downloads
+            - See assets below for platform-specific binaries
+
+            ### Docker Image
+            ```bash
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-release.outputs.version }}
+            ```
+          files: |
+            hal-*.tar.gz
+          draft: false
+          prerelease: false
+
+  build-summary:
+    name: Build Summary
+    runs-on: ubuntu-latest
+    needs:
+      [
+        check-changes,
+        prepare-release,
+        build-rust-cli-linux,
+        build-rust-cli-macos,
+        build-docker-image,
+        create-release,
+      ]
+    if: always()
+
+    steps:
+      - name: Check job status
+        run: |
+          echo "Changed paths:"
+          echo "  - src: ${{ needs.check-changes.outputs.src }}"
+          echo "  - docker: ${{ needs.check-changes.outputs.docker }}"
+          echo "  - version: ${{ needs.check-changes.outputs.version_changed }}"
+          echo ""
+          echo "Job results:"
+          echo "  - Rust CLI build (Linux): ${{ needs.build-rust-cli-linux.result }}"
+          echo "  - Rust CLI build (macOS): ${{ needs.build-rust-cli-macos.result }}"
+          echo "  - Docker image build: ${{ needs.build-docker-image.result }}"
+          echo "  - Release created: ${{ needs.create-release.result }}"
+          echo ""
+
+          FAILED=0
+
+          if [ "${{ needs.check-changes.outputs.src }}" == "true" ] || [ "${{ needs.prepare-release.outputs.should_release }}" == "true" ]; then
+            if [ "${{ needs.build-rust-cli-linux.result }}" != "success" ] && [ "${{ needs.build-rust-cli-linux.result }}" != "skipped" ]; then
+              echo "❌ Rust CLI build (Linux) failed"
+              FAILED=1
+            fi
+            
+            if [ "${{ needs.build-rust-cli-macos.result }}" != "success" ] && [ "${{ needs.build-rust-cli-macos.result }}" != "skipped" ]; then
+              echo "❌ Rust CLI build (macOS) failed"
+              FAILED=1
+            fi
+          fi
+
+          if [ "${{ needs.check-changes.outputs.docker }}" == "true" ] || [ "${{ needs.prepare-release.outputs.should_release }}" == "true" ]; then
+            if [ "${{ needs.build-docker-image.result }}" != "success" ] && [ "${{ needs.build-docker-image.result }}" != "skipped" ]; then
+              echo "❌ Docker image build failed"
+              FAILED=1
+            fi
+          fi
+
+          if [ $FAILED -eq 0 ]; then
+            echo "✓ All relevant builds completed successfully"
+          else
+            exit 1
+          fi

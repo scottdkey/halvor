@@ -1,6 +1,6 @@
 [package]
 name = "hal"
-version = "0.1.0"
+version = "0.0.2"
 edition = "2024"
 authors = ["Scott Key <scott@scottkey.dev>"]
 description = "Homelab Automation Layer - CLI tool for managing homelab infrastructure"
