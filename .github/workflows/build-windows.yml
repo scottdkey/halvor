@@ -26,28 +26,10 @@ env:
   RUST_VERSION: stable
 
 jobs:
-  approval-to-build:
-    name: Approval to Build
-    runs-on: ubuntu-latest
-    if: github.event.inputs.build == true
-    environment:
-      name: ${{ github.event.inputs.to_branch }}-approval
-    steps:
-      - name: Request approval to build
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  Approval Required: Build Windows CLI"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo ""
-          echo "Approving this will build the Windows CLI for all supported targets."
-          echo ""
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
   build:
     name: Build Windows CLI
     runs-on: windows-latest
-    needs: approval-to-build
-    if: needs.approval-to-build.result == 'success'
+    if: github.event.inputs.build == true
     strategy:
       matrix:
         target:
@@ -88,39 +70,12 @@ jobs:
           retention-days: 90
           if-no-files-found: error
 
-  approval-to-release:
-    name: Approval to Release
-    runs-on: ubuntu-latest
-    needs: [approval-to-build, build]
-    if: |
-      always() &&
-      needs.approval-to-build.result == 'success' &&
-      github.event.inputs.release == true &&
-      (needs.build.result == 'success' || needs.build.result == 'skipped')
-    environment:
-      name: ${{ github.event.inputs.to_branch }}-approval
-    steps:
-      - name: Request approval to release
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  Approval Required: Release Windows CLI"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo ""
-          echo "Build completed successfully."
-          echo ""
-          echo "Approving this will:"
-          echo "  - Create a GitHub release"
-          echo "  - Upload Windows build artifacts"
-          echo ""
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
   release:
     name: Release Windows CLI
     runs-on: ubuntu-latest
-    needs: [approval-to-build, build, approval-to-release]
+    needs: build
     if: |
-      needs.approval-to-build.result == 'success' &&
-      needs.approval-to-release.result == 'success' &&
+      github.event.inputs.release == true &&
       (needs.build.result == 'success' || needs.build.result == 'skipped')
     permissions:
       contents: write
