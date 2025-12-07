@@ -276,4 +276,17 @@ pub mod local {
         std::fs::read_to_string(path_ref)
             .with_context(|| format!("Failed to read file: {}", path_display))
     }
+
+    pub fn execute_shell(command: &str) -> Result<Output> {
+        use std::process::Command;
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .stdin(Stdio::null())
+            .output()
+            .with_context(|| format!("Failed to execute shell command: {}", command))?;
+        Ok(output)
+    }
 }
