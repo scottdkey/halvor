@@ -177,11 +177,23 @@ PRIVOXY_PID=$!
 
 # Function to cleanup on exit
 cleanup() {
+    echo ""
     echo "Shutting down..."
-    if [ -n "$OPENVPN_PID" ] && kill -0 "$OPENVPN_PID" 2>/dev/null; then
+    # Kill OpenVPN by finding the process
+    OPENVPN_PID=$(pgrep -f "openvpn.*$OVPN_CONFIG" || echo "")
+    if [ -n "$OPENVPN_PID" ]; then
+        echo "Stopping OpenVPN (PID: $OPENVPN_PID)..."
         kill "$OPENVPN_PID" 2>/dev/null || true
+        # Wait a bit for graceful shutdown
+        sleep 2
+        # Force kill if still running
+        if kill -0 "$OPENVPN_PID" 2>/dev/null; then
+            kill -9 "$OPENVPN_PID" 2>/dev/null || true
+        fi
     fi
+    # Kill Privoxy (child process)
     if [ -n "$PRIVOXY_PID" ] && kill -0 "$PRIVOXY_PID" 2>/dev/null; then
+        echo "Stopping Privoxy (PID: $PRIVOXY_PID)..."
         kill "$PRIVOXY_PID" 2>/dev/null || true
     fi
     exit 0
@@ -235,6 +247,25 @@ echo "VPN Status:"
 ip addr show tun0 2>/dev/null || echo "  TUN interface: Not available"
 echo "  Privoxy proxy: http://0.0.0.0:8888"
 echo ""
+echo "To view logs, run: docker exec <container> tail-logs.sh"
+echo "  Or inside container: /usr/local/bin/tail-logs.sh"
+echo ""
 
-# Wait for processes
-wait $OPENVPN_PID $PRIVOXY_PID
+# Wait for Privoxy (child process) and monitor OpenVPN
+# OpenVPN runs as a daemon, so we can't wait on it directly
+# Instead, we monitor it by checking if the process exists
+while kill -0 "$PRIVOXY_PID" 2>/dev/null; do
+    # Check if OpenVPN is still running
+    if ! pgrep -f "openvpn.*$OVPN_CONFIG" >/dev/null 2>&1; then
+        echo "⚠ OpenVPN process exited unexpectedly"
+        tail -30 /var/log/openvpn/openvpn.log || true
+        cleanup
+        exit 1
+    fi
+    # Sleep briefly before checking again
+    sleep 5
+done
+
+# If Privoxy exits, cleanup and exit
+echo "⚠ Privoxy exited"
+cleanup

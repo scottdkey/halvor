@@ -21,9 +21,10 @@ RUN mkdir -p /etc/openvpn /var/log/openvpn /etc/privoxy /var/log/privoxy /config
 RUN echo "listen-address 0.0.0.0:8888" >> /etc/privoxy/config && \
     echo "forward / ." >> /etc/privoxy/config
 
-# Copy entrypoint script
+# Copy scripts
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY scripts/tail-logs.sh /usr/local/bin/tail-logs.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/tail-logs.sh
 
 # Expose OpenVPN port and Privoxy HTTP proxy port
 EXPOSE 1194/udp 8888/tcp
