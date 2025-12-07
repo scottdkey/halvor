@@ -164,14 +164,83 @@ jobs:
 
           echo "✓ Created promotion branch: $BRANCH_NAME"
 
+      - name: Increment version (for beta -> main promotion)
+        if: github.event.inputs.from_branch == 'beta' && github.event.inputs.to_branch == 'main'
+        id: increment_version
+        run: |
+          FROM="${{ github.event.inputs.from_branch }}"
+          TO="${{ github.event.inputs.to_branch }}"
+          BRANCH_NAME="${{ steps.create_branch.outputs.branch }}"
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Incrementing version for promotion to main"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          # Make sure we're on the promotion branch
+          git checkout $BRANCH_NAME
+          git pull origin $BRANCH_NAME
+
+          # Get current version from Cargo.toml (after merge)
+          CURRENT_VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "Current version (from merged code): $CURRENT_VERSION"
+
+          # Get the version that was on main before the merge
+          # Look at the parent commit (before merge) - this is the main branch state
+          PREVIOUS_VERSION=$(git show HEAD^:Cargo.toml 2>/dev/null | grep '^version = ' | sed 's/version = "\(.*\)"/\1/' || echo "$CURRENT_VERSION")
+          echo "Previous version on main (before merge): $PREVIOUS_VERSION"
+
+          # Parse versions
+          IFS='.' read -r CURR_MAJOR CURR_MINOR CURR_PATCH <<< "$CURRENT_VERSION"
+          IFS='.' read -r PREV_MAJOR PREV_MINOR PREV_PATCH <<< "$PREVIOUS_VERSION"
+
+          # Only increment patch if major/minor haven't changed
+          if [ "$CURR_MAJOR" == "$PREV_MAJOR" ] && [ "$CURR_MINOR" == "$PREV_MINOR" ]; then
+            NEW_PATCH=$((CURR_PATCH + 1))
+            NEW_VERSION="$CURR_MAJOR.$CURR_MINOR.$NEW_PATCH"
+            echo "Incrementing patch version: $CURRENT_VERSION -> $NEW_VERSION"
+            
+            # Update Cargo.toml
+            sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" Cargo.toml
+            git add Cargo.toml
+            
+            # Commit the version increment with [skip ci] to prevent triggering another build
+            git commit -m "chore: increment version to $NEW_VERSION [skip ci]
+
+          Version incremented as part of promotion from beta to main
+          Previous version: $CURRENT_VERSION
+          New version: $NEW_VERSION"
+            
+            # Push the version increment to the promotion branch
+            git push origin $BRANCH_NAME
+            
+            echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+            echo "should_increment=true" >> $GITHUB_OUTPUT
+            echo "✓ Version bumped to $NEW_VERSION and pushed to promotion branch"
+          else
+            echo "Major or minor version changed - not auto-incrementing patch"
+            echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+            echo "should_increment=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create Pull Request
         id: create_pr
         uses: actions/github-script@v7
+        env:
+          VERSION_INCREMENTED: ${{ steps.increment_version.outputs.should_increment }}
+          NEW_VERSION: ${{ steps.increment_version.outputs.version }}
         with:
           script: |
             const from = '${{ github.event.inputs.from_branch }}';
             const to = '${{ github.event.inputs.to_branch }}';
             const branch = '${{ steps.create_branch.outputs.branch }}';
+
+            const versionIncremented = process.env.VERSION_INCREMENTED === 'true';
+            const newVersion = process.env.NEW_VERSION || '';
+
+            const versionInfo = versionIncremented 
+              ? `\n\n✅ **Version incremented:** \`${newVersion}\` (included in this PR)`
+              : '';
 
             const { data: pr } = await github.rest.pulls.create({
               owner: context.repo.owner,
@@ -186,9 +255,7 @@ jobs:
               **Source:** \`${from}\`
               **Target:** \`${to}\`
               **Triggered by:** @${{ github.actor }}
-              **Workflow run:** ${{ github.run_id }}
-              
-              ${to === 'main' ? '⚠️ **Note:** After this PR is merged, the version will be automatically incremented.' : ''}
+              **Workflow run:** ${{ github.run_id }}${versionInfo}
               
               ---
               *This PR was created automatically by the promotion workflow.*
@@ -198,6 +265,10 @@ jobs:
 
             core.setOutput('pr_number', pr.number);
             core.setOutput('pr_url', pr.html_url);
+            if (versionIncremented) {
+              core.setOutput('version', newVersion);
+              core.setOutput('should_increment', 'true');
+            }
             console.log(`Created PR #${pr.number}: ${pr.html_url}`);
 
   approve-and-merge-pr:
@@ -260,81 +331,6 @@ jobs:
             console.log(`✓ Successfully merged PR #${prNumber}`);
             core.setOutput('merged', 'true');
 
-  increment-version-after-merge:
-    name: Increment Version After Merge
-    runs-on: ubuntu-latest
-    needs: [create-promotion-pr, approve-and-merge-pr]
-    if: |
-      needs.approve-and-merge-pr.result == 'success' &&
-      github.event.inputs.from_branch == 'beta' &&
-      github.event.inputs.to_branch == 'main'
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-          ref: main
-
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
-
-      - name: Pull latest main
-        run: |
-          git pull origin main
-
-      - name: Increment version
-        id: increment_version
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  Incrementing version for promotion to main"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo ""
-
-          # Get current version from Cargo.toml
-          CURRENT_VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
-          echo "Current version: $CURRENT_VERSION"
-
-          # Get previous version from the commit before the merge
-          PREVIOUS_VERSION=$(git show HEAD^:Cargo.toml 2>/dev/null | grep '^version = ' | sed 's/version = "\(.*\)"/\1/' || echo "$CURRENT_VERSION")
-          echo "Previous version (before merge): $PREVIOUS_VERSION"
-
-          # Parse versions
-          IFS='.' read -r CURR_MAJOR CURR_MINOR CURR_PATCH <<< "$CURRENT_VERSION"
-          IFS='.' read -r PREV_MAJOR PREV_MINOR PREV_PATCH <<< "$PREVIOUS_VERSION"
-
-          # Only increment patch if major/minor haven't changed
-          if [ "$CURR_MAJOR" == "$PREV_MAJOR" ] && [ "$CURR_MINOR" == "$PREV_MINOR" ]; then
-            NEW_PATCH=$((CURR_PATCH + 1))
-            NEW_VERSION="$CURR_MAJOR.$CURR_MINOR.$NEW_PATCH"
-            echo "Incrementing patch version: $CURRENT_VERSION -> $NEW_VERSION"
-            
-            # Update Cargo.toml
-            sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" Cargo.toml
-            git add Cargo.toml
-            
-            # Commit the version increment with [skip ci] to prevent triggering another build
-            git commit -m "chore: increment version to $NEW_VERSION [skip ci]
-
-          Version incremented as part of promotion from beta to main
-          Previous version: $CURRENT_VERSION
-          New version: $NEW_VERSION"
-            
-            # Push to main
-            git push origin main
-            
-            echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
-            echo "should_increment=true" >> $GITHUB_OUTPUT
-            echo "✓ Version bumped to $NEW_VERSION and pushed to main"
-          else
-            echo "Major or minor version changed - not auto-incrementing patch"
-            echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-            echo "should_increment=false" >> $GITHUB_OUTPUT
-          fi
-
   create-tag:
     name: Create Tag
     runs-on: ubuntu-latest
@@ -388,8 +384,7 @@ jobs:
   promotion-summary:
     name: Promotion Summary
     runs-on: ubuntu-latest
-    needs:
-      [create-promotion-pr, approve-and-merge-pr, increment-version-after-merge]
+    needs: [create-promotion-pr, approve-and-merge-pr]
     if: always()
     steps:
       - name: Create summary
@@ -408,10 +403,10 @@ jobs:
             echo "✓ PR created and merged successfully"
             echo "PR: ${{ needs.create-promotion-pr.outputs.pr_url }}"
             if [ "$FROM" == "beta" ] && [ "$TO" == "main" ]; then
-              if [ "${{ needs.increment-version-after-merge.result }}" == "success" ]; then
-                echo "✓ Version incremented: ${{ needs.increment-version-after-merge.outputs.version }}"
+              if [ "${{ needs.create-promotion-pr.outputs.should_increment }}" == "true" ]; then
+                echo "✓ Version incremented: ${{ needs.create-promotion-pr.outputs.version }} (included in PR)"
               else
-                echo "⚠ Version increment skipped or failed"
+                echo "⚠ Version increment skipped (major/minor changed)"
               fi
             fi
           else
