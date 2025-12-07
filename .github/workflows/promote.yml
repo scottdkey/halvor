@@ -152,7 +152,7 @@ jobs:
           echo ""
 
           # Fetch latest from source branch
-          git fetch origin $FROM:$FROM
+          git fetch origin $FROM
 
           # Get commit info before merge
           COMMIT_COUNT=$(git rev-list --count HEAD..origin/$FROM 2>/dev/null || echo "0")
