@@ -17,6 +17,15 @@ services:
       # Set UPDATE_CONFIGS=true to automatically download PIA configs on startup
       # This is recommended for first-time setup
       - UPDATE_CONFIGS=${UPDATE_CONFIGS:-true}
+      # Optional: Set REGION to select a specific PIA server region
+      # Examples: us-california, ca-montreal, uk-london, etc.
+      # If not set, defaults to ca-montreal.ovpn or first available config
+      - REGION=${REGION:-}
+      # Optional: PIA credentials via environment variables
+      # If both are set, auth.txt will be created/updated automatically
+      # Alternative: Create /config/auth.txt manually on the host
+      - PIA_USERNAME=${PIA_USERNAME:-}
+      - PIA_PASSWORD=${PIA_PASSWORD:-}
     volumes:
       # Mount OpenVPN config and auth files from user's home directory
       # REQUIRED: Set USER environment variable in Portainer to your username
