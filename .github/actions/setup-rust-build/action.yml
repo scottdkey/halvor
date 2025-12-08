@@ -14,6 +14,26 @@ runs:
       with:
         targets: ${{ inputs.target }}
 
+    - name: Verify Rust installation
+      shell: bash
+      run: |
+        # Ensure cargo is in PATH
+        export PATH="$HOME/.cargo/bin:$PATH"
+        echo "PATH=$HOME/.cargo/bin:$PATH" >> $GITHUB_ENV
+
+        # Verify installation
+        if ! command -v cargo &> /dev/null; then
+          echo "❌ Error: cargo not found after installation"
+          echo "PATH: $PATH"
+          echo "Checking ~/.cargo/bin..."
+          ls -la ~/.cargo/bin/ 2>/dev/null || echo "~/.cargo/bin/ does not exist"
+          exit 1
+        fi
+
+        echo "✓ Rust version: $(rustc --version)"
+        echo "✓ Cargo version: $(cargo --version)"
+        echo "✓ Cargo path: $(which cargo)"
+
     - name: Cache Cargo dependencies
       uses: actions/cache@v4
       with:

@@ -20,6 +20,18 @@ runs:
     - name: Build Rust CLI
       shell: bash
       run: |
+        # Verify cargo is available
+        if ! command -v cargo &> /dev/null; then
+          echo "❌ Error: cargo not found in PATH"
+          echo "PATH: $PATH"
+          echo "Checking for cargo in common locations..."
+          ls -la ~/.cargo/bin/ 2>/dev/null || echo "~/.cargo/bin/ does not exist"
+          exit 1
+        fi
+
+        echo "Using cargo: $(which cargo)"
+        echo "Cargo version: $(cargo --version)"
+
         if [ "${{ inputs.skip_target }}" == "true" ]; then
           echo "⚠️  Skipping build for ${{ inputs.target }} - target skipped"
           exit 0
