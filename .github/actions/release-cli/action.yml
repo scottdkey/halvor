@@ -174,7 +174,7 @@ runs:
         # Try to fetch existing release body
         EXISTING_BODY=$(curl -s \
           -H "Accept: application/vnd.github.v3+json" \
-          -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          -H "Authorization: token ${{ github.token }}" \
           "https://api.github.com/repos/${{ github.repository }}/releases/tags/${TAG}" \
           | jq -r '.body // ""' 2>/dev/null || echo "")
 
