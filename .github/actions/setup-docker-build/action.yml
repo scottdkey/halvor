@@ -1,5 +1,5 @@
 name: Setup Docker Build Environment
-description: Checkout code, setup Docker Buildx, and login to registry
+description: Setup Docker Buildx and login to registry
 
 inputs:
   registry:
@@ -12,9 +12,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 

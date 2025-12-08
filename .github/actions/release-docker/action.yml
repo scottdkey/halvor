@@ -41,6 +41,9 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
     - name: Setup Docker build environment
       uses: ./.github/actions/setup-docker-build
       with:
