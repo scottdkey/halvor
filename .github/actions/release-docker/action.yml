@@ -65,6 +65,7 @@ runs:
         version: ${{ steps.version.outputs.version }}
 
     - name: Build and push Docker image
+      id: build_image
       uses: ./.github/actions/build-docker-image
       with:
         registry: ${{ inputs.registry }}
@@ -73,6 +74,22 @@ runs:
         context: ${{ inputs.context }}
         dockerfile: ${{ inputs.dockerfile }}
         push: "true"
+        outputs: type=oci,dest=/tmp/docker-image.tar
+
+    - name: Prepare Docker image for release
+      id: prepare_image
+      shell: bash
+      run: |
+        # Create a compressed archive of the Docker image
+        cd /tmp
+        if [ -f docker-image.tar ]; then
+          gzip -c docker-image.tar > docker-image-${{ steps.release_type.outputs.docker_tag }}.tar.gz
+          echo "image_file=/tmp/docker-image-${{ steps.release_type.outputs.docker_tag }}.tar.gz" >> $GITHUB_OUTPUT
+          ls -lh /tmp/docker-image-*.tar.gz
+        else
+          echo "Warning: docker-image.tar not found, skipping image export"
+          echo "image_file=" >> $GITHUB_OUTPUT
+        fi
 
     - name: Create GitHub Release
       uses: ./.github/actions/create-release
@@ -81,5 +98,5 @@ runs:
         name: ${{ steps.release_type.outputs.name }}
         body: |
           ${{ inputs.release_body != '' && inputs.release_body || format('## {0}\n\n### Docker Image\n```bash\ndocker pull {1}/{2}:{3}\n```\n\n---\n*This release was created automatically by the build workflows.*', steps.release_type.outputs.name, inputs.registry, inputs.image_name, steps.release_type.outputs.docker_tag) }}
-        files: ""
+        files: ${{ steps.prepare_image.outputs.image_file != '' && steps.prepare_image.outputs.image_file || '' }}
         prerelease: ${{ steps.release_type.outputs.prerelease }}
