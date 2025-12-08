@@ -1,4 +1,4 @@
-name: Build and Release Windows
+name: Build and Release Windows CLI
 
 on:
   push:

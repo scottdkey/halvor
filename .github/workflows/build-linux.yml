@@ -1,4 +1,4 @@
-name: Build and Release Linux
+name: Build and Release Linux CLI
 
 on:
   push:
@@ -12,7 +12,7 @@ on:
         type: boolean
         default: true
       release:
-        description: "Release Linux CLI (requires build first)"
+        description: "Release Linux CLI"
         required: false
         type: boolean
         default: false

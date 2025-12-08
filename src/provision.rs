@@ -101,7 +101,9 @@ pub fn check_sudo_access<E: CommandExecutor>(exec: &E, is_remote: bool) -> Resul
     } else {
         // Local execution: use interactive mode to prompt for password if needed
         println!("Testing sudo access (you may be prompted for your password)...");
-        exec.execute_interactive("sudo", &["-v"])?;
+        // Use a simple command that requires sudo to test access
+        // This will prompt for password if needed
+        exec.execute_interactive("sudo", &["sh", "-c", "true"])?;
         println!("✓ Sudo access verified");
     }
 

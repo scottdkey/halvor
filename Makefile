@@ -1,4 +1,4 @@
-.PHONY: install dev build clean setup-dev build-linux build-macos build-windows build-vpn build-all help setup-linux-cross-compile build-linux-target
+.PHONY: install uninstall dev build clean setup-dev build-linux build-macos build-windows build-vpn build-all help setup-linux-cross-compile build-linux-target
 
 # Default target
 help:
@@ -19,12 +19,57 @@ help:
 	@echo ""
 	@echo "Other targets:"
 	@echo "  make install        - Install hal globally"
+	@echo "  make uninstall      - Remove hal from the system"
 	@echo "  make dev            - Start development mode (watch)"
 	@echo "  make clean          - Clean build artifacts"
 
 # Install hal globally
 install:
 	cargo install --path . --force
+
+# Uninstall hal from the system
+uninstall:
+	@echo "Uninstalling hal..."
+	@BINARY_FOUND=0; \
+	BACKUP_FOUND=0; \
+	if [ -f "$$HOME/.cargo/bin/hal" ]; then \
+		echo "Removing $$HOME/.cargo/bin/hal"; \
+		rm -f "$$HOME/.cargo/bin/hal"; \
+		BINARY_FOUND=1; \
+	fi; \
+	if [ -f "/usr/local/bin/hal" ]; then \
+		echo "Removing /usr/local/bin/hal (requires sudo)"; \
+		sudo rm -f /usr/local/bin/hal; \
+		BINARY_FOUND=1; \
+	fi; \
+	if [ -f "$$HOME/.local/bin/hal" ]; then \
+		echo "Removing $$HOME/.local/bin/hal"; \
+		rm -f "$$HOME/.local/bin/hal"; \
+		BINARY_FOUND=1; \
+	fi; \
+	if [ -f "/usr/bin/hal" ]; then \
+		echo "Removing /usr/bin/hal (requires sudo)"; \
+		sudo rm -f /usr/bin/hal; \
+		BINARY_FOUND=1; \
+	fi; \
+	for backup in "$$HOME/.cargo/bin/hal"*.bak "/usr/local/bin/hal"*.bak "$$HOME/.local/bin/hal"*.bak "/usr/bin/hal"*.bak; do \
+		if [ -f "$$backup" ]; then \
+			echo "Removing backup file: $$backup"; \
+			rm -f "$$backup"; \
+			BACKUP_FOUND=1; \
+		fi; \
+	done; \
+	if [ $$BINARY_FOUND -eq 0 ] && [ $$BACKUP_FOUND -eq 0 ]; then \
+		echo "No hal binary or backup files found to remove."; \
+		echo "Checked locations:"; \
+		echo "  - $$HOME/.cargo/bin/hal"; \
+		echo "  - /usr/local/bin/hal"; \
+		echo "  - $$HOME/.local/bin/hal"; \
+		echo "  - /usr/bin/hal"; \
+		echo "✓ hal is not installed (or already removed)"; \
+	else \
+		echo "✓ hal uninstalled successfully"; \
+	fi
 
 # Setup development dependencies
 setup-dev:

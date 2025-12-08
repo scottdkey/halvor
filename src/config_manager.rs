@@ -7,15 +7,30 @@ use std::path::{Path, PathBuf};
 const CONFIG_DIR_NAME: &str = "hal";
 const CONFIG_FILE_NAME: &str = "config.toml";
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub enum ReleaseChannel {
+    Stable,
+    Experimental,
+}
+
+impl Default for ReleaseChannel {
+    fn default() -> Self {
+        ReleaseChannel::Stable
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HalConfig {
     pub env_file_path: Option<PathBuf>,
+    #[serde(default)]
+    pub release_channel: ReleaseChannel,
 }
 
 impl Default for HalConfig {
     fn default() -> Self {
         Self {
             env_file_path: None,
+            release_channel: ReleaseChannel::Stable,
         }
     }
 }
@@ -169,4 +184,21 @@ pub fn init_config_interactive() -> Result<()> {
     println!("  Environment file: {}", env_path.display());
 
     Ok(())
+}
+
+pub fn set_release_channel(channel: ReleaseChannel) -> Result<()> {
+    let mut config = load_config().unwrap_or_default();
+    config.release_channel = channel;
+    save_config(&config)?;
+
+    let channel_name = match channel {
+        ReleaseChannel::Stable => "stable",
+        ReleaseChannel::Experimental => "experimental",
+    };
+    println!("✓ Release channel set to: {}", channel_name);
+    Ok(())
+}
+
+pub fn get_release_channel() -> ReleaseChannel {
+    load_config().unwrap_or_default().release_channel
 }

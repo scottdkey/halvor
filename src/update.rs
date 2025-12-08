@@ -8,6 +8,13 @@ const GITHUB_API_BASE: &str = "https://api.github.com";
 const REPO_OWNER: &str = "scottdkey"; // TODO: Make this configurable
 const REPO_NAME: &str = "homelab";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReleaseChannel {
+    Experimental,
+    Stable,
+    Unknown,
+}
+
 #[derive(Debug, Deserialize)]
 struct Release {
     tag_name: String,
@@ -135,6 +142,91 @@ pub fn check_for_experimental_updates(_current_version: &str) -> Result<Option<S
     }
 
     Ok(None)
+}
+
+/// Detect which release channel the current binary is from
+/// by comparing the executable's modification time with release timestamps
+pub fn detect_release_channel() -> Result<ReleaseChannel> {
+    // Skip check in development mode
+    if env::var("HAL_DEV_MODE").is_ok() || cfg!(debug_assertions) {
+        return Ok(ReleaseChannel::Unknown);
+    }
+
+    let current_exe = env::current_exe().context("Failed to get current executable path")?;
+    let metadata = std::fs::metadata(&current_exe).context("Failed to get executable metadata")?;
+
+    #[cfg(unix)]
+    let exe_mtime = {
+        use std::os::unix::fs::MetadataExt;
+        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(metadata.mtime() as u64)
+    };
+
+    #[cfg(windows)]
+    let exe_mtime = metadata
+        .modified()
+        .context("Failed to get executable modification time")?;
+
+    let exe_datetime: chrono::DateTime<chrono::Utc> = exe_mtime.into();
+
+    // Check experimental release timestamp
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("hal-cli")
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .context("Failed to create HTTP client")?;
+
+    let experimental_url = format!(
+        "{}/repos/{}/{}/releases/tags/experimental",
+        GITHUB_API_BASE, REPO_OWNER, REPO_NAME
+    );
+
+    if let Ok(response) = client.get(&experimental_url).send() {
+        if response.status().is_success() {
+            if let Ok(release) = response.json::<Release>() {
+                if let Some(published_at_str) = &release.published_at {
+                    if let Ok(published_at) = chrono::DateTime::parse_from_rfc3339(published_at_str)
+                    {
+                        let published_datetime: chrono::DateTime<chrono::Utc> = published_at.into();
+                        // If executable time is within 1 hour of experimental release time, it's likely experimental
+                        let time_diff = (exe_datetime - published_datetime).num_seconds().abs();
+                        if time_diff < 3600 {
+                            return Ok(ReleaseChannel::Experimental);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Check stable releases
+    let latest_url = format!(
+        "{}/repos/{}/{}/releases/latest",
+        GITHUB_API_BASE, REPO_OWNER, REPO_NAME
+    );
+
+    if let Ok(response) = client.get(&latest_url).send() {
+        if response.status().is_success() {
+            if let Ok(release) = response.json::<Release>() {
+                if !release.prerelease {
+                    if let Some(published_at_str) = &release.published_at {
+                        if let Ok(published_at) =
+                            chrono::DateTime::parse_from_rfc3339(published_at_str)
+                        {
+                            let published_datetime: chrono::DateTime<chrono::Utc> =
+                                published_at.into();
+                            // If executable time is within 1 hour of stable release time, it's likely stable
+                            let time_diff = (exe_datetime - published_datetime).num_seconds().abs();
+                            if time_diff < 3600 {
+                                return Ok(ReleaseChannel::Stable);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(ReleaseChannel::Unknown)
 }
 
 pub fn get_latest_version() -> Result<String> {
@@ -490,12 +582,22 @@ fn extract_and_install(
         // Atomically rename the new file to the target
         std::fs::rename(&temp_target, &current_exe)
             .context("Failed to rename new binary to target location")?;
+
+        // Remove backup after successful rename
+        if local::path_exists(&backup_path) {
+            local::remove_file(&backup_path).context("Failed to remove backup file")?;
+        }
     }
 
     #[cfg(windows)]
     {
         // On Windows, we can overwrite directly
         local::copy_file(&extracted_binary, &current_exe)?;
+
+        // Remove backup after successful copy
+        if local::path_exists(&backup_path) {
+            local::remove_file(&backup_path).context("Failed to remove backup file")?;
+        }
     }
 
     // Clean up temp files
@@ -503,7 +605,6 @@ fn extract_and_install(
     local::remove_dir_all(&temp_dir).ok();
 
     println!("✓ Update installed successfully!");
-    println!("  Backup saved to: {}", backup_path.display());
     println!();
     println!("  Please restart the CLI to use the new version.");
 

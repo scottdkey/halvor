@@ -31,6 +31,10 @@ whoami = "1.4"
 flate2 = "1.0"
 tar = "0.4"
 zip = "6.0.0"
+rusqlite = { version = "0.31", features = ["bundled"] }
+aes-gcm = "0.10"
+base64 = "0.22"
+rand = "0.8"
 
 [dev-dependencies]
 cargo-watch = "8.5"

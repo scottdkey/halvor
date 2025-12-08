@@ -1,6 +1,8 @@
 mod backup;
 mod config;
 mod config_manager;
+mod crypto;
+mod db;
 mod docker;
 mod exec;
 mod networking;
@@ -9,6 +11,7 @@ mod portainer;
 mod provision;
 mod smb;
 mod ssh;
+mod sync;
 mod tailscale;
 mod update;
 mod vpn;
@@ -31,10 +34,33 @@ fn check_for_updates() {
 #[derive(Parser)]
 #[command(name = "hal")]
 #[command(about = "Homelab Automation Layer - CLI tool for managing homelab infrastructure", long_about = None)]
-#[command(version = env!("CARGO_PKG_VERSION"))]
+#[command(version = get_version_string())]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+}
+
+fn get_version_string() -> &'static str {
+    // Return base version - we'll enhance it in print_version_with_channel
+    env!("CARGO_PKG_VERSION")
+}
+
+fn print_version_with_channel() {
+    let version = env!("CARGO_PKG_VERSION");
+
+    // Try to determine if this is an experimental build
+    // by checking if the executable timestamp matches an experimental release
+    let version_string = if let Ok(channel) = update::detect_release_channel() {
+        match channel {
+            update::ReleaseChannel::Experimental => format!("{} (experimental)", version),
+            update::ReleaseChannel::Stable => format!("{} (stable)", version),
+            update::ReleaseChannel::Unknown => version.to_string(),
+        }
+    } else {
+        version.to_string()
+    };
+
+    println!("hal {}", version_string);
 }
 
 #[derive(Subcommand)]
@@ -100,6 +126,14 @@ enum Commands {
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
+    },
+    /// Sync encrypted data between hal installations
+    Sync {
+        /// Hostname to sync with
+        hostname: String,
+        /// Pull data from remote instead of pushing
+        #[arg(long)]
+        pull: bool,
     },
     /// Check for and install updates
     Update {
@@ -196,9 +230,22 @@ enum ConfigCommands {
     },
     /// Show current configuration
     Show,
+    /// Set release channel to stable
+    #[command(name = "stable")]
+    SetStable,
+    /// Set release channel to experimental
+    #[command(name = "experimental")]
+    SetExperimental,
 }
 
 fn main() -> Result<()> {
+    // Handle version flags before parsing (to show channel info)
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() == 2 && (args[1] == "--version" || args[1] == "-V") {
+        print_version_with_channel();
+        return Ok(());
+    }
+
     // Check for updates (non-blocking, only in production mode)
     check_for_updates();
 
@@ -401,8 +448,28 @@ fn main() -> Result<()> {
                     "Config file location: {}",
                     config_manager::get_config_file_path()?.display()
                 );
+                let channel_name = match hal_config.release_channel {
+                    config_manager::ReleaseChannel::Stable => "stable",
+                    config_manager::ReleaseChannel::Experimental => "experimental",
+                };
+                println!("Release channel: {}", channel_name);
+                println!();
+                if let Ok(db_path) = db::get_db_path() {
+                    println!("Database location: {}", db_path.display());
+                }
+            }
+            ConfigCommands::SetStable => {
+                config_manager::set_release_channel(config_manager::ReleaseChannel::Stable)?;
+            }
+            ConfigCommands::SetExperimental => {
+                config_manager::set_release_channel(config_manager::ReleaseChannel::Experimental)?;
             }
         },
+        Commands::Sync { hostname, pull } => {
+            let homelab_dir = config::find_homelab_dir()?;
+            let config = config::load_env_config(&homelab_dir)?;
+            sync::sync_data(&hostname, pull, &config)?;
+        }
     }
 
     Ok(())
