@@ -88,3 +88,7 @@ runs:
         SKIP_TARGET: ${{ env.SKIP_TARGET }}
         MUSL_CROSS_DIR: ${{ env.MUSL_CROSS_DIR }}
         PATH: ${{ env.PATH }}
+        CC: ${{ env.CC }}
+        CXX: ${{ env.CXX }}
+        CC_aarch64_pc_windows_msvc: ${{ env.CC_aarch64_pc_windows_msvc }}
+        CXX_aarch64_pc_windows_msvc: ${{ env.CXX_aarch64_pc_windows_msvc }}
