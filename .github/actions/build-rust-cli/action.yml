@@ -38,24 +38,32 @@ runs:
             exit 0
           fi
           
+          # Ensure PATH includes the toolchain location if it was set
+          if [ -n "${MUSL_CROSS_DIR:-}" ] && [ -d "${MUSL_CROSS_DIR}/bin" ]; then
+            export PATH="${MUSL_CROSS_DIR}/bin:$PATH"
+            echo "Added ${MUSL_CROSS_DIR}/bin to PATH"
+          fi
+          
           # Check if the compiler is in PATH
           if command -v aarch64-linux-musl-gcc &> /dev/null; then
             echo "Using aarch64-linux-musl-gcc for build"
             echo "Compiler path: $(which aarch64-linux-musl-gcc)"
             echo "Compiler version: $(aarch64-linux-musl-gcc --version | head -1)"
             cargo build --release --target ${{ inputs.target }}
+          # Check if toolchain exists in expected location
+          elif [ -f "$HOME/musl-cross/bin/aarch64-linux-musl-gcc" ]; then
+            export PATH="$HOME/musl-cross/bin:$PATH"
+            echo "Found toolchain in $HOME/musl-cross/bin, added to PATH"
+            echo "Compiler path: $(which aarch64-linux-musl-gcc)"
+            cargo build --release --target ${{ inputs.target }}
           else
-            echo "⚠️  aarch64-linux-musl-gcc not found in PATH"
+            echo "⚠️  aarch64-linux-musl-gcc not found"
             echo "PATH: $PATH"
-            echo "Checking for toolchain in $HOME/musl-cross..."
-            if [ -f "$HOME/musl-cross/bin/aarch64-linux-musl-gcc" ]; then
-              export PATH="$HOME/musl-cross/bin:$PATH"
-              echo "Found toolchain, added to PATH"
-              cargo build --release --target ${{ inputs.target }}
-            else
-              echo "⚠️  Toolchain not found, skipping build"
-              exit 0
-            fi
+            echo "MUSL_CROSS_DIR: ${MUSL_CROSS_DIR:-not set}"
+            echo "Checking $HOME/musl-cross/bin..."
+            ls -la "$HOME/musl-cross/bin/" 2>/dev/null || echo "Directory does not exist"
+            echo "⚠️  Toolchain not found, skipping build"
+            exit 0
           fi
         else
           if [ "${{ inputs.unset_macos_deployment_target }}" == "true" ]; then
@@ -65,3 +73,5 @@ runs:
         fi
       env:
         SKIP_TARGET: ${{ env.SKIP_TARGET }}
+        MUSL_CROSS_DIR: ${{ env.MUSL_CROSS_DIR }}
+        PATH: ${{ env.PATH }}

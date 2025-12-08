@@ -40,48 +40,52 @@ runs:
           mkdir -p "$MUSL_CROSS_DIR/bin"
           cd "$MUSL_CROSS_DIR"
           
+          # Export MUSL_CROSS_DIR so it's available in subsequent steps
+          echo "MUSL_CROSS_DIR=$MUSL_CROSS_DIR" >> $GITHUB_ENV
+          
           # Try to download a pre-built aarch64 musl toolchain from musl.cc
           echo "Downloading aarch64-linux-musl cross-compiler..."
           TOOLCHAIN_URL="https://musl.cc/aarch64-linux-musl-cross.tgz"
           
+          TOOLCHAIN_FOUND=false
           if wget -q --spider "$TOOLCHAIN_URL" 2>/dev/null; then
-            echo "Found pre-built toolchain, downloading..."
-            wget -q "$TOOLCHAIN_URL" -O aarch64-musl-cross.tgz
-            tar -xzf aarch64-musl-cross.tgz --strip-components=1
-            export PATH="$MUSL_CROSS_DIR/bin:$PATH"
-            echo "PATH=$MUSL_CROSS_DIR/bin:$PATH" >> $GITHUB_ENV
+            echo "Found pre-built toolchain at musl.cc, downloading..."
+            if wget -q "$TOOLCHAIN_URL" -O aarch64-musl-cross.tgz && tar -xzf aarch64-musl-cross.tgz --strip-components=1; then
+              TOOLCHAIN_FOUND=true
+              echo "✓ Toolchain downloaded and extracted successfully from musl.cc"
+            else
+              echo "✗ Failed to download or extract toolchain from musl.cc"
+            fi
           else
             echo "Pre-built toolchain not available from musl.cc"
             # Try alternative URL pattern
             TOOLCHAIN_URL_ALT="https://more.musl.cc/10/x86_64-linux-musl/aarch64-linux-musl-cross.tgz"
             if wget -q --spider "$TOOLCHAIN_URL_ALT" 2>/dev/null; then
               echo "Found alternative toolchain, downloading..."
-              wget -q "$TOOLCHAIN_URL_ALT" -O aarch64-musl-cross.tgz
-              tar -xzf aarch64-musl-cross.tgz --strip-components=1
-              export PATH="$MUSL_CROSS_DIR/bin:$PATH"
-              echo "PATH=$MUSL_CROSS_DIR/bin:$PATH" >> $GITHUB_ENV
+              if wget -q "$TOOLCHAIN_URL_ALT" -O aarch64-musl-cross.tgz && tar -xzf aarch64-musl-cross.tgz --strip-components=1; then
+                TOOLCHAIN_FOUND=true
+                echo "✓ Alternative toolchain downloaded and extracted successfully"
+              else
+                echo "✗ Failed to download or extract alternative toolchain"
+              fi
             else
-              echo "⚠️  No pre-built toolchain available, skipping aarch64-unknown-linux-musl target"
-              echo "SKIP_TARGET=true" >> $GITHUB_ENV
-              echo "skip_target=true" >> $GITHUB_OUTPUT
+              echo "⚠️  No pre-built toolchain available from either source"
             fi
           fi
           
           # Set up environment variables for aarch64 musl if toolchain is available
-          if [ -f "$MUSL_CROSS_DIR/bin/aarch64-linux-musl-gcc" ]; then
+          if [ "$TOOLCHAIN_FOUND" == "true" ] && [ -f "$MUSL_CROSS_DIR/bin/aarch64-linux-musl-gcc" ]; then
+            echo "✓ Toolchain verified: $MUSL_CROSS_DIR/bin/aarch64-linux-musl-gcc exists"
+            echo "PATH=$MUSL_CROSS_DIR/bin:$PATH" >> $GITHUB_ENV
             echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc" >> $GITHUB_ENV
             echo "CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc" >> $GITHUB_ENV
             echo "RUSTFLAGS=-C linker=aarch64-linux-musl-gcc" >> $GITHUB_ENV
             echo "skip_target=false" >> $GITHUB_OUTPUT
-            echo "Toolchain found and configured successfully"
+            echo "✓ Toolchain configured successfully - ready for build"
           else
-            if [ "$SKIP_TARGET" == "true" ]; then
-              echo "skip_target=true" >> $GITHUB_OUTPUT
-              echo "Toolchain not available, target will be skipped"
-            else
-              echo "skip_target=false" >> $GITHUB_OUTPUT
-              echo "Warning: Toolchain file not found but SKIP_TARGET not set"
-            fi
+            echo "⚠️  Toolchain not available, skipping aarch64-unknown-linux-musl target"
+            echo "SKIP_TARGET=true" >> $GITHUB_ENV
+            echo "skip_target=true" >> $GITHUB_OUTPUT
           fi
         elif [[ "${{ inputs.target }}" == "aarch64-unknown-linux-gnu" ]]; then
           sudo apt-get install -y \
