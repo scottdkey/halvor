@@ -41,7 +41,6 @@ runs:
         files: ${{ inputs.files }}
         draft: false
         prerelease: ${{ inputs.prerelease }}
-        update: true
     - name: Create or update release (without files)
       if: inputs.files == ''
       uses: softprops/action-gh-release@v1
@@ -51,4 +50,3 @@ runs:
         body: ${{ inputs.body }}
         draft: false
         prerelease: ${{ inputs.prerelease }}
-        update: true

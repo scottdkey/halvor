@@ -26,15 +26,36 @@ runs:
         fi
 
         if [ "${{ inputs.target }}" == "aarch64-unknown-linux-musl" ]; then
+          # Check if we should skip based on input
+          if [ "${{ inputs.skip_target }}" == "true" ]; then
+            echo "⚠️  Skipping aarch64-unknown-linux-musl - target marked to skip"
+            exit 0
+          fi
+          
+          # Check if toolchain is available via environment variable
           if [ "$SKIP_TARGET" == "true" ]; then
             echo "⚠️  Skipping aarch64-unknown-linux-musl - toolchain not available"
             exit 0
-          elif command -v aarch64-linux-musl-gcc &> /dev/null; then
+          fi
+          
+          # Check if the compiler is in PATH
+          if command -v aarch64-linux-musl-gcc &> /dev/null; then
             echo "Using aarch64-linux-musl-gcc for build"
+            echo "Compiler path: $(which aarch64-linux-musl-gcc)"
+            echo "Compiler version: $(aarch64-linux-musl-gcc --version | head -1)"
             cargo build --release --target ${{ inputs.target }}
           else
-            echo "⚠️  aarch64-linux-musl-gcc not found, skipping build"
-            exit 0
+            echo "⚠️  aarch64-linux-musl-gcc not found in PATH"
+            echo "PATH: $PATH"
+            echo "Checking for toolchain in $HOME/musl-cross..."
+            if [ -f "$HOME/musl-cross/bin/aarch64-linux-musl-gcc" ]; then
+              export PATH="$HOME/musl-cross/bin:$PATH"
+              echo "Found toolchain, added to PATH"
+              cargo build --release --target ${{ inputs.target }}
+            else
+              echo "⚠️  Toolchain not found, skipping build"
+              exit 0
+            fi
           fi
         else
           if [ "${{ inputs.unset_macos_deployment_target }}" == "true" ]; then
