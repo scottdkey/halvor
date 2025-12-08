@@ -42,19 +42,22 @@ jobs:
   check-changes:
     name: Check Changed Files
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
     outputs:
       docker: ${{ steps.check.outputs.docker }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/check-changes
         id: check
+        if: github.event_name == 'push'
+      - name: Set default output for workflow_dispatch
+        if: github.event_name == 'workflow_dispatch'
+        run: echo "docker=false" >> $GITHUB_OUTPUT
 
   build:
     name: Build PIA VPN Image
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'push' && (needs.check-changes.outputs.docker == 'true' || always())) ||
+      (github.event_name == 'push' && needs.check-changes.outputs.docker == 'true') ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.build == 'true')
     needs: check-changes
     steps:
