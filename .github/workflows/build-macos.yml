@@ -81,36 +81,20 @@ jobs:
           target: ${{ matrix.target }}
           binary_path: target/${{ matrix.target }}/release/hal
 
-  release:
-    name: Release macOS CLI
+  release-experimental:
+    name: Release macOS CLI (Experimental)
     runs-on: ubuntu-latest
     needs: [check-changes, build]
     if: |
-      (github.event_name == 'push' && needs.check-changes.outputs.src == 'true' && needs.build.result != 'failure') ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.release == 'true' && (needs.build.result == 'success' || needs.build.result == 'skipped'))
+      (github.event_name == 'push' && needs.check-changes.outputs.src == 'true' && needs.build.result == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.experimental == 'true' && needs.build.result == 'success')
     permissions:
       contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Determine experimental flag
-        id: exp_flag
-        run: |
-          echo "Event name: ${{ github.event_name }}"
-          echo "Experimental input: ${{ github.event.inputs.experimental }}"
-          if [ "${{ github.event_name }}" == "push" ]; then
-            echo "value=true" >> $GITHUB_OUTPUT
-            echo "Push event - setting experimental to true"
-          elif [ "${{ github.event.inputs.experimental }}" == "true" ]; then
-            echo "value=true" >> $GITHUB_OUTPUT
-            echo "Experimental input is true - setting experimental to true"
-          else
-            echo "value=false" >> $GITHUB_OUTPUT
-            echo "Experimental input is false or not set - setting experimental to false"
-          fi
-
-      - name: Release CLI
+      - name: Release CLI (Experimental)
         uses: ./.github/actions/release-cli
         with:
           version_input: ${{ github.event.inputs.version }}
@@ -118,4 +102,28 @@ jobs:
           binary_name: hal
           archive_extension: .tar.gz
           event_name: ${{ github.event_name }}
-          experimental_input: ${{ steps.exp_flag.outputs.value }}
+          experimental_input: "true"
+
+  release-stable:
+    name: Release macOS CLI (Stable)
+    runs-on: ubuntu-latest
+    needs: [check-changes, build]
+    if: |
+      github.event_name == 'workflow_dispatch' && 
+      github.event.inputs.release == 'true' &&
+      needs.build.result == 'success'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Release CLI (Stable)
+        uses: ./.github/actions/release-cli
+        with:
+          version_input: ${{ github.event.inputs.version }}
+          platform: darwin
+          binary_name: hal
+          archive_extension: .tar.gz
+          event_name: ${{ github.event_name }}
+          experimental_input: "false"

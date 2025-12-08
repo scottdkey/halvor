@@ -126,35 +126,22 @@ jobs:
           path: artifacts
           retention-days: 7
 
-  release:
-    name: Release PIA VPN Image
+  release-experimental:
+    name: Release PIA VPN Image (Experimental)
     runs-on: ubuntu-latest
     needs: [check-changes, build]
     if: |
-      (github.event_name == 'push' && needs.check-changes.outputs.docker == 'true' && needs.build.result != 'failure') ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.release == 'true' && (needs.build.result == 'success' || needs.build.result == 'skipped'))
+      (github.event_name == 'push' && needs.check-changes.outputs.docker == 'true' && needs.build.result == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.experimental == 'true' && needs.build.result == 'success')
     permissions:
       contents: write
       packages: write
       id-token: write
     steps:
-      - name: Determine experimental flag
-        id: exp_flag
-        run: |
-          echo "Event name: ${{ github.event_name }}"
-          echo "Experimental input: ${{ github.event.inputs.experimental }}"
-          if [ "${{ github.event_name }}" == "push" ]; then
-            echo "value=true" >> $GITHUB_OUTPUT
-            echo "Push event - setting experimental to true"
-          elif [ "${{ github.event.inputs.experimental }}" == "true" ]; then
-            echo "value=true" >> $GITHUB_OUTPUT
-            echo "Experimental input is true - setting experimental to true"
-          else
-            echo "value=false" >> $GITHUB_OUTPUT
-            echo "Experimental input is false or not set - setting experimental to false"
-          fi
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Release Docker Image
+      - name: Release Docker Image (Experimental)
         id: release
         uses: ./.github/actions/release-docker
         with:
@@ -164,7 +151,49 @@ jobs:
           dockerfile: ./openvpn-container/Dockerfile
           version_input: ${{ github.event.inputs.version }}
           event_name: ${{ github.event_name }}
-          experimental_input: ${{ steps.exp_flag.outputs.value }}
+          experimental_input: "true"
+          release_body: |
+            ### PIA VPN Docker Image (Experimental)
+
+            Pull the image:
+            ```bash
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:experimental
+            ```
+            ```bash
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ```
+
+            ---
+            *This release was created automatically by the build workflows.*
+            *This is an experimental release.*
+
+  release-stable:
+    name: Release PIA VPN Image (Stable)
+    runs-on: ubuntu-latest
+    needs: [check-changes, build]
+    if: |
+      github.event_name == 'workflow_dispatch' && 
+      github.event.inputs.release == 'true' &&
+      needs.build.result == 'success'
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Release Docker Image (Stable)
+        id: release
+        uses: ./.github/actions/release-docker
+        with:
+          registry: ${{ env.REGISTRY }}
+          image_name: ${{ env.IMAGE_NAME }}
+          context: ./openvpn-container
+          dockerfile: ./openvpn-container/Dockerfile
+          version_input: ${{ github.event.inputs.version }}
+          event_name: ${{ github.event_name }}
+          experimental_input: "false"
           release_body: |
             ### PIA VPN Docker Image
 
