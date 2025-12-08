@@ -472,7 +472,31 @@ fn extract_and_install(
     }
 
     // Replace current executable
-    local::copy_file(&extracted_binary, &current_exe)?;
+    // On Linux, we can't overwrite a file that's being executed, so we need to:
+    // 1. Copy to a temporary location next to the target
+    // 2. Remove the old file
+    // 3. Rename the new file to the target (atomic operation)
+    #[cfg(unix)]
+    {
+        let temp_target = current_exe.with_extension("hal.new");
+        std::fs::copy(&extracted_binary, &temp_target)
+            .context("Failed to copy new binary to temp location")?;
+        local::set_permissions(&temp_target, 0o755)
+            .context("Failed to set permissions on new binary")?;
+
+        // Remove the old file (this works even if it's being executed)
+        std::fs::remove_file(&current_exe).context("Failed to remove old binary")?;
+
+        // Atomically rename the new file to the target
+        std::fs::rename(&temp_target, &current_exe)
+            .context("Failed to rename new binary to target location")?;
+    }
+
+    #[cfg(windows)]
+    {
+        // On Windows, we can overwrite directly
+        local::copy_file(&extracted_binary, &current_exe)?;
+    }
 
     // Clean up temp files
     local::remove_file(&temp_archive).ok();
