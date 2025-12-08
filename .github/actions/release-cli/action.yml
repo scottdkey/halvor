@@ -145,9 +145,13 @@ runs:
         # Replace placeholders (including escaped backticks)
         sed -i "s|REPO_PLACEHOLDER|${REPO}|g" /tmp/install_script.txt
         sed -i "s|TAG_PLACEHOLDER|${TAG}|g" /tmp/install_script.txt
-        sed -i "s|DOCKER_TAGS_PLACEHOLDER|${DOCKER_PULL_LINES}|g" /tmp/install_script.txt
-        # Replace escaped backticks with actual backticks
-        sed -i 's|\\`\\`\\`|```|g' /tmp/install_script.txt
+        # Replace Docker tags placeholder - handle multiline by writing to temp file first
+        echo "$DOCKER_PULL_LINES" > /tmp/docker_tags.txt
+        # Use awk to replace the placeholder with the content from the file
+        awk 'NR==FNR {docker_tags=docker_tags $0 "\n"; next} {gsub(/DOCKER_TAGS_PLACEHOLDER/, docker_tags); print}' /tmp/docker_tags.txt /tmp/install_script.txt > /tmp/install_script.tmp
+        mv /tmp/install_script.tmp /tmp/install_script.txt
+        # Replace escaped backticks with actual backticks (use perl to avoid sed issues with backticks)
+        perl -i -pe 's/\\`\\`\\`/```/g' /tmp/install_script.txt
 
         echo "script<<EOF" >> $GITHUB_OUTPUT
         cat /tmp/install_script.txt >> $GITHUB_OUTPUT
