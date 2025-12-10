@@ -6,6 +6,7 @@
 // 3. Add the match arm in `handle_command` function
 
 // Declare all command modules - add new modules here
+pub mod agent;
 pub mod backup;
 pub mod config;
 pub mod docker;
@@ -118,6 +119,9 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
         }
         Db { command } => {
             config::handle_db_command(command)?;
+        }
+        Agent { command } => {
+            agent::handle_agent(command)?;
         }
     }
     Ok(())

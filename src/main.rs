@@ -139,6 +139,11 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+    /// Manage halvor agent daemon (start/stop/status/discover)
+    Agent {
+        #[command(subcommand)]
+        command: commands::agent::AgentCommands,
+    },
 }
 
 fn main() -> Result<()> {
