@@ -30,6 +30,12 @@ pub enum AgentRequest {
     SyncConfig {
         data: Vec<u8>,
     },
+    SyncDatabase {
+        /// Hostname of the requesting agent
+        from_hostname: String,
+        /// Timestamp of last sync (to avoid unnecessary transfers)
+        last_sync: Option<i64>,
+    },
     Ping,
 }
 
@@ -95,6 +101,10 @@ impl AgentServer {
                 token,
             } => self.execute_command(&command, &args, &token)?,
             AgentRequest::SyncConfig { data } => self.sync_config(data)?,
+            AgentRequest::SyncDatabase {
+                from_hostname,
+                last_sync,
+            } => self.sync_database(&from_hostname, last_sync)?,
         };
 
         // Send response
@@ -193,6 +203,51 @@ impl AgentServer {
         // TODO: Handle conflicts
         Ok(AgentResponse::Success {
             output: "Config synced".to_string(),
+        })
+    }
+
+    fn sync_database(&self, from_hostname: &str, _last_sync: Option<i64>) -> Result<AgentResponse> {
+        use crate::db;
+        
+        // Export host configs and settings for this host
+        let local_hostname = std::env::var("HOSTNAME")
+            .or_else(|_| std::fs::read_to_string("/etc/hostname"))
+            .unwrap_or_else(|_| "unknown".to_string())
+            .trim()
+            .to_string();
+        
+        // Get all hosts from DB
+        let hosts = db::list_hosts().unwrap_or_default();
+        let mut host_configs = std::collections::HashMap::new();
+        for hostname in &hosts {
+            if let Ok(Some(config)) = db::get_host_config(hostname) {
+                host_configs.insert(hostname.clone(), config);
+            }
+        }
+        
+        // Get settings
+        use crate::db::generated::settings;
+        let mut db_settings = std::collections::HashMap::new();
+        if let Ok(all_settings) = settings::select_many("1=1", &[]) {
+            for row in all_settings {
+                if let Some(key) = row.key {
+                    db_settings.insert(key, row.value);
+                }
+            }
+        }
+        
+        // Serialize sync data
+        let sync_data = serde_json::json!({
+            "from_hostname": from_hostname,
+            "local_hostname": local_hostname,
+            "hosts": host_configs,
+            "settings": db_settings,
+        });
+        
+        let data_str = serde_json::to_string(&sync_data)?;
+        
+        Ok(AgentResponse::Success {
+            output: data_str,
         })
     }
 }

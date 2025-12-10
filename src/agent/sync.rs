@@ -63,16 +63,77 @@ impl ConfigSync {
         Ok(())
     }
 
-    /// Sync encrypted environment data
+    /// Sync encrypted environment data and database
     pub fn sync_encrypted_data(&self, hosts: &[DiscoveredHost]) -> Result<()> {
+        use crate::db;
+        use crate::db::generated::settings;
+        use std::collections::HashMap;
 
         for host in hosts {
             if !host.reachable {
                 continue;
             }
 
-            // TODO: Implement encrypted data sync via agent API
-            // For now, this is a placeholder
+            // Skip self
+            if host.hostname == self.local_hostname {
+                continue;
+            }
+
+            let client = AgentClient::new(
+                host.tailscale_ip
+                    .as_ref()
+                    .or(host.local_ip.as_ref())
+                    .ok_or_else(|| anyhow::anyhow!("No IP for host {}", host.hostname))?,
+                host.agent_port,
+            );
+
+            // Sync database
+            if let Ok(sync_data_str) = client.sync_database(&self.local_hostname, None) {
+                if let Ok(sync_data) = serde_json::from_str::<serde_json::Value>(&sync_data_str) {
+                    // Sync host configs
+                    if let Some(hosts_json) = sync_data.get("hosts") {
+                        if let Some(hosts_map) = hosts_json.as_object() {
+                            for (hostname, config_json) in hosts_map {
+                                if let Ok(config) = serde_json::from_value::<crate::config::HostConfig>(config_json.clone()) {
+                                    // Only update if we don't have this host or if remote is newer
+                                    let should_update = match db::get_host_config(hostname) {
+                                        Ok(Some(_)) => {
+                                            // Could add timestamp comparison here
+                                            true
+                                        }
+                                        Ok(None) => true,
+                                        Err(_) => false,
+                                    };
+                                    
+                                    if should_update {
+                                        db::store_host_config(hostname, &config)?;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Sync settings
+                    if let Some(settings_json) = sync_data.get("settings") {
+                        if let Some(settings_map) = settings_json.as_object() {
+                            for (key, value) in settings_map {
+                                if let Some(val_str) = value.as_str() {
+                                    // Only sync if we don't have it or if it's different
+                                    let should_update = match settings::get_setting(key) {
+                                        Ok(Some(existing)) => existing != val_str,
+                                        Ok(None) => true,
+                                        Err(_) => false,
+                                    };
+                                    
+                                    if should_update {
+                                        settings::set_setting(key, val_str)?;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         Ok(())

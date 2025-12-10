@@ -58,6 +58,20 @@ impl AgentClient {
         }
     }
 
+    /// Sync database with remote agent
+    pub fn sync_database(&self, from_hostname: &str, last_sync: Option<i64>) -> Result<String> {
+        let response = self.send_request(AgentRequest::SyncDatabase {
+            from_hostname: from_hostname.to_string(),
+            last_sync,
+        })?;
+
+        match response {
+            AgentResponse::Success { output } => Ok(output),
+            AgentResponse::Error { message } => anyhow::bail!("Sync failed: {}", message),
+            _ => anyhow::bail!("Unexpected response type"),
+        }
+    }
+
     fn send_request(&self, request: AgentRequest) -> Result<AgentResponse> {
         let addr = format_address(&self.host, self.port);
         let mut stream = TcpStream::connect(&addr)
