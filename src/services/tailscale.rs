@@ -166,7 +166,10 @@ pub fn install_tailscale_on_host(hostname: &str, config: &EnvConfig) -> Result<(
 /// Get host configuration from config with helpful error message
 /// This is used across modules that need to access host configuration
 pub fn get_host_config<'a>(config: &'a EnvConfig, hostname: &str) -> Result<&'a HostConfig> {
-    config.hosts.get(hostname).with_context(|| {
+    // Try normalized hostname lookup
+    let actual_hostname = crate::config::service::find_hostname_in_config(hostname, config)
+        .unwrap_or_else(|| hostname.to_string());
+    config.hosts.get(&actual_hostname).with_context(|| {
         format!(
             "Host '{}' not found in .env\n\nAdd configuration to .env:\n  HOST_{}_IP=\"<ip-address>\"\n  HOST_{}_TAILSCALE=\"<tailscale-hostname>\"",
             hostname,

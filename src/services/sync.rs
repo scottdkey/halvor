@@ -8,10 +8,12 @@ use std::path::PathBuf;
 
 /// Sync data to/from a remote halvor installation
 pub fn sync_data(hostname: &str, pull: bool, config: &EnvConfig) -> Result<()> {
-    // Get target host info
+    // Get target host info (try normalized hostname)
+    let actual_hostname = crate::config::service::find_hostname_in_config(hostname, config)
+        .ok_or_else(|| anyhow::anyhow!("Host '{}' not found in configuration", hostname))?;
     let host_config = config
         .hosts
-        .get(hostname)
+        .get(&actual_hostname)
         .with_context(|| format!("Host '{}' not found in configuration", hostname))?;
 
     let target_host = if let Some(ref tailscale) = host_config.tailscale {

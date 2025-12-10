@@ -116,6 +116,9 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
         } => {
             config::handle_config(None, verbose, db, command.as_ref())?;
         }
+        Db { command } => {
+            config::handle_db_command(command)?;
+        }
     }
     Ok(())
 }

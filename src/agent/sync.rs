@@ -65,8 +65,6 @@ impl ConfigSync {
 
     /// Sync encrypted environment data
     pub fn sync_encrypted_data(&self, hosts: &[DiscoveredHost]) -> Result<()> {
-        // Export local encrypted data
-        let local_data = db::export_encrypted_data()?;
 
         for host in hosts {
             if !host.reachable {

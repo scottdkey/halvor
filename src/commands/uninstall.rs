@@ -38,7 +38,6 @@ pub fn handle_uninstall(hostname: Option<&str>, service: &str) -> Result<()> {
 
 /// Handle guided uninstall for halvor (local or remote)
 pub fn handle_guided_uninstall(hostname: Option<&str>) -> Result<()> {
-    let config = config::load_config()?;
     let target_host = hostname.unwrap_or("localhost");
 
     // For remote hosts, we can only uninstall services, not the halvor binary itself
@@ -157,89 +156,89 @@ fn handle_local_guided_uninstall() -> Result<()> {
 
     // Ask for confirmation
     print!("Do you want to remove halvor binaries? [y/N]: ");
-    io::stdout().flush()?;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
     let remove_binaries =
         input.trim().eq_ignore_ascii_case("y") || input.trim().eq_ignore_ascii_case("yes");
 
     if !remove_binaries {
         println!("Skipping binary removal.");
         println!();
-    }
+        }
 
     if remove_binaries {
-        println!();
+    println!();
         println!("Removing binaries...");
 
-        // Remove binaries
-        for bin_path in &binaries_to_remove {
-            let path = Path::new(bin_path);
-            if path.exists() {
-                if bin_path.starts_with("/usr") {
-                    // System path, need sudo
-                    println!("  Removing {} (requires sudo)...", bin_path);
-                    let output = std::process::Command::new("sudo")
-                        .arg("rm")
-                        .arg("-f")
-                        .arg(bin_path)
-                        .output()?;
-                    if !output.status.success() {
-                        eprintln!("  ⚠ Warning: Failed to remove {}", bin_path);
-                    } else {
-                        println!("  ✓ Removed {}", bin_path);
-                    }
+    // Remove binaries
+    for bin_path in &binaries_to_remove {
+        let path = Path::new(bin_path);
+        if path.exists() {
+            if bin_path.starts_with("/usr") {
+                // System path, need sudo
+                println!("  Removing {} (requires sudo)...", bin_path);
+                let output = std::process::Command::new("sudo")
+                    .arg("rm")
+                    .arg("-f")
+                    .arg(bin_path)
+                    .output()?;
+                if !output.status.success() {
+                    eprintln!("  ⚠ Warning: Failed to remove {}", bin_path);
                 } else {
-                    // User path, no sudo needed
-                    println!("  Removing {}...", bin_path);
-                    if let Err(e) = std::fs::remove_file(bin_path) {
-                        eprintln!("  ⚠ Warning: Failed to remove {}: {}", bin_path, e);
-                    } else {
-                        println!("  ✓ Removed {}", bin_path);
-                    }
+                    println!("  ✓ Removed {}", bin_path);
+                }
+            } else {
+                // User path, no sudo needed
+                println!("  Removing {}...", bin_path);
+                if let Err(e) = std::fs::remove_file(bin_path) {
+                    eprintln!("  ⚠ Warning: Failed to remove {}: {}", bin_path, e);
+                } else {
+                    println!("  ✓ Removed {}", bin_path);
                 }
             }
         }
+    }
 
-        // Remove backup files
-        for backup_path in &backups_to_remove {
-            let path = Path::new(backup_path);
-            if path.exists() {
-                if backup_path.starts_with("/usr") {
-                    // System path, need sudo
-                    println!("  Removing {} (requires sudo)...", backup_path);
-                    let output = std::process::Command::new("sudo")
-                        .arg("rm")
-                        .arg("-f")
-                        .arg(backup_path)
-                        .output()?;
-                    if !output.status.success() {
-                        eprintln!("  ⚠ Warning: Failed to remove {}", backup_path);
-                    } else {
-                        println!("  ✓ Removed {}", backup_path);
-                    }
+    // Remove backup files
+    for backup_path in &backups_to_remove {
+        let path = Path::new(backup_path);
+        if path.exists() {
+            if backup_path.starts_with("/usr") {
+                // System path, need sudo
+                println!("  Removing {} (requires sudo)...", backup_path);
+                let output = std::process::Command::new("sudo")
+                    .arg("rm")
+                    .arg("-f")
+                    .arg(backup_path)
+                    .output()?;
+                if !output.status.success() {
+                    eprintln!("  ⚠ Warning: Failed to remove {}", backup_path);
                 } else {
-                    // User path, no sudo needed
-                    println!("  Removing {}...", backup_path);
-                    if let Err(e) = std::fs::remove_file(backup_path) {
-                        eprintln!("  ⚠ Warning: Failed to remove {}: {}", backup_path, e);
-                    } else {
-                        println!("  ✓ Removed {}", backup_path);
-                    }
+                    println!("  ✓ Removed {}", backup_path);
+                }
+            } else {
+                // User path, no sudo needed
+                println!("  Removing {}...", backup_path);
+                if let Err(e) = std::fs::remove_file(backup_path) {
+                    eprintln!("  ⚠ Warning: Failed to remove {}: {}", backup_path, e);
+                } else {
+                    println!("  ✓ Removed {}", backup_path);
                 }
             }
         }
+    }
 
-        println!();
+    println!();
         println!("✓ Binary removal complete");
         println!();
     }
 
     // Ask about removing database
     print!("Do you want to delete the halvor database? [y/N]: ");
-    io::stdout().flush()?;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
     let remove_database =
         input.trim().eq_ignore_ascii_case("y") || input.trim().eq_ignore_ascii_case("yes");
 

@@ -101,7 +101,21 @@ pub fn load_env_config(_homelab_dir: &Path) -> Result<EnvConfig> {
 
     for (key, value) in env_vars {
         if let Some(hostname) = key.strip_prefix("HOST_") {
-            if let Some(rest) = hostname.strip_suffix("_IP") {
+            // Check for _TAILSCALE_IP first (before _IP) to avoid parsing it as a separate host
+            if let Some(rest) = hostname.strip_suffix("_TAILSCALE_IP") {
+                // Tailscale IP - use as primary IP if no regular IP is set
+                let hostname_lower = rest.to_lowercase();
+                let config = hosts.entry(hostname_lower).or_insert_with(|| HostConfig {
+                    ip: None,
+                    hostname: None,
+                    tailscale: None,
+                    backup_path: None,
+                });
+                // Only set IP if not already set by HOST_<name>_IP
+                if config.ip.is_none() {
+                    config.ip = Some(value);
+                }
+            } else if let Some(rest) = hostname.strip_suffix("_IP") {
                 let hostname_lower = rest.to_lowercase();
                 let config = hosts.entry(hostname_lower).or_insert_with(|| HostConfig {
                     ip: None,
@@ -234,7 +248,40 @@ pub fn get_npm_password() -> Option<String> {
 }
 
 /// Helper function to load config - used by commands and services
+/// Merges database and .env file configurations (database takes precedence)
 pub fn load_config() -> Result<EnvConfig> {
+    use crate::db;
+
+    #[cfg(debug_assertions)]
+    println!("[DEBUG] Loading configuration...");
+
     let homelab_dir = find_homelab_dir()?;
-    load_env_config(&homelab_dir)
+    let mut env_config = load_env_config(&homelab_dir)?;
+
+    #[cfg(debug_assertions)]
+    println!(
+        "[DEBUG] Loaded {} hosts from .env file",
+        env_config.hosts.len()
+    );
+
+    // Merge database hosts (database takes precedence)
+    if let Ok(db_hosts) = db::list_hosts() {
+        #[cfg(debug_assertions)]
+        println!("[DEBUG] Found {} hosts in database", db_hosts.len());
+
+        for hostname in db_hosts {
+            if let Ok(Some(db_config)) = db::get_host_config(&hostname) {
+                #[cfg(debug_assertions)]
+                println!("[DEBUG] Merging database config for '{}'", hostname);
+
+                // Database config overrides .env config
+                env_config.hosts.insert(hostname, db_config);
+            }
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    println!("[DEBUG] Final config has {} hosts", env_config.hosts.len());
+
+    Ok(env_config)
 }

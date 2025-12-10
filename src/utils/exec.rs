@@ -300,9 +300,12 @@ impl Executor {
     /// Create an executor based on hostname and config
     /// Automatically determines if execution should be local or remote
     pub fn new(hostname: &str, config: &crate::config::EnvConfig) -> Result<Self> {
+        // Try to find hostname (with normalization for TLDs)
+        let actual_hostname = crate::config::service::find_hostname_in_config(hostname, config)
+            .ok_or_else(|| anyhow::anyhow!("Host '{}' not found in config", hostname))?;
         let host_config = config
             .hosts
-            .get(hostname)
+            .get(&actual_hostname)
             .with_context(|| format!("Host '{}' not found in config", hostname))?;
 
         // Get target IP
@@ -329,8 +332,10 @@ impl Executor {
         if is_local {
             Ok(Executor::Local)
         } else {
-            // Get host configuration for remote connection
-            let host_config = config.hosts.get(hostname).with_context(|| {
+            // Get host configuration for remote connection (try normalized hostname)
+            let actual_hostname = crate::config::service::find_hostname_in_config(hostname, config)
+                .ok_or_else(|| anyhow::anyhow!("Host '{}' not found in config", hostname))?;
+            let host_config = config.hosts.get(&actual_hostname).with_context(|| {
                 format!(
                     "Host '{}' not found in .env\n\nAdd configuration to .env:\n  HOST_{}_IP=\"<ip-address>\"\n  HOST_{}_TAILSCALE=\"<tailscale-hostname>\"",
                     hostname,

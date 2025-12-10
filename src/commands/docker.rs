@@ -265,5 +265,50 @@ pub fn diagnose_docker(hostname: Option<&str>) -> Result<()> {
     println!("  5. Validate config: sudo python3 -m json.tool /etc/docker/daemon.json");
     println!();
 
+    // Check for network controller errors specifically
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("Network Controller Error Detection");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+
+    if exec.check_command_exists("journalctl")? {
+        let log_output = exec.execute_simple(
+            "journalctl",
+            &["-u", "docker.service", "-n", "50", "--no-pager"],
+        );
+        if let Ok(output) = log_output {
+            let logs = String::from_utf8_lossy(&output.stdout);
+            let log_lower = logs.to_lowercase();
+
+            if log_lower.contains("network controller")
+                || log_lower.contains("error creating default")
+            {
+                println!("⚠ Network controller error detected!");
+                println!();
+                println!("This error typically indicates corrupted Docker network state.");
+                println!("Try these fixes (in order):");
+                println!();
+                println!("1. Clean Docker network state:");
+                println!("   sudo rm -rf /var/lib/docker/network");
+                println!("   sudo systemctl start docker");
+                println!();
+                println!("2. If that doesn't work, reset iptables:");
+                println!("   sudo iptables -t nat -F");
+                println!("   sudo iptables -t mangle -F");
+                println!("   sudo iptables -F");
+                println!("   sudo iptables -X");
+                println!("   sudo systemctl start docker");
+                println!();
+                println!(
+                    "3. As a last resort, clean all Docker data (⚠️  removes all containers/images):"
+                );
+                println!("   sudo systemctl stop docker");
+                println!("   sudo rm -rf /var/lib/docker");
+                println!("   sudo systemctl start docker");
+                println!();
+            }
+        }
+    }
+
     Ok(())
 }

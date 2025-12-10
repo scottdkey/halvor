@@ -97,8 +97,19 @@ pub fn list_hosts_display(verbose: bool) -> Result<()> {
     let homelab_dir = crate::config::find_homelab_dir();
     let (env_hosts, tailnet_base) = if let Ok(dir) = &homelab_dir {
         match crate::config::load_env_config(dir) {
-            Ok(cfg) => (Some(cfg.hosts), cfg._tailnet_base),
-            Err(_) => (None, "ts.net".to_string()),
+            Ok(cfg) => {
+                #[cfg(debug_assertions)]
+                println!(
+                    "[DEBUG] Loaded {} hosts from .env file in list_hosts_display",
+                    cfg.hosts.len()
+                );
+                (Some(cfg.hosts), cfg._tailnet_base)
+            }
+            Err(e) => {
+                #[cfg(debug_assertions)]
+                eprintln!("[DEBUG] Failed to load .env config: {}", e);
+                (None, "ts.net".to_string())
+            }
         }
     } else {
         (None, "ts.net".to_string())

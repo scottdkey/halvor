@@ -125,6 +125,11 @@ enum Commands {
         #[command(subcommand)]
         command: Option<commands::config::ConfigCommands>,
     },
+    /// Database operations (migrations, backup, generate)
+    Db {
+        #[command(subcommand)]
+        command: commands::config::DbCommands,
+    },
     /// Check for and install updates
     Update {
         /// Use experimental channel for updates (version less, continuously updated)

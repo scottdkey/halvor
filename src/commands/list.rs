@@ -15,7 +15,7 @@ pub fn handle_list(hostname: Option<&str>, verbose: bool) -> Result<()> {
 }
 
 /// List services running on a host
-fn list_host_services(hostname: &str, verbose: bool) -> Result<()> {
+fn list_host_services(hostname: &str, _verbose: bool) -> Result<()> {
     use crate::config;
     use crate::services::docker;
     use crate::utils::exec::Executor;
