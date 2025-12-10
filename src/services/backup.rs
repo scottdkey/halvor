@@ -1,7 +1,7 @@
 use crate::config::EnvConfig;
 use crate::utils::exec::CommandExecutor;
 use crate::utils::service::{DockerOps, FileOps, ServiceContext};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::time::SystemTime;
 
 // New host-level backup functions

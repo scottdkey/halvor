@@ -1,5 +1,4 @@
 use crate::config::{self, EnvConfig};
-use crate::services::tailscale;
 use crate::utils::exec::local;
 use anyhow::{Context, Result};
 use std::io::{self, Write};

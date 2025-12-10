@@ -126,3 +126,6 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
     }
     Ok(())
 }
+
+// Re-export command enums for convenience (these are used in main.rs)
+// Note: These are re-exported from their respective modules, not defined here
