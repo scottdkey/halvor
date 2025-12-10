@@ -3,51 +3,51 @@ description: Extract metadata and build Docker image
 
 inputs:
   registry:
-    description: "Container registry"
+    description: 'Container registry'
     required: true
   image_name:
-    description: "Image name"
+    description: 'Image name'
     required: true
   docker_tag:
-    description: "Docker tag to use"
+    description: 'Docker tag to use'
     required: true
   context:
-    description: "Docker build context path"
+    description: 'Docker build context path'
     required: true
   dockerfile:
-    description: "Path to Dockerfile"
+    description: 'Path to Dockerfile'
     required: true
   platforms:
-    description: "Platforms to build for (comma-separated)"
+    description: 'Platforms to build for (comma-separated)'
     required: false
-    default: "linux/amd64,linux/arm64"
+    default: 'linux/amd64,linux/arm64'
   push:
-    description: "Whether to push the image"
+    description: 'Whether to push the image'
     required: false
-    default: "false"
+    default: 'false'
   outputs:
-    description: "Output specification (e.g., type=oci,dest=/tmp/image.tar)"
+    description: 'Output specification (e.g., type=oci,dest=/tmp/image.tar)'
     required: false
-    default: ""
+    default: ''
   tag_latest:
     description: "Whether to also tag as 'latest'"
     required: false
-    default: "true"
+    default: 'true'
   tag_sha:
-    description: "Whether to also tag with git SHA"
+    description: 'Whether to also tag with git SHA'
     required: false
-    default: "false"
+    default: 'false'
   git_sha:
-    description: "Git commit SHA to use for tagging"
+    description: 'Git commit SHA to use for tagging'
     required: false
-    default: ""
+    default: ''
 
 outputs:
   tags:
-    description: "Docker tags"
+    description: 'Docker tags'
     value: ${{ steps.meta.outputs.tags }}
   labels:
-    description: "Docker labels"
+    description: 'Docker labels'
     value: ${{ steps.meta.outputs.labels }}
 
 runs:

@@ -3,12 +3,12 @@ description: Install cross-compilation dependencies for Linux targets
 
 inputs:
   target:
-    description: "Rust target triple"
+    description: 'Rust target triple'
     required: true
 
 outputs:
   skip_target:
-    description: "Whether to skip this target"
+    description: 'Whether to skip this target'
     value: ${{ steps.install.outputs.skip_target }}
 
 runs:

@@ -3,24 +3,24 @@ description: Check if source or docker files have changed
 
 inputs:
   src_paths:
-    description: "Paths to check for source code changes (newline-separated)"
+    description: 'Paths to check for source code changes (newline-separated)'
     required: false
     default: |
       src/**
       Cargo.toml
       Cargo.lock
   docker_paths:
-    description: "Paths to check for docker changes (newline-separated)"
+    description: 'Paths to check for docker changes (newline-separated)'
     required: false
     default: |
       openvpn-container/**
 
 outputs:
   src:
-    description: "Whether source files changed"
+    description: 'Whether source files changed'
     value: ${{ steps.filter.outputs.src }}
   docker:
-    description: "Whether docker files changed"
+    description: 'Whether docker files changed'
     value: ${{ steps.filter.outputs.docker }}
 
 runs:

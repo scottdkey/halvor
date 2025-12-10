@@ -23,7 +23,7 @@ services:
       - vpn_network
     ports:
       # HTTP proxy port (Privoxy)
-      - "8888:8888/tcp"
+      - '8888:8888/tcp'
     environment:
       - TZ=Etc/UTC
       # Set UPDATE_CONFIGS=true to download fresh PIA configs on startup

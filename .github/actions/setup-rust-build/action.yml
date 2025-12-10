@@ -3,7 +3,7 @@ description: Install Rust and cache Cargo dependencies
 
 inputs:
   target:
-    description: "Rust target triple (e.g., x86_64-unknown-linux-gnu)"
+    description: 'Rust target triple (e.g., x86_64-unknown-linux-gnu)'
     required: true
 
 runs:

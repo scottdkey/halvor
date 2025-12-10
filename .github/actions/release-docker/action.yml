@@ -3,39 +3,39 @@ description: Complete release workflow for Docker images (get version, determine
 
 inputs:
   registry:
-    description: "Container registry"
+    description: 'Container registry'
     required: true
   image_name:
-    description: "Image name"
+    description: 'Image name'
     required: true
   context:
-    description: "Docker build context path"
+    description: 'Docker build context path'
     required: true
   dockerfile:
-    description: "Path to Dockerfile"
+    description: 'Path to Dockerfile'
     required: true
   version_input:
-    description: "Manual version input (optional)"
+    description: 'Manual version input (optional)'
     required: false
-    default: ""
+    default: ''
   event_name:
-    description: "GitHub event name"
+    description: 'GitHub event name'
     required: true
   experimental_input:
-    description: "Experimental input flag"
+    description: 'Experimental input flag'
     required: false
-    default: "false"
+    default: 'false'
   release_body:
-    description: "Release body text"
+    description: 'Release body text'
     required: false
-    default: ""
+    default: ''
 
 outputs:
   version:
-    description: "Version number"
+    description: 'Version number'
     value: ${{ steps.version.outputs.version }}
   docker_tag:
-    description: "Docker tag used"
+    description: 'Docker tag used'
     value: ${{ steps.release_type.outputs.docker_tag }}
 
 runs:
@@ -73,7 +73,7 @@ runs:
         docker_tag: ${{ steps.release_type.outputs.docker_tag }}
         context: ${{ inputs.context }}
         dockerfile: ${{ inputs.dockerfile }}
-        push: "true"
+        push: 'true'
         outputs: type=oci,dest=/tmp/docker-image.tar
         tag_latest: ${{ steps.release_type.outputs.type == 'stable' && 'true' || 'false' }}
         tag_sha: ${{ steps.release_type.outputs.type == 'stable' && 'true' || 'false' }}

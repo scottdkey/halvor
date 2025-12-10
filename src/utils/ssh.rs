@@ -1,6 +1,6 @@
 use crate::config::{self, EnvConfig};
-use crate::exec::local;
-use crate::tailscale;
+use crate::services::tailscale;
+use crate::utils::exec::local;
 use anyhow::{Context, Result};
 use std::io::{self, Write};
 use std::process::{Command, Output, Stdio};
@@ -452,7 +452,7 @@ fn _copy_ssh_key(host: &str, server_user: Option<&str>, target_user: Option<&str
     );
 
     // Find the public key file using config module
-    let home = crate::config_manager::get_home_dir()?;
+    let home = crate::config::config_manager::get_home_dir()?;
     let home_str = home.to_string_lossy().to_string();
 
     let pubkey_paths = [
@@ -661,7 +661,7 @@ pub fn _ssh_to_host(
         anyhow::bail!("Please specify a hostname");
     }
 
-    let host_config = tailscale::get_host_config(config, hostname)?;
+    let host_config = crate::services::host::get_host_config_or_error(hostname)?;
 
     // Collect all possible host addresses
     let mut all_hosts = Vec::new();

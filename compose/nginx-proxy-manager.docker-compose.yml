@@ -1,16 +1,16 @@
 services:
   app:
-    image: "docker.io/jc21/nginx-proxy-manager:latest"
+    image: 'docker.io/jc21/nginx-proxy-manager:latest'
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "81:81"
-      - "443:443"
+      - '80:80'
+      - '81:81'
+      - '443:443'
     volumes:
       - nginx_proxy_manager_data:/data
       - nginx_proxy_manager_letsencrypt:/etc/letsencrypt
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:81/api"]
+      test: ['CMD', 'curl', '-f', 'http://localhost:81/api']
       interval: 30s
       timeout: 10s
       retries: 3

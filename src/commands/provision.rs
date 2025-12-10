@@ -1,14 +1,16 @@
 use crate::config;
-use crate::provision;
+use crate::services::provision;
 use anyhow::Result;
 
+/// Handle provision command
+/// hostname: None = local, Some(hostname) = remote host
 pub fn handle_provision(
-    hostname: &str,
+    hostname: Option<&str>,
     portainer_host: bool,
     portainer_edition: &str,
 ) -> Result<()> {
-    let homelab_dir = config::find_homelab_dir()?;
-    let config = config::load_env_config(&homelab_dir)?;
-    provision::provision_host(hostname, portainer_host, portainer_edition, &config)?;
+    let config = config::load_config()?;
+    let target_host = hostname.unwrap_or("localhost");
+    provision::provision_host(target_host, portainer_host, portainer_edition, &config)?;
     Ok(())
 }

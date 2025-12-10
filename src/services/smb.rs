@@ -1,5 +1,5 @@
 use crate::config::EnvConfig;
-use crate::exec::{CommandExecutor, Executor};
+use crate::utils::exec::{CommandExecutor, Executor};
 use anyhow::Result;
 
 pub fn setup_smb_mounts(hostname: &str, config: &EnvConfig) -> Result<()> {
@@ -11,7 +11,7 @@ pub fn setup_smb_mounts(hostname: &str, config: &EnvConfig) -> Result<()> {
     if is_local {
         println!("Setting up SMB mounts locally on {}...", hostname);
     } else {
-    println!("Setting up SMB mounts on {} ({})...", hostname, target_host);
+        println!("Setting up SMB mounts on {} ({})...", hostname, target_host);
     }
     println!();
 
@@ -33,10 +33,10 @@ pub fn uninstall_smb_mounts(hostname: &str, config: &EnvConfig) -> Result<()> {
     if is_local {
         println!("Uninstalling SMB mounts locally on {}...", hostname);
     } else {
-    println!(
-        "Uninstalling SMB mounts on {} ({})...",
-        hostname, target_host
-    );
+        println!(
+            "Uninstalling SMB mounts on {} ({})...",
+            hostname, target_host
+        );
     }
     println!();
 
@@ -117,7 +117,7 @@ fn install_smb_client<E: CommandExecutor>(exec: &E) -> Result<()> {
     }
 
     // Detect package manager and install
-    let pkg_mgr = crate::exec::PackageManager::detect(exec)?;
+    let pkg_mgr = crate::utils::exec::PackageManager::detect(exec)?;
     println!("Detected package manager: {}", pkg_mgr.display_name());
     pkg_mgr.install_package(exec, "cifs-utils")?;
 
@@ -230,13 +230,13 @@ fn setup_smb_share<E: CommandExecutor>(
     let (uid, gid) = {
         // Fallback to commands on non-Unix
         let uid_output = exec.execute_simple("id", &["-u"])?;
-    let uid = String::from_utf8_lossy(&uid_output.stdout)
-        .trim()
-        .to_string();
+        let uid = String::from_utf8_lossy(&uid_output.stdout)
+            .trim()
+            .to_string();
         let gid_output = exec.execute_simple("id", &["-g"])?;
-    let gid = String::from_utf8_lossy(&gid_output.stdout)
-        .trim()
-        .to_string();
+        let gid = String::from_utf8_lossy(&gid_output.stdout)
+            .trim()
+            .to_string();
         (uid, gid)
     };
 
@@ -357,10 +357,10 @@ fn uninstall_smb_mounts_remote<E: CommandExecutor>(exec: &E, config: &EnvConfig)
             // Remove mount point directory using native Rust check
             if exec.is_directory(&mount_point)? {
                 let rmdir_result = exec.execute_simple("sudo", &["rmdir", &mount_point]);
-                    if rmdir_result.is_ok() && rmdir_result.as_ref().unwrap().status.success() {
-                        println!("✓ Removed mount point {}", mount_point);
-                    } else {
-                        println!("Mount point {} not empty, leaving it", mount_point);
+                if rmdir_result.is_ok() && rmdir_result.as_ref().unwrap().status.success() {
+                    println!("✓ Removed mount point {}", mount_point);
+                } else {
+                    println!("Mount point {} not empty, leaving it", mount_point);
                 }
             }
         }

@@ -3,13 +3,13 @@ description: Create or update a GitHub release
 
 inputs:
   tag:
-    description: "Release tag"
+    description: 'Release tag'
     required: true
   name:
-    description: "Release name"
+    description: 'Release name'
     required: true
   body:
-    description: "Release body text"
+    description: 'Release body text'
     required: false
     default: |
       ## Release
@@ -20,17 +20,17 @@ inputs:
       ---
       *This release was created automatically by the build workflows.*
   files:
-    description: "File pattern to upload (e.g., hal-*-linux-*.tar.gz). Empty string to skip file upload."
+    description: 'File pattern to upload (e.g., hal-*-linux-*.tar.gz). Empty string to skip file upload.'
     required: false
-    default: ""
+    default: ''
   prerelease:
-    description: "Whether this is a prerelease"
+    description: 'Whether this is a prerelease'
     required: false
-    default: "false"
+    default: 'false'
   append_body:
-    description: "Append to existing release body instead of overwriting"
+    description: 'Append to existing release body instead of overwriting'
     required: false
-    default: "false"
+    default: 'false'
 
 runs:
   using: composite

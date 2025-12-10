@@ -3,32 +3,32 @@ description: Determine if this should be an experimental or stable release
 
 inputs:
   event_name:
-    description: "GitHub event name"
+    description: 'GitHub event name'
     required: true
   experimental_input:
-    description: "Experimental input flag"
+    description: 'Experimental input flag'
     required: false
-    default: "false"
+    default: 'false'
   version:
-    description: "Version from Cargo.toml"
+    description: 'Version from Cargo.toml'
     required: false
-    default: ""
+    default: ''
 
 outputs:
   type:
-    description: "Release type (experimental or stable)"
+    description: 'Release type (experimental or stable)'
     value: ${{ steps.release_type.outputs.type }}
   tag:
-    description: "Release tag name"
+    description: 'Release tag name'
     value: ${{ steps.release_type.outputs.tag }}
   name:
-    description: "Release name"
+    description: 'Release name'
     value: ${{ steps.release_type.outputs.name }}
   prerelease:
-    description: "Whether this is a prerelease"
+    description: 'Whether this is a prerelease'
     value: ${{ steps.release_type.outputs.prerelease }}
   docker_tag:
-    description: "Docker tag to use"
+    description: 'Docker tag to use'
     value: ${{ steps.release_type.outputs.docker_tag }}
 
 runs:

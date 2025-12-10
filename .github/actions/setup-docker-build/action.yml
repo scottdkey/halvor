@@ -3,10 +3,10 @@ description: Setup Docker Buildx and login to registry
 
 inputs:
   registry:
-    description: "Container registry (e.g., ghcr.io)"
+    description: 'Container registry (e.g., ghcr.io)'
     required: true
   image_name:
-    description: "Image name (e.g., owner/repo)"
+    description: 'Image name (e.g., owner/repo)'
     required: true
 
 runs:

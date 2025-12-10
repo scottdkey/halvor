@@ -1,8 +1,9 @@
 pub mod core;
 pub mod generated;
+pub mod migrate;
 pub mod migrations;
 
-use crate::config_manager;
+use crate::config::config_manager;
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 use std::path::PathBuf;
@@ -42,5 +43,38 @@ pub fn get_client() -> Result<core::DbClient> {
     Ok(core::DbClient::new(conn))
 }
 
-// Re-export generated functions for convenience
-pub use generated::*;
+// Re-export generated modules directly for convenience
+// This allows calling db::settings::insert_one() instead of db::generated::settings::insert_one()
+pub mod settings {
+    pub use super::generated::settings::*;
+}
+
+pub mod host_info {
+    pub use super::generated::host_info::*;
+}
+
+pub mod smb_servers {
+    pub use super::generated::smb_servers::*;
+}
+
+pub mod update_history {
+    pub use super::generated::update_history::*;
+}
+
+pub mod encrypted_env_data {
+    pub use super::generated::encrypted_env_data::*;
+}
+
+// Re-export wrapper functions with unique names at the top level for convenience
+// These can be called directly via db::get_host_config(), etc.
+// Note: Generic CRUD functions are accessible via module paths like db::settings::insert_one()
+pub use generated::{
+    delete_host_config, get_host_config, get_host_info, get_setting, list_hosts, set_setting,
+    store_host_config, store_host_info,
+};
+pub use generated::{delete_smb_server, get_smb_server, list_smb_servers, store_smb_server};
+pub use generated::{
+    export_encrypted_data, get_all_encrypted_envs, get_encrypted_env, import_encrypted_data,
+    store_encrypted_env,
+};
+pub use generated::{get_update_history, record_update};

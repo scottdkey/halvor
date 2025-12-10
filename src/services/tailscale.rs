@@ -1,5 +1,6 @@
 use crate::config::{self, EnvConfig, HostConfig};
-use crate::exec::{CommandExecutor, Executor};
+use crate::utils::exec::PackageManager;
+use crate::utils::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
 use std::process::Command;
 
@@ -107,12 +108,10 @@ pub fn check_and_install_remote<E: CommandExecutor>(exec: &E) -> Result<()> {
     println!("Tailscale not found. Installing Tailscale...");
 
     // Detect package manager
-    let pkg_mgr = crate::exec::PackageManager::detect(exec)?;
+    let pkg_mgr = PackageManager::detect(exec)?;
 
     match pkg_mgr {
-        crate::exec::PackageManager::Apt
-        | crate::exec::PackageManager::Yum
-        | crate::exec::PackageManager::Dnf => {
+        PackageManager::Apt | PackageManager::Yum | PackageManager::Dnf => {
             // For Linux, use Tailscale's install script
             println!(
                 "Detected {} - using Tailscale install script",
@@ -124,14 +123,14 @@ pub fn check_and_install_remote<E: CommandExecutor>(exec: &E) -> Result<()> {
                 anyhow::bail!("Failed to install Tailscale");
             }
         }
-        crate::exec::PackageManager::Brew => {
+        PackageManager::Brew => {
             println!(
                 "Detected {} - installing via Homebrew",
                 pkg_mgr.display_name()
             );
             pkg_mgr.install_package(exec, "tailscale")?;
         }
-        crate::exec::PackageManager::Unknown => {
+        PackageManager::Unknown => {
             anyhow::bail!(
                 "No supported package manager found. Please install Tailscale manually from: https://tailscale.com/download"
             );
@@ -175,4 +174,89 @@ pub fn get_host_config<'a>(config: &'a EnvConfig, hostname: &str) -> Result<&'a 
             hostname.to_uppercase()
         )
     })
+}
+
+#[derive(Debug, Clone)]
+pub struct TailscaleDevice {
+    pub name: String,
+    pub ip: Option<String>,
+}
+
+/// List Tailscale devices on the network
+pub fn list_tailscale_devices() -> Result<Vec<TailscaleDevice>> {
+    let output = Command::new("tailscale")
+        .args(&["status", "--json"])
+        .output()
+        .context("Failed to execute tailscale status")?;
+
+    if !output.status.success() {
+        return Ok(Vec::new()); // Tailscale not available or not connected
+    }
+
+    let status_json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).context("Failed to parse tailscale status JSON")?;
+
+    let mut devices = Vec::new();
+
+    // Parse Tailscale status JSON format
+    if let Some(peer_map) = status_json.get("Peer") {
+        if let Some(peers) = peer_map.as_object() {
+            for (_, peer_data) in peers {
+                let name = peer_data
+                    .get("DNSName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+
+                let ip = peer_data
+                    .get("TailscaleIPs")
+                    .and_then(|v| v.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                devices.push(TailscaleDevice { name, ip });
+            }
+        }
+    }
+
+    Ok(devices)
+}
+
+/// Get local Tailscale IP address
+pub fn get_tailscale_ip() -> Result<Option<String>> {
+    let output = Command::new("tailscale").args(&["ip", "-4"]).output().ok();
+
+    if let Some(output) = output {
+        if output.status.success() {
+            let ip = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !ip.is_empty() {
+                return Ok(Some(ip));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+/// Get local Tailscale hostname
+pub fn get_tailscale_hostname() -> Result<Option<String>> {
+    let output = Command::new("tailscale")
+        .args(&["status", "--json"])
+        .output()
+        .ok();
+
+    if let Some(output) = output {
+        if output.status.success() {
+            if let Ok(status_json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                if let Some(dns_name) = status_json.get("Self").and_then(|s| s.get("DNSName")) {
+                    if let Some(hostname) = dns_name.as_str() {
+                        return Ok(Some(hostname.to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(None)
 }

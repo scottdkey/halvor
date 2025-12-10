@@ -3,29 +3,29 @@ description: Complete release workflow for CLI binaries (get version, download a
 
 inputs:
   version_input:
-    description: "Manual version input (optional)"
+    description: 'Manual version input (optional)'
     required: false
-    default: ""
+    default: ''
   platform:
-    description: "Platform (linux, darwin, windows)"
+    description: 'Platform (linux, darwin, windows)'
     required: true
   binary_name:
-    description: "Binary name (hal or hal.exe)"
+    description: 'Binary name (hal or hal.exe)'
     required: true
   archive_extension:
-    description: "Archive extension (.tar.gz or .zip)"
+    description: 'Archive extension (.tar.gz or .zip)'
     required: true
   event_name:
-    description: "GitHub event name"
+    description: 'GitHub event name'
     required: true
   experimental_input:
-    description: "Experimental input flag"
+    description: 'Experimental input flag'
     required: false
-    default: "false"
+    default: 'false'
   release_body:
-    description: "Custom release body (optional)"
+    description: 'Custom release body (optional)'
     required: false
-    default: ""
+    default: ''
 
 runs:
   using: composite

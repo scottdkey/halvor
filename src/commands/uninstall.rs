@@ -1,15 +1,84 @@
-use crate::config_manager;
+use crate::config;
+use crate::config::config_manager;
 use crate::db;
+use crate::services;
 use anyhow::Result;
 use std::env;
 use std::io::{self, Write};
 use std::path::Path;
 
-/// Handle uninstall command
-pub fn handle_uninstall(skip_confirmation: bool) -> Result<()> {
+/// Handle uninstall command for a service on a host
+/// hostname: None = local, Some(hostname) = remote host
+pub fn handle_uninstall(hostname: Option<&str>, service: &str) -> Result<()> {
+    let config = config::load_config()?;
+    let target_host = hostname.unwrap_or("localhost");
+
+    match service.to_lowercase().as_str() {
+        "npm" => {
+            // TODO: Implement NPM uninstall
+            anyhow::bail!("NPM uninstall not yet implemented");
+        }
+        "portainer" => {
+            // TODO: Implement Portainer uninstall
+            anyhow::bail!("Portainer uninstall not yet implemented");
+        }
+        "smb" => {
+            services::smb::uninstall_smb_mounts(target_host, &config)?;
+        }
+        _ => {
+            anyhow::bail!(
+                "Unknown service: {}. Supported services: npm, portainer, smb",
+                service
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle guided uninstall for halvor (local or remote)
+pub fn handle_guided_uninstall(hostname: Option<&str>) -> Result<()> {
+    let config = config::load_config()?;
+    let target_host = hostname.unwrap_or("localhost");
+
+    // For remote hosts, we can only uninstall services, not the halvor binary itself
+    if hostname.is_some() && target_host != "localhost" {
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!("Guided Uninstall for Remote Host: {}", target_host);
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!();
+        println!("For remote hosts, you can uninstall services but not the halvor binary.");
+        println!("Available services to uninstall:");
+        println!("  - npm (Nginx Proxy Manager)");
+        println!("  - portainer (Portainer)");
+        println!("  - smb (SMB mounts)");
+        println!();
+        print!("Enter service to uninstall (or press Enter to cancel): ");
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let service = input.trim();
+
+        if service.is_empty() {
+            println!("Cancelled.");
+            return Ok(());
+        }
+
+        return handle_uninstall(hostname, service);
+    }
+
+    // Local uninstall - guided flow
+    handle_local_guided_uninstall()
+}
+
+/// Handle guided uninstall for local machine
+fn handle_local_guided_uninstall() -> Result<()> {
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("Uninstall halvor");
+    println!("Guided Uninstall - halvor");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+    println!("This will guide you through uninstalling halvor from your system.");
+    println!("You will be prompted for each step.");
     println!();
 
     // Collect all binaries and backup files to remove
@@ -87,119 +156,130 @@ pub fn handle_uninstall(skip_confirmation: bool) -> Result<()> {
     }
 
     // Ask for confirmation
-    if !skip_confirmation {
-        print!("Are you sure you want to continue? [y/N]: ");
-        io::stdout().flush()?;
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        if !input.trim().eq_ignore_ascii_case("y") && !input.trim().eq_ignore_ascii_case("yes") {
-            println!("Uninstall cancelled.");
-            return Ok(());
-        }
+    print!("Do you want to remove halvor binaries? [y/N]: ");
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let remove_binaries =
+        input.trim().eq_ignore_ascii_case("y") || input.trim().eq_ignore_ascii_case("yes");
+
+    if !remove_binaries {
+        println!("Skipping binary removal.");
+        println!();
     }
 
-    println!();
-    println!("Removing files...");
+    if remove_binaries {
+        println!();
+        println!("Removing binaries...");
 
-    // Remove binaries
-    for bin_path in &binaries_to_remove {
-        let path = Path::new(bin_path);
-        if path.exists() {
-            if bin_path.starts_with("/usr") {
-                // System path, need sudo
-                println!("  Removing {} (requires sudo)...", bin_path);
-                let output = std::process::Command::new("sudo")
-                    .arg("rm")
-                    .arg("-f")
-                    .arg(bin_path)
-                    .output()?;
-                if !output.status.success() {
-                    eprintln!("  ⚠ Warning: Failed to remove {}", bin_path);
+        // Remove binaries
+        for bin_path in &binaries_to_remove {
+            let path = Path::new(bin_path);
+            if path.exists() {
+                if bin_path.starts_with("/usr") {
+                    // System path, need sudo
+                    println!("  Removing {} (requires sudo)...", bin_path);
+                    let output = std::process::Command::new("sudo")
+                        .arg("rm")
+                        .arg("-f")
+                        .arg(bin_path)
+                        .output()?;
+                    if !output.status.success() {
+                        eprintln!("  ⚠ Warning: Failed to remove {}", bin_path);
+                    } else {
+                        println!("  ✓ Removed {}", bin_path);
+                    }
                 } else {
-                    println!("  ✓ Removed {}", bin_path);
-                }
-            } else {
-                // User path, no sudo needed
-                println!("  Removing {}...", bin_path);
-                if let Err(e) = std::fs::remove_file(bin_path) {
-                    eprintln!("  ⚠ Warning: Failed to remove {}: {}", bin_path, e);
-                } else {
-                    println!("  ✓ Removed {}", bin_path);
-                }
-            }
-        }
-    }
-
-    // Remove backup files
-    for backup_path in &backups_to_remove {
-        let path = Path::new(backup_path);
-        if path.exists() {
-            if backup_path.starts_with("/usr") {
-                // System path, need sudo
-                println!("  Removing {} (requires sudo)...", backup_path);
-                let output = std::process::Command::new("sudo")
-                    .arg("rm")
-                    .arg("-f")
-                    .arg(backup_path)
-                    .output()?;
-                if !output.status.success() {
-                    eprintln!("  ⚠ Warning: Failed to remove {}", backup_path);
-                } else {
-                    println!("  ✓ Removed {}", backup_path);
-                }
-            } else {
-                // User path, no sudo needed
-                println!("  Removing {}...", backup_path);
-                if let Err(e) = std::fs::remove_file(backup_path) {
-                    eprintln!("  ⚠ Warning: Failed to remove {}: {}", backup_path, e);
-                } else {
-                    println!("  ✓ Removed {}", backup_path);
+                    // User path, no sudo needed
+                    println!("  Removing {}...", bin_path);
+                    if let Err(e) = std::fs::remove_file(bin_path) {
+                        eprintln!("  ⚠ Warning: Failed to remove {}: {}", bin_path, e);
+                    } else {
+                        println!("  ✓ Removed {}", bin_path);
+                    }
                 }
             }
         }
-    }
 
-    println!();
-
-    // Ask about removing database and config data
-    let mut remove_data = false;
-    if !skip_confirmation {
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!("⚠️  WARNING: Database and Configuration Removal");
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!();
-        println!("This will permanently delete:");
-        println!("  - Database file (halvor.db) - contains all stored data");
-        println!("  - Configuration file (config.toml) - contains your settings");
-        println!("  - Encryption key (.halvor_key) - used to decrypt stored data");
-        println!();
-        println!("⚠️  This action is IRREVERSIBLE!");
-        println!("   All your current configuration and stored data will be lost.");
-        println!();
-        print!("Do you want to remove database and configuration data? [y/N]: ");
-        io::stdout().flush()?;
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        if input.trim().eq_ignore_ascii_case("y") || input.trim().eq_ignore_ascii_case("yes") {
-            remove_data = true;
+        // Remove backup files
+        for backup_path in &backups_to_remove {
+            let path = Path::new(backup_path);
+            if path.exists() {
+                if backup_path.starts_with("/usr") {
+                    // System path, need sudo
+                    println!("  Removing {} (requires sudo)...", backup_path);
+                    let output = std::process::Command::new("sudo")
+                        .arg("rm")
+                        .arg("-f")
+                        .arg(backup_path)
+                        .output()?;
+                    if !output.status.success() {
+                        eprintln!("  ⚠ Warning: Failed to remove {}", backup_path);
+                    } else {
+                        println!("  ✓ Removed {}", backup_path);
+                    }
+                } else {
+                    // User path, no sudo needed
+                    println!("  Removing {}...", backup_path);
+                    if let Err(e) = std::fs::remove_file(backup_path) {
+                        eprintln!("  ⚠ Warning: Failed to remove {}: {}", backup_path, e);
+                    } else {
+                        println!("  ✓ Removed {}", backup_path);
+                    }
+                }
+            }
         }
+
+        println!();
+        println!("✓ Binary removal complete");
+        println!();
     }
 
-    if remove_data {
-        println!();
-        println!("Removing database and configuration data...");
+    // Ask about removing database
+    print!("Do you want to delete the halvor database? [y/N]: ");
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let remove_database =
+        input.trim().eq_ignore_ascii_case("y") || input.trim().eq_ignore_ascii_case("yes");
 
-        // Remove database file
+    if remove_database {
+        println!();
+        println!("Removing database...");
+
         if let Ok(db_path) = db::get_db_path() {
             if db_path.exists() {
-                println!("  Removing database: {}", db_path.display());
+                println!("  Database location: {}", db_path.display());
+                println!("  Removing database...");
                 if let Err(e) = std::fs::remove_file(&db_path) {
                     eprintln!("  ⚠ Warning: Failed to remove database: {}", e);
                 } else {
                     println!("  ✓ Removed database");
                 }
+            } else {
+                println!("  ✓ No database found to remove");
             }
         }
+    } else {
+        println!("Database preserved.");
+        if let Ok(db_path) = db::get_db_path() {
+            println!("  Location: {}", db_path.display());
+        }
+    }
+
+    println!();
+
+    // Ask about removing config data
+    print!("Do you want to delete halvor configuration files? [y/N]: ");
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let remove_config =
+        input.trim().eq_ignore_ascii_case("y") || input.trim().eq_ignore_ascii_case("yes");
+
+    if remove_config {
+        println!();
+        println!("Removing configuration files...");
 
         // Remove config file
         if let Ok(config_path) = config_manager::get_config_file_path() {
@@ -236,21 +316,11 @@ pub fn handle_uninstall(skip_confirmation: bool) -> Result<()> {
                 }
             }
         }
-    } else if !skip_confirmation {
-        println!();
-        println!("Database and configuration data preserved.");
-        println!(
-            "  - Database: {}",
-            db::get_db_path()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|_| "unknown".to_string())
-        );
-        println!(
-            "  - Config: {}",
-            config_manager::get_config_file_path()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|_| "unknown".to_string())
-        );
+    } else {
+        println!("Configuration files preserved.");
+        if let Ok(config_path) = config_manager::get_config_file_path() {
+            println!("  Location: {}", config_path.display());
+        }
     }
 
     println!();

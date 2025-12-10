@@ -9,6 +9,7 @@ hal config init
 ```
 
 This will:
+
 - Prompt you for the path to your `.env` file
 - Store the configuration in `~/.config/hal/config.toml`
 - Allow `hal` to work from any directory
@@ -16,11 +17,13 @@ This will:
 ## Environment File
 
 1. Copy `.env.example` to `.env` (or create your own):
+
    ```bash
    cp .env.example .env
    ```
 
 2. Edit `.env` with your host configurations:
+
    ```bash
    # Tailscale configuration
    TAILNET_BASE="ts.net"
@@ -28,7 +31,7 @@ This will:
    # Host configurations
    HOST_bellerophon_IP="10.10.10.14"
    HOST_bellerophon_TAILSCALE="bellerophon"
-   
+
    # SSH host configurations (for setup-ssh-hosts.sh)
    SSH_MAPLE_HOST="10.10.10.130"
    SSH_MAPLE_USER="skey"
@@ -39,16 +42,19 @@ This will:
 ## Managing Configuration
 
 **View current configuration:**
+
 ```bash
 hal config show
 ```
 
 **Set environment file path:**
+
 ```bash
 hal config set-env /path/to/.env
 ```
 
 **Re-initialize configuration (interactive):**
+
 ```bash
 hal config init
 ```

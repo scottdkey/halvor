@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
 
+pub mod config_manager;
 pub mod env_file;
+pub mod service;
 
 #[derive(Clone)]
 pub struct HostConfig {
@@ -28,7 +30,7 @@ pub struct EnvConfig {
 }
 
 pub fn find_homelab_dir() -> Result<PathBuf> {
-    use crate::config_manager;
+    use crate::config::config_manager;
 
     // Check for environment variable override
     if let Ok(dir) = env::var("HOMELAB_DIR") {
@@ -59,7 +61,7 @@ pub fn find_homelab_dir() -> Result<PathBuf> {
 }
 
 pub fn get_env_file_path() -> Result<PathBuf> {
-    use crate::config_manager;
+    use crate::config::config_manager;
 
     // Check for environment variable override
     if let Ok(path) = env::var("HOMELAB_ENV_FILE") {
@@ -229,4 +231,10 @@ pub fn get_npm_username() -> Option<String> {
 
 pub fn get_npm_password() -> Option<String> {
     env::var("NPM_PASSWORD").ok()
+}
+
+/// Helper function to load config - used by commands and services
+pub fn load_config() -> Result<EnvConfig> {
+    let homelab_dir = find_homelab_dir()?;
+    load_env_config(&homelab_dir)
 }

@@ -3,19 +3,19 @@ description: Upload built Rust binary as artifact
 
 inputs:
   target:
-    description: "Rust target triple"
+    description: 'Rust target triple'
     required: true
   binary_path:
-    description: "Path to binary relative to workspace root"
+    description: 'Path to binary relative to workspace root'
     required: true
   retention_days:
-    description: "Number of days to retain artifact"
+    description: 'Number of days to retain artifact'
     required: false
-    default: "90"
+    default: '90'
   skip_target:
-    description: "Whether to skip upload for this target"
+    description: 'Whether to skip upload for this target'
     required: false
-    default: "false"
+    default: 'false'
 
 runs:
   using: composite

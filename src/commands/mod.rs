@@ -1,9 +1,18 @@
+// Command module routing
+//
+// To add a new command:
+// 1. Create a new file in this directory (e.g., `mycommand.rs`)
+// 2. Add `pub mod mycommand;` below
+// 3. Add the match arm in `handle_command` function
+
+// Declare all command modules - add new modules here
 pub mod backup;
 pub mod config;
 pub mod docker;
+pub mod install;
 pub mod list;
-pub mod migrate;
 pub mod npm;
+pub mod pia_vpn;
 pub mod portainer;
 pub mod provision;
 pub mod smb;
@@ -12,75 +21,79 @@ pub mod tailscale;
 pub mod uninstall;
 pub mod update;
 pub mod utils;
-pub mod vpn;
 
 use crate::Commands;
+use crate::Commands::*;
 use anyhow::Result;
 
 /// Dispatch command to appropriate handler
-pub fn handle_command(command: Commands) -> Result<()> {
-    use crate::{
-        BackupCommands, Commands::*, DockerCommands, PortainerCommands, TailscaleCommands,
-        VpnCommands,
-    };
-
+///
+/// Routes commands to their respective handlers based on the Commands enum.
+/// Each command variant should have a corresponding handler function in its module.
+pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()> {
     match command {
-        Tailscale { command } => match command {
-            TailscaleCommands::Install { hostname } => {
-                tailscale::handle_tailscale(&hostname)?;
+        Backup {
+            service,
+            env,
+            list,
+            db,
+            path,
+        } => {
+            if db {
+                backup::handle_backup_db(path.as_deref())?;
+            } else {
+                backup::handle_backup(hostname.as_deref(), service.as_deref(), env, list)?;
             }
-        },
-        Docker { command } => match command {
-            DockerCommands::Install { hostname } => {
-                docker::handle_docker(&hostname)?;
+        }
+        Restore {
+            service,
+            env,
+            backup,
+        } => {
+            backup::handle_restore(
+                hostname.as_deref(),
+                service.as_deref(),
+                env,
+                backup.as_deref(),
+            )?;
+        }
+        Sync { pull } => {
+            sync::handle_sync(hostname.as_deref(), pull)?;
+        }
+        List { verbose } => {
+            list::handle_list(hostname.as_deref(), verbose)?;
+        }
+        Install {
+            service,
+            edition,
+            host,
+        } => {
+            install::handle_install(hostname.as_deref(), &service, &edition, host)?;
+        }
+        Uninstall { service } => {
+            if let Some(service) = service {
+                uninstall::handle_uninstall(hostname.as_deref(), &service)?;
+            } else {
+                uninstall::handle_guided_uninstall(hostname.as_deref())?;
             }
-        },
-        Portainer { command } => match command {
-            PortainerCommands::Install {
-                hostname,
-                edition,
-                host,
-            } => {
-                portainer::handle_portainer(&hostname, &edition, host)?;
-            }
-        },
+        }
         Provision {
-            hostname,
             portainer_host,
             portainer_edition,
         } => {
-            provision::handle_provision(&hostname, portainer_host, &portainer_edition)?;
+            provision::handle_provision(hostname.as_deref(), portainer_host, &portainer_edition)?;
         }
-        Smb {
-            hostname,
-            uninstall,
-        } => {
-            smb::handle_smb(&hostname, uninstall)?;
-        }
-        Backup { hostname, command } => {
-            use backup::BackupCommand;
-            let backup_cmd = match command {
-                BackupCommands::Create => BackupCommand::Create,
-                BackupCommands::List => BackupCommand::List,
-                BackupCommands::Restore { backup } => BackupCommand::Restore { backup },
-            };
-            backup::handle_backup(&hostname, backup_cmd)?;
+        Smb { uninstall } => {
+            smb::handle_smb(hostname.as_deref(), uninstall)?;
         }
         Npm {
-            hostname,
             compose_file,
             service,
         } => {
-            npm::handle_npm(&hostname, &compose_file, service.as_deref())?;
+            npm::handle_npm(hostname.as_deref(), &compose_file, service.as_deref())?;
         }
         Vpn { command } => {
-            use vpn::{VpnCommand, VpnCommand::*};
-            let vpn_cmd = match command {
-                VpnCommands::Build { github_user, tag } => Build { github_user, tag },
-                VpnCommands::Deploy { hostname } => Deploy { hostname },
-                VpnCommands::Verify { hostname } => Verify { hostname },
-            };
-            vpn::handle_vpn(vpn_cmd)?;
+            pia_vpn::handle_vpn(command)?;
         }
         Update {
             experimental,
@@ -89,25 +102,17 @@ pub fn handle_command(command: Commands) -> Result<()> {
             update::handle_update(experimental, force)?;
         }
         Config {
-            arg,
             verbose,
             db,
             command,
         } => {
-            config::handle_config(arg.as_deref(), verbose, db, command.as_ref())?;
-        }
-        Migrate { command } => {
-            migrate::handle_migrate(command)?;
-        }
-        Sync { hostname, pull } => {
-            sync::handle_sync(&hostname, pull)?;
-        }
-        Uninstall { yes } => {
-            uninstall::handle_uninstall(yes)?;
-        }
-        List { verbose } => {
-            list::handle_list(verbose)?;
+            config::handle_config(None, verbose, db, command.as_ref())?;
         }
     }
     Ok(())
 }
+
+// Re-export command enums for convenience (these are used in main.rs)
+// Note: These are re-exported from their respective modules, not defined here
+pub use config::{ConfigCommands, CreateConfigCommands, DbCommands, MigrateCommands};
+pub use pia_vpn::VpnCommands;

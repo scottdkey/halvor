@@ -3,13 +3,13 @@ description: Get version from Cargo.toml or input
 
 inputs:
   version_input:
-    description: "Manual version input (optional)"
+    description: 'Manual version input (optional)'
     required: false
-    default: ""
+    default: ''
 
 outputs:
   version:
-    description: "Version string"
+    description: 'Version string'
     value: ${{ steps.version.outputs.version }}
 
 runs:

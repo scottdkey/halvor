@@ -3,23 +3,23 @@ description: Prepare release archives from build artifacts
 
 inputs:
   version:
-    description: "Version for archive naming"
+    description: 'Version for archive naming'
     required: true
   platform:
-    description: "Platform (linux, darwin, windows)"
+    description: 'Platform (linux, darwin, windows)'
     required: true
   binary_name:
-    description: "Binary name (hal or hal.exe)"
+    description: 'Binary name (hal or hal.exe)'
     required: true
-    default: "hal"
+    default: 'hal'
   archive_extension:
-    description: "Archive extension (.tar.gz or .zip)"
+    description: 'Archive extension (.tar.gz or .zip)'
     required: true
-    default: ".tar.gz"
+    default: '.tar.gz'
 
 outputs:
   archive_pattern:
-    description: "Pattern to match created archives"
+    description: 'Pattern to match created archives'
     value: ${{ steps.prepare.outputs.archive_pattern }}
 
 runs:

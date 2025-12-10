@@ -5,25 +5,25 @@ on:
     branches:
       - main
     paths:
-      - "openvpn-container/**"
+      - 'openvpn-container/**'
   workflow_dispatch:
     inputs:
       build:
-        description: "Build PIA VPN Docker image"
+        description: 'Build PIA VPN Docker image'
         required: false
         type: boolean
         default: true
       release:
-        description: "Release PIA VPN Docker image (requires build first)"
+        description: 'Release PIA VPN Docker image (requires build first)'
         required: false
         type: boolean
         default: false
       version:
-        description: "Version to release (defaults to Cargo.toml version)"
+        description: 'Version to release (defaults to Cargo.toml version)'
         required: false
         type: string
       experimental:
-        description: "Create experimental release (defaults to true for push events)"
+        description: 'Create experimental release (defaults to true for push events)'
         required: false
         type: boolean
         default: true
@@ -109,7 +109,7 @@ jobs:
           docker_tag: ${{ steps.release_type.outputs.docker_tag }}
           context: ./openvpn-container
           dockerfile: ./openvpn-container/Dockerfile
-          push: "false"
+          push: 'false'
           outputs: type=oci,dest=/tmp/image.tar
 
       - name: Save image artifact
@@ -151,7 +151,7 @@ jobs:
           dockerfile: ./openvpn-container/Dockerfile
           version_input: ${{ github.event.inputs.version }}
           event_name: ${{ github.event_name }}
-          experimental_input: "true"
+          experimental_input: 'true'
           release_body: |
             ### PIA VPN Docker Image (Experimental)
 
@@ -244,7 +244,7 @@ jobs:
           dockerfile: ./openvpn-container/Dockerfile
           version_input: ${{ github.event.inputs.version }}
           event_name: ${{ github.event_name }}
-          experimental_input: "false"
+          experimental_input: 'false'
           release_body: |
             ### PIA VPN Docker Image
 

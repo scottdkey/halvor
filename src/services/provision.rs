@@ -1,8 +1,10 @@
 use crate::config::EnvConfig;
-use crate::docker;
-use crate::exec::{CommandExecutor, Executor};
-use crate::portainer::{PortainerEdition, copy_compose_file, install_agent, install_host};
-use crate::tailscale;
+use crate::services::docker;
+use crate::services::portainer::{
+    PortainerEdition, copy_compose_file, install_agent, install_host,
+};
+use crate::services::tailscale;
+use crate::utils::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
 
 /// Main entry point for provisioning a host

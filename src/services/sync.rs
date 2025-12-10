@@ -1,6 +1,6 @@
 use crate::config::EnvConfig;
 use crate::db;
-use crate::ssh::SshConnection;
+use crate::utils::{bytes_to_string, ssh::SshConnection};
 use anyhow::{Context, Result};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -125,7 +125,7 @@ fn pull_from_remote(ssh: &SshConnection, _hostname: &str) -> Result<()> {
     if !output.status.success() {
         anyhow::bail!(
             "Failed to export data from remote: {}",
-            String::from_utf8_lossy(&output.stderr)
+            bytes_to_string(&output.stderr)
         );
     }
 
@@ -165,7 +165,7 @@ fn get_remote_db_path(ssh: &SshConnection) -> Result<String> {
         anyhow::bail!("Failed to get remote database path");
     }
 
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let path = bytes_to_string(&output.stdout);
     Ok(path)
 }
 

@@ -3,16 +3,16 @@ description: Build Rust CLI binary for a specific target
 
 inputs:
   target:
-    description: "Rust target triple"
+    description: 'Rust target triple'
     required: true
   skip_target:
-    description: "Whether to skip this target build"
+    description: 'Whether to skip this target build'
     required: false
-    default: "false"
+    default: 'false'
   unset_macos_deployment_target:
-    description: "Unset MACOSX_DEPLOYMENT_TARGET (for macOS builds)"
+    description: 'Unset MACOSX_DEPLOYMENT_TARGET (for macOS builds)'
     required: false
-    default: "false"
+    default: 'false'
 
 runs:
   using: composite

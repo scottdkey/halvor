@@ -1,4 +1,4 @@
-.PHONY: install uninstall dev build clean setup-dev build-linux build-macos build-windows build-vpn build-all help setup-linux-cross-compile build-linux-target
+.PHONY: install uninstall dev build clean setup-dev build-linux build-macos build-windows build-vpn build-all help setup-linux-cross-compile build-linux-target format
 
 # Default target
 help:
@@ -22,6 +22,7 @@ help:
 	@echo "  make uninstall      - Remove halvor from the system"
 	@echo "  make dev            - Start development mode (watch)"
 	@echo "  make clean          - Clean build artifacts"
+	@echo "  make format         - Format code (Rust with rustfmt, TS/JS with prettier)"
 
 # Install halvor globally
 install:
@@ -323,3 +324,17 @@ all: build-all
 clean:
 	cargo clean
 	@echo "✓ Build artifacts cleaned"
+
+# Format code
+format:
+	@echo "Formatting code..."
+	@echo "Formatting Rust code with rustfmt..."
+	@cargo fmt || (echo "Warning: cargo fmt failed. Make sure Rust is installed." && exit 0)
+	@if command -v prettier >/dev/null 2>&1; then \
+		echo "Formatting TypeScript/JavaScript with prettier..."; \
+		prettier --write "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}" --ignore-path .gitignore || true; \
+	else \
+		echo "Note: prettier not found. Install with: npm install -g prettier"; \
+		echo "Skipping TypeScript/JavaScript formatting..."; \
+	fi
+	@echo "✓ Code formatting complete"

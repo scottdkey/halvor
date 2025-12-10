@@ -7,21 +7,21 @@ on:
   workflow_dispatch:
     inputs:
       build:
-        description: "Build Windows CLI"
+        description: 'Build Windows CLI'
         required: false
         type: boolean
         default: true
       release:
-        description: "Release Windows CLI (requires build first)"
+        description: 'Release Windows CLI (requires build first)'
         required: false
         type: boolean
         default: false
       version:
-        description: "Version to release (defaults to Cargo.toml version)"
+        description: 'Version to release (defaults to Cargo.toml version)'
         required: false
         type: string
       experimental:
-        description: "Create experimental release (defaults to true for push events)"
+        description: 'Create experimental release (defaults to true for push events)'
         required: false
         type: boolean
         default: true
@@ -174,7 +174,7 @@ jobs:
           binary_name: hal.exe
           archive_extension: .zip
           event_name: ${{ github.event_name }}
-          experimental_input: "true"
+          experimental_input: 'true'
 
   release-stable:
     name: Release Windows CLI (Stable)
@@ -198,4 +198,4 @@ jobs:
           binary_name: hal.exe
           archive_extension: .zip
           event_name: ${{ github.event_name }}
-          experimental_input: "false"
+          experimental_input: 'false'

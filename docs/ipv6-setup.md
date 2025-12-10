@@ -2,7 +2,8 @@
 
 ## Overview
 
-The VPN container can be configured with IPv6 support to eliminate OpenVPN warnings about IPv6 routes. This requires configuration at both the Docker daemon and network levels.
+The VPN container can be configured with IPv6 support to eliminate OpenVPN warnings about IPv6
+routes. This requires configuration at both the Docker daemon and network levels.
 
 ## Prerequisites
 
@@ -31,6 +32,7 @@ Add or update the configuration:
 ```
 
 **Note:** `fd00:172:20::/64` is a ULA (Unique Local Address) that:
+
 - Works without global IPv6 connectivity
 - Matches the IPv4 subnet pattern (172.20.x.x)
 - Is safe to use in private networks
@@ -62,10 +64,11 @@ networks:
     ipam:
       config:
         - subnet: 172.20.0.0/16
-        - subnet: fd00:172:20::/64  # ULA matching IPv4 subnet pattern
+        - subnet: fd00:172:20::/64 # ULA matching IPv4 subnet pattern
 ```
 
-**Note:** The IPv6 subnet in the compose file should match or be within the range specified in `daemon.json`.
+**Note:** The IPv6 subnet in the compose file should match or be within the range specified in
+`daemon.json`.
 
 ## Step 3: Recreate the Network
 
@@ -98,6 +101,7 @@ The OpenVPN IPv6 warning should no longer appear.
 ### "IPv6 not available" message
 
 If you see this in container logs:
+
 - Verify Docker daemon has IPv6 enabled: `docker info | grep IPv6`
 - Check network configuration: `docker network inspect vpn_network | grep -i ipv6`
 - Ensure the IPv6 subnet in compose matches daemon configuration
@@ -105,6 +109,7 @@ If you see this in container logs:
 ### IPv6 subnet conflicts
 
 If you get subnet conflicts:
+
 - Use a different ULA like `fd00:172:21::/64` or `fd01:172:20::/64`
 - Ensure the subnet doesn't overlap with existing Docker networks
 - Check existing networks: `docker network ls` and `docker network inspect <network>`
@@ -112,10 +117,12 @@ If you get subnet conflicts:
 ### OpenVPN still shows IPv6 warnings
 
 Even with IPv6 enabled, you may see warnings if:
+
 - The VPN server doesn't provide IPv6 connectivity
 - IPv6 routes can't be established
 - This is normal and doesn't affect IPv4 VPN functionality
 
 ## Alternative: Disable IPv6 Warnings
 
-If you don't need IPv6, you can ignore the warnings - they don't affect VPN functionality. The container will work fine with IPv4 only.
+If you don't need IPv6, you can ignore the warnings - they don't affect VPN functionality. The
+container will work fine with IPv4 only.

@@ -1,12 +1,15 @@
 # Database Abstraction Layer
 
-This module provides a type-safe database abstraction layer for SQLite (and potentially PostgreSQL in the future).
+This module provides a type-safe database abstraction layer for SQLite (and potentially PostgreSQL
+in the future).
 
 ## Features
 
 - **Type-safe CRUD operations**: Select, insert, update, delete with compile-time type checking
-- **Automatic UUID primary keys**: All tables automatically get `id` (UUID), `created_at`, and `updated_at` columns
-- **Automatic timestamp management**: `updated_at` is automatically updated on every update operation
+- **Automatic UUID primary keys**: All tables automatically get `id` (UUID), `created_at`, and
+  `updated_at` columns
+- **Automatic timestamp management**: `updated_at` is automatically updated on every update
+  operation
 - **Custom SQL support**: `DbClient` allows executing custom SQL queries with typed responses
 - **Minimal boilerplate**: Implement the `Table` trait to enable all CRUD operations
 

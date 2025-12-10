@@ -26,21 +26,23 @@ The container will automatically download PIA OpenVPN configs on first startup.
 If you prefer to deploy files manually:
 
 1. **SSH into the host** and create the directory:
+
    ```bash
    mkdir -p ~/config/vpn
    ```
 
 2. **Copy your OpenVPN files**:
+
    ```bash
    # Copy your .ovpn config file
    cp ca-montreal.ovpn ~/config/vpn/
-   
+
    # Create auth.txt with PIA credentials
    cat > ~/config/vpn/auth.txt << EOF
    your-pia-username
    your-pia-password
    EOF
-   
+
    # Set proper permissions
    chmod 644 ~/config/vpn/*.ovpn
    chmod 600 ~/config/vpn/auth.txt
@@ -63,11 +65,13 @@ When deploying via Portainer, you **must** set the `USER` environment variable:
 ## Using `hal vpn deploy`
 
 The `hal vpn deploy` command automatically:
+
 - Creates `/home/<user>/config/vpn` directory
 - Copies `auth.txt` and `ca-montreal.ovpn` from your local `openvpn/` directory
 - Sets proper permissions
 
 You can override the username by setting `VPN_USER` environment variable:
+
 ```bash
 VPN_USER=username hal vpn deploy <hostname>
 ```

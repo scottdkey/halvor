@@ -1,4 +1,4 @@
-use crate::update;
+use crate::utils::update;
 use anyhow::Result;
 use std::env;
 
@@ -19,7 +19,7 @@ pub fn handle_update(experimental: bool, force: bool) -> Result<()> {
             update::download_and_install_update(&latest_version)?;
         }
     } else if experimental {
-        // Experimental channel: check for updates based on timestamps (versionless)
+        // Experimental channel: check for updates based on timestamps (version less)
         if let Ok(Some(new_version)) = update::check_for_experimental_updates(current_version) {
             if update::prompt_for_update(&new_version, current_version)? {
                 update::download_and_install_update(&new_version)?;

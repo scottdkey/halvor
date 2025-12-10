@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::process::{Command, Output, Stdio};
 
 // Import SshConnection from ssh module
-use crate::ssh::SshConnection;
+use crate::utils::ssh::SshConnection;
 
 /// Local command execution helpers
 pub mod local {
@@ -321,7 +321,7 @@ impl Executor {
         };
 
         // Get local IP addresses
-        let local_ips = crate::networking::get_local_ips()?;
+        let local_ips = crate::utils::networking::get_local_ips()?;
 
         // Check if target IP matches any local IP
         let is_local = local_ips.contains(&target_ip);

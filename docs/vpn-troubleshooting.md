@@ -6,9 +6,11 @@ If you're seeing this error when deploying the VPN container via Portainer, chec
 
 ### 1. Set USER Environment Variable
 
-**Important**: The compose file uses `/home/${USER}/config/vpn`. You must set the `USER` environment variable in Portainer to match the username on the host.
+**Important**: The compose file uses `/home/${USER}/config/vpn`. You must set the `USER` environment
+variable in Portainer to match the username on the host.
 
 In Portainer:
+
 1. Go to your stack
 2. Click "Editor" or "Environment"
 3. Add environment variable: `USER=<your-username>` (replace with your actual username)
@@ -24,6 +26,7 @@ ls -la /home/${USER}/config/vpn/
 ```
 
 You should see:
+
 - `ca-montreal.ovpn` (or another `.ovpn` file)
 - `auth.txt`
 

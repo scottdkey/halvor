@@ -4,7 +4,7 @@ use rusqlite::Error as SqliteError;
 /// Convert SQLite errors to user-friendly messages
 pub fn handle_db_error(error: rusqlite::Error) -> anyhow::Error {
     match error {
-        SqliteError::SqliteFailure(err, Some(msg)) => {
+        SqliteError::SqliteFailure(_err, Some(msg)) => {
             let msg_str = msg.to_string();
             if msg_str.contains("UNIQUE constraint") {
                 anyhow::anyhow!("Unique constraint violation: {}", msg_str)

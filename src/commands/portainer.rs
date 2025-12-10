@@ -1,10 +1,9 @@
 use crate::config;
-use crate::portainer;
+use crate::services::portainer;
 use anyhow::Result;
 
 pub fn handle_portainer(hostname: &str, edition: &str, host: bool) -> Result<()> {
-    let homelab_dir = config::find_homelab_dir()?;
-    let config = config::load_env_config(&homelab_dir)?;
+    let config = config::load_config()?;
     if host {
         portainer::install_portainer_host(hostname, edition, &config)?;
     } else {

@@ -1,5 +1,5 @@
-use crate::config_manager;
-use crate::update;
+use crate::config::config_manager;
+use crate::utils::update;
 use std::env;
 
 /// Check for updates in background (non-blocking)

@@ -1,5 +1,5 @@
 use crate::config::EnvConfig;
-use crate::tailscale;
+use crate::services::host;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -55,7 +55,7 @@ pub async fn setup_proxy_hosts(
     compose_file: &str,
     config: &EnvConfig,
 ) -> Result<()> {
-    let host_config = tailscale::get_host_config(config, hostname)?;
+    let host_config = host::get_host_config_or_error(hostname)?;
 
     let target_host = if let Some(ip) = &host_config.ip {
         ip.clone()
@@ -324,7 +324,7 @@ pub async fn setup_single_proxy_host(
         (service_spec, port)
     };
 
-    let host_config = tailscale::get_host_config(config, hostname)?;
+    let host_config = host::get_host_config_or_error(hostname)?;
 
     let target_host = if let Some(ip) = &host_config.ip {
         ip.clone()

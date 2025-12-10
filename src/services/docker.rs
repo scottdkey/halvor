@@ -1,7 +1,70 @@
 use crate::config::EnvConfig;
-use crate::exec::{CommandExecutor, Executor};
+use crate::utils::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
+
+/// Check if Docker daemon is running and start it if needed
+pub fn ensure_docker_running<E: CommandExecutor>(exec: &E) -> Result<()> {
+    // Try to run a simple docker command to check if daemon is accessible
+    let check_output = exec.execute_simple("docker", &["info"]);
+
+    if let Ok(output) = check_output {
+        if output.status.success() {
+            return Ok(()); // Docker is running and accessible
+        }
+    }
+
+    // Docker daemon might not be running, try to start it
+    println!("Docker daemon not accessible, attempting to start...");
+
+    if exec.check_command_exists("systemctl")? {
+        // Check if docker service exists
+        let status_output = exec.execute_simple("systemctl", &["is-active", "docker"]);
+        if let Ok(output) = status_output {
+            let status = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if status == "inactive" || status == "failed" {
+                println!("Starting Docker daemon...");
+                exec.execute_interactive("sudo", &["systemctl", "start", "docker"])?;
+                exec.execute_interactive("sudo", &["systemctl", "enable", "docker"])?;
+                // Wait a moment for Docker to start
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+        } else {
+            // Service might not exist, try to start anyway
+            exec.execute_interactive("sudo", &["systemctl", "start", "docker"])
+                .ok();
+        }
+    } else if exec.check_command_exists("service")? {
+        exec.execute_interactive("sudo", &["service", "docker", "start"])
+            .ok();
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+
+    // Verify Docker is now accessible
+    let verify_output = exec.execute_simple("docker", &["info"]);
+    match verify_output {
+        Ok(output) if output.status.success() => {
+            println!("✓ Docker daemon is running");
+            Ok(())
+        }
+        _ => {
+            // If still not accessible, it might be a permissions issue
+            // Try with sudo to verify daemon is running
+            let sudo_check = exec.execute_simple("sudo", &["docker", "info"]);
+            if let Ok(output) = sudo_check {
+                if output.status.success() {
+                    println!("⚠ Docker daemon is running but user doesn't have access");
+                    println!("⚠ User may need to be added to docker group or use sudo");
+                    // Don't fail here, let configure_permissions handle it
+                    return Ok(());
+                }
+            }
+            anyhow::bail!(
+                "Docker daemon is not running or not accessible. Please start it manually: sudo systemctl start docker"
+            )
+        }
+    }
+}
 
 /// Check if Docker is installed and install it if not
 pub fn check_and_install<E: CommandExecutor>(exec: &E) -> Result<()> {
@@ -9,6 +72,8 @@ pub fn check_and_install<E: CommandExecutor>(exec: &E) -> Result<()> {
 
     if exec.check_command_exists("docker")? {
         println!("✓ Docker already installed");
+        // Ensure daemon is running
+        ensure_docker_running(exec)?;
         return Ok(());
     }
 
@@ -293,8 +358,32 @@ pub fn configure_permissions<E: CommandExecutor>(exec: &E) -> Result<()> {
         exec.execute_interactive("sudo", &["usermod", "-aG", "docker", &username])?;
         println!("✓ User added to docker group");
         println!("Note: You may need to log out and back in for changes to take effect");
+
+        // Try to apply group changes immediately using newgrp or by checking if we can use docker
+        // For SSH sessions, we can't easily apply group changes, but we can try using newgrp
+        // However, this is complex, so we'll just note it and continue
+        // The user can use 'newgrp docker' or restart their session
     } else {
         println!("✓ User already in docker group");
+    }
+
+    // Verify Docker access after group configuration
+    // If user was just added, they might need to use 'newgrp docker' or restart session
+    // But we can try to verify with a simple command
+    let test_output =
+        exec.execute_simple("docker", &["version", "--format", "{{.Server.Version}}"]);
+    match test_output {
+        Ok(output) if output.status.success() => {
+            let _version = String::from_utf8_lossy(&output.stdout);
+            println!("✓ Docker access verified");
+        }
+        _ => {
+            // Try with newgrp docker if available, otherwise warn
+            println!(
+                "⚠ Docker command failed - user may need to run 'newgrp docker' or restart SSH session"
+            );
+            println!("⚠ Alternatively, using 'sudo docker' commands will work");
+        }
     }
 
     Ok(())

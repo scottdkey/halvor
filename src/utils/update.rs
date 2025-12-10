@@ -1,4 +1,4 @@
-use crate::exec::local;
+use crate::utils::exec::local;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::env;

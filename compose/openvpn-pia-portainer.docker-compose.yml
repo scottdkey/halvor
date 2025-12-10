@@ -44,7 +44,7 @@ services:
       # To bind to specific IP: use "10.10.10.14:8888:8888/tcp"
       # Access from host at: http://10.10.10.14:8888
       # Access from other containers at: http://openvpn-pia:8888
-      - "8888:8888/tcp"
+      - '8888:8888/tcp'
     networks:
       - vpn_network
     restart: unless-stopped

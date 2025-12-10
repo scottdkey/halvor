@@ -1,4 +1,4 @@
-use crate::config_manager;
+use crate::config::config_manager;
 use aes_gcm::{
     Aes256Gcm, Key, Nonce,
     aead::{Aead, AeadCore, KeyInit, OsRng},

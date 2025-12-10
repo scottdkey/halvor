@@ -1,5 +1,5 @@
 use crate::config::EnvConfig;
-use crate::exec::{CommandExecutor, Executor};
+use crate::utils::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
 
 pub fn build_and_push_vpn_image(

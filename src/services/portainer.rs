@@ -1,6 +1,6 @@
 use crate::config::EnvConfig;
-use crate::docker;
-use crate::exec::{CommandExecutor, Executor};
+use crate::services::docker;
+use crate::utils::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
 
 /// Portainer edition type
@@ -87,6 +87,9 @@ pub fn install_host<E: CommandExecutor>(exec: &E, edition: PortainerEdition) -> 
 pub fn install_agent<E: CommandExecutor>(exec: &E) -> Result<()> {
     println!();
     println!("=== Installing Portainer Agent ===");
+
+    // Ensure Docker daemon is running
+    docker::ensure_docker_running(exec)?;
 
     // Remove existing containers
     println!("Removing any existing Portainer instances...");

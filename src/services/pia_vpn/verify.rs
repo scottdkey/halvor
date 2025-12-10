@@ -1,5 +1,5 @@
-use crate::exec::{CommandExecutor, Executor, local};
-use crate::vpn::utils;
+use crate::services::pia_vpn::vpn_utils;
+use crate::utils::exec::{CommandExecutor, Executor, local};
 use anyhow::Result;
 
 pub fn verify_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<()> {
@@ -28,7 +28,7 @@ fn verify_vpn_with_executor(hostname: &str, target_host: &str, exec: &Executor) 
 
     // Test 1: Check if container is running
     println!("[1/10] Checking VPN container status...");
-    use crate::docker;
+    use crate::services::docker;
     if docker::is_container_running(exec, "openvpn-pia")? {
         println!("   ✓ VPN container is running");
     } else {
@@ -197,7 +197,7 @@ fn verify_vpn_with_executor(hostname: &str, target_host: &str, exec: &Executor) 
     println!();
     println!("Checking for errors in logs...");
     let error_check = exec.execute_shell("docker exec openvpn-pia cat /var/log/openvpn/openvpn.log 2>/dev/null | tail -50 | grep -iE 'error|failed|frag_in' | tail -5 || echo 'No errors found'")?;
-    utils::print_summary(hostname, target_host, all_passed, &error_check.stdout)?;
+    vpn_utils::print_summary(hostname, target_host, all_passed, &error_check.stdout)?;
 
     if !all_passed {
         anyhow::bail!("VPN verification failed - some tests did not pass");
