@@ -95,7 +95,9 @@ struct HostRowView: View {
     }
 }
 
-extension DiscoveredHost: Identifiable {
+
+extension DiscoveredHost: Identifiable{
+    
     public var id: String {
         hostname + (primaryIP ?? "")
     }
