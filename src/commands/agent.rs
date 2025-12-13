@@ -13,6 +13,9 @@ pub enum AgentCommands {
         /// Port to listen on (default: 23500)
         #[arg(long, default_value = "23500")]
         port: u16,
+        /// Also start web server on this port (serves UI and API)
+        #[arg(long)]
+        web_port: Option<u16>,
         /// Run as daemon in background
         #[arg(long)]
         daemon: bool,
@@ -42,10 +45,14 @@ pub enum AgentCommands {
 }
 
 /// Handle agent commands
-pub fn handle_agent(command: AgentCommands) -> Result<()> {
+pub async fn handle_agent(command: AgentCommands) -> Result<()> {
     match command {
-        AgentCommands::Start { port, daemon } => {
-            start_agent(port, daemon)?;
+        AgentCommands::Start {
+            port,
+            web_port,
+            daemon,
+        } => {
+            start_agent(port, web_port, daemon).await?;
         }
         AgentCommands::Stop => {
             stop_agent()?;
@@ -67,7 +74,7 @@ pub fn handle_agent(command: AgentCommands) -> Result<()> {
 }
 
 /// Start the agent daemon
-fn start_agent(port: u16, daemon: bool) -> Result<()> {
+async fn start_agent(port: u16, web_port: Option<u16>, daemon: bool) -> Result<()> {
     use std::fs;
 
     // Check if already running
@@ -88,11 +95,15 @@ fn start_agent(port: u16, daemon: bool) -> Result<()> {
             }
 
             // Spawn agent in background, redirecting output to log file
-            let child = Command::new(std::env::current_exe()?)
-                .arg("agent")
+            let mut cmd = Command::new(std::env::current_exe()?);
+            cmd.arg("agent")
                 .arg("start")
                 .arg("--port")
-                .arg(port.to_string())
+                .arg(port.to_string());
+            if let Some(wp) = web_port {
+                cmd.arg("--web-port").arg(wp.to_string());
+            }
+            let child = cmd
                 .stdout(
                     fs::OpenOptions::new()
                         .create(true)
@@ -131,9 +142,12 @@ fn start_agent(port: u16, daemon: bool) -> Result<()> {
 
     // Foreground mode - start server with background sync
     println!("Starting halvor agent on port {}...", port);
+    if let Some(wp) = web_port {
+        println!("Starting halvor web server on port {}...", wp);
+    }
 
     let local_hostname = get_current_hostname()?;
-    let sync = ConfigSync::new(local_hostname.clone());
+    let _sync = ConfigSync::new(local_hostname.clone());
 
     // Spawn background sync task
     let sync_clone = ConfigSync::new(local_hostname);
@@ -146,8 +160,48 @@ fn start_agent(port: u16, daemon: bool) -> Result<()> {
         }
     });
 
-    let server = AgentServer::new(port, None);
-    server.start()
+    // If web_port is provided, start both agent and web server
+    if let Some(web_port) = web_port {
+        use crate::services::web;
+        use std::net::SocketAddr;
+        use std::path::PathBuf;
+        use tokio::task;
+
+        let agent_port = port;
+        let server = AgentServer::new(agent_port, None);
+
+        // Start agent server in background task
+        let agent_handle = task::spawn_blocking(move || server.start());
+
+        // Start web server in foreground
+        let web_dir = std::env::var("HALVOR_WEB_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("halvor-web"));
+        let build_dir = web_dir.join("build");
+        let static_dir = if build_dir.exists() {
+            build_dir
+        } else {
+            web_dir.clone()
+        };
+
+        let addr = SocketAddr::from(([0, 0, 0, 0], web_port));
+        println!("🌐 Web UI available at http://localhost:{}", web_port);
+        println!(
+            "🔌 Agent API available on port {} (for CLI connections)",
+            agent_port
+        );
+
+        // Start web server (this will block)
+        web::start_server(addr, static_dir, Some(agent_port)).await?;
+
+        // If web server exits, wait for agent
+        let _ = agent_handle.await;
+        Ok(())
+    } else {
+        // Just start agent server
+        let server = AgentServer::new(port, None);
+        server.start()
+    }
 }
 
 /// Stop the agent daemon

@@ -1,3 +1,4 @@
+// Declare modules needed by the binary
 pub mod agent;
 mod commands;
 pub mod config;

@@ -261,7 +261,7 @@ pub fn restore_service(
 }
 
 /// Restore from env location
-pub fn restore_from_env(hostname: &str, _service: Option<&str>, config: &EnvConfig) -> Result<()> {
+pub fn restore_from_env(hostname: &str, _service: Option<&str>, _config: &EnvConfig) -> Result<()> {
     use crate::config::service;
 
     println!("Restoring config from .env file...");

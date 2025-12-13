@@ -1,6 +1,9 @@
 use crate::config;
 use crate::services;
-use anyhow::{Result, Context};
+use crate::services::build::cli::build_target;
+use anyhow::{Context, Result};
+use std::path::PathBuf;
+use std::process::Command;
 
 /// Handle install command
 /// hostname: None = local, Some(hostname) = remote host
@@ -38,7 +41,7 @@ pub fn handle_install(
             );
         }
         "cli" => {
-            install_cli_dependencies()?;
+            install_cli()?;
         }
         _ => {
             anyhow::bail!(
@@ -51,44 +54,123 @@ pub fn handle_install(
     Ok(())
 }
 
-/// Install CLI development dependencies
-fn install_cli_dependencies() -> Result<()> {
-    println!("Installing CLI development dependencies...");
+/// Build and install CLI to system
+fn install_cli() -> Result<()> {
+    println!("Building and installing CLI to system...");
 
-    // Install cargo-watch if not already installed
-    use std::process::Command;
+    // Determine the current target triple
+    let current_target = get_current_target()?;
+    println!("Building for target: {}", current_target);
 
-    let watch_installed = Command::new("cargo")
-        .args(["watch", "--version"])
-        .output()
-        .is_ok();
-
-    if !watch_installed {
-        println!("Installing cargo-watch...");
-        let status = Command::new("cargo")
-            .args(["install", "cargo-watch"])
-            .status()
-            .context("Failed to install cargo-watch")?;
-
-        if !status.success() {
-            anyhow::bail!("Failed to install cargo-watch");
+    // Build the CLI for the current platform
+    let binary_path = match build_target(&current_target)? {
+        Some(path) => {
+            println!("✓ Built: {}", path.display());
+            path
         }
-        println!("✓ cargo-watch installed");
-    } else {
-        println!("✓ cargo-watch already installed");
+        None => {
+            anyhow::bail!("Failed to build CLI for target: {}", current_target);
+        }
+    };
+
+    // Install the binary to cargo's bin directory
+    println!("Installing CLI to system...");
+    let cargo_home = std::env::var("CARGO_HOME")
+        .ok()
+        .or_else(|| {
+            std::env::var("HOME")
+                .map(|home| format!("{}/.cargo", home))
+                .ok()
+        })
+        .unwrap_or_else(|| String::from("~/.cargo"));
+
+    let cargo_bin = PathBuf::from(&cargo_home).join("bin");
+    std::fs::create_dir_all(&cargo_bin).context("Failed to create cargo bin directory")?;
+
+    let install_path = cargo_bin.join("halvor");
+
+    // Copy the binary to the install location
+    std::fs::copy(&binary_path, &install_path).with_context(|| {
+        format!(
+            "Failed to copy binary from {} to {}",
+            binary_path.display(),
+            install_path.display()
+        )
+    })?;
+
+    // Make it executable (if on Unix)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&install_path, std::fs::Permissions::from_mode(0o755))
+            .context("Failed to make binary executable")?;
     }
 
-    // Fetch Rust dependencies
-    println!("Fetching Rust dependencies...");
-    let status = Command::new("cargo")
-        .args(["fetch"])
-        .status()
-        .context("Failed to fetch Rust dependencies")?;
+    println!("✓ CLI installed to {}", install_path.display());
+    println!("  The 'halvor' command is now available in your PATH");
 
-    if !status.success() {
-        anyhow::bail!("Failed to fetch Rust dependencies");
-    }
-
-    println!("✓ CLI dependencies installed");
     Ok(())
+}
+
+/// Get the current Rust target triple
+fn get_current_target() -> Result<String> {
+    // Try to get target from rustc
+    let output = Command::new("rustc")
+        .args(["-vV"])
+        .output()
+        .context("Failed to run rustc")?;
+
+    if !output.status.success() {
+        anyhow::bail!("rustc command failed");
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        if line.starts_with("host: ") {
+            return Ok(line[6..].trim().to_string());
+        }
+    }
+
+    // Fallback: use compile-time target
+    if let Ok(target) = std::env::var("TARGET") {
+        return Ok(target);
+    }
+
+    // Use compile-time target detection
+    let default_target: &str = {
+        #[cfg(all(target_arch = "x86_64", target_os = "macos"))]
+        {
+            "x86_64-apple-darwin"
+        }
+        #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+        {
+            "aarch64-apple-darwin"
+        }
+        #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+        {
+            "x86_64-unknown-linux-gnu"
+        }
+        #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+        {
+            "aarch64-unknown-linux-gnu"
+        }
+        #[cfg(all(target_arch = "x86_64", target_os = "windows"))]
+        {
+            "x86_64-pc-windows-msvc"
+        }
+        #[cfg(not(any(
+            all(target_arch = "x86_64", target_os = "macos"),
+            all(target_arch = "aarch64", target_os = "macos"),
+            all(target_arch = "x86_64", target_os = "linux"),
+            all(target_arch = "aarch64", target_os = "linux"),
+            all(target_arch = "x86_64", target_os = "windows")
+        )))]
+        {
+            anyhow::bail!(
+                "Unable to determine current target triple. Please set TARGET environment variable."
+            );
+        }
+    };
+
+    Ok(default_target.to_string())
 }

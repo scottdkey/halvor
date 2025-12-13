@@ -7,6 +7,7 @@ use std::net::{TcpListener, TcpStream};
 /// Runs as a daemon on each host to enable secure remote execution and config sync
 pub struct AgentServer {
     port: u16,
+    #[allow(dead_code)]
     secret: Option<String>,
 }
 
@@ -198,7 +199,7 @@ impl AgentServer {
         }
     }
 
-    fn sync_config(&self, data: Vec<u8>) -> Result<AgentResponse> {
+    fn sync_config(&self, _data: Vec<u8>) -> Result<AgentResponse> {
         // TODO: Decrypt and apply config sync
         // TODO: Handle conflicts
         Ok(AgentResponse::Success {
@@ -208,14 +209,14 @@ impl AgentServer {
 
     fn sync_database(&self, from_hostname: &str, _last_sync: Option<i64>) -> Result<AgentResponse> {
         use crate::db;
-        
+
         // Export host configs and settings for this host
         let local_hostname = std::env::var("HOSTNAME")
             .or_else(|_| std::fs::read_to_string("/etc/hostname"))
             .unwrap_or_else(|_| "unknown".to_string())
             .trim()
             .to_string();
-        
+
         // Get all hosts from DB
         let hosts = db::list_hosts().unwrap_or_default();
         let mut host_configs = std::collections::HashMap::new();
@@ -224,7 +225,7 @@ impl AgentServer {
                 host_configs.insert(hostname.clone(), config);
             }
         }
-        
+
         // Get settings
         use crate::db::generated::settings;
         let mut db_settings = std::collections::HashMap::new();
@@ -235,7 +236,7 @@ impl AgentServer {
                 }
             }
         }
-        
+
         // Serialize sync data
         let sync_data = serde_json::json!({
             "from_hostname": from_hostname,
@@ -243,11 +244,9 @@ impl AgentServer {
             "hosts": host_configs,
             "settings": db_settings,
         });
-        
+
         let data_str = serde_json::to_string(&sync_data)?;
-        
-        Ok(AgentResponse::Success {
-            output: data_str,
-        })
+
+        Ok(AgentResponse::Success { output: data_str })
     }
 }

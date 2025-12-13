@@ -299,7 +299,7 @@ pub fn show_current_config(verbose: bool) -> Result<()> {
     println!("Tailnet:");
     let env_tld = env::var("TAILNET_TLD").or_else(|_| env::var("TLD")).ok();
     let env_acme = env::var("ACME_EMAIL").ok();
-    let db_base = settings::get_setting("TAILNET_BASE").ok().flatten();
+    let _db_base = settings::get_setting("TAILNET_BASE").ok().flatten();
     let db_tld = settings::get_setting("TAILNET_TLD")
         .ok()
         .flatten()
@@ -1544,10 +1544,7 @@ pub fn handle_config_command(
         ConfigCommands::Ip { .. }
         | ConfigCommands::Hostname { .. }
         | ConfigCommands::Tailscale { .. }
-        | ConfigCommands::BackupPath { .. }
-        | ConfigCommands::Commit
-        | ConfigCommands::SetBackup { .. }
-        | ConfigCommands::Backup => {
+        | ConfigCommands::BackupPath { .. } => {
             anyhow::bail!(
                 "This command requires a hostname. Usage: halvor config <hostname> <command>"
             );

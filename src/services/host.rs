@@ -106,8 +106,7 @@ pub fn list_hosts_display(verbose: bool) -> Result<()> {
                 (Some(cfg.hosts), cfg._tailnet_base)
             }
             Err(e) => {
-                #[cfg(debug_assertions)]
-                eprintln!("[DEBUG] Failed to load .env config: {}", e);
+                eprintln!("Failed to load .env config: {}", e);
                 (None, "ts.net".to_string())
             }
         }

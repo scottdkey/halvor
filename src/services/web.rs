@@ -2,7 +2,7 @@
 use crate::ffi::client::HalvorClient;
 use axum::{
     Router,
-    extract::{State},
+    extract::State,
     http::StatusCode,
     response::{IntoResponse, Json},
     routing::{get, post},

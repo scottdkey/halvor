@@ -2,6 +2,8 @@
 // Add new services by creating a file in this directory
 
 pub mod backup;
+pub mod build;
+pub mod dev;
 pub mod docker;
 pub mod host;
 pub mod npm;

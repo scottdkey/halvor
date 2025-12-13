@@ -2,6 +2,7 @@ use crate::config;
 use crate::services::tailscale;
 use anyhow::Result;
 
+#[allow(dead_code)]
 pub fn handle_tailscale(hostname: &str) -> Result<()> {
     if hostname == "localhost" {
         tailscale::install_tailscale()?;

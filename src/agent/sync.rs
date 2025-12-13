@@ -67,7 +67,6 @@ impl ConfigSync {
     pub fn sync_encrypted_data(&self, hosts: &[DiscoveredHost]) -> Result<()> {
         use crate::db;
         use crate::db::generated::settings;
-        use std::collections::HashMap;
 
         for host in hosts {
             if !host.reachable {
@@ -94,7 +93,11 @@ impl ConfigSync {
                     if let Some(hosts_json) = sync_data.get("hosts") {
                         if let Some(hosts_map) = hosts_json.as_object() {
                             for (hostname, config_json) in hosts_map {
-                                if let Ok(config) = serde_json::from_value::<crate::config::HostConfig>(config_json.clone()) {
+                                if let Ok(config) =
+                                    serde_json::from_value::<crate::config::HostConfig>(
+                                        config_json.clone(),
+                                    )
+                                {
                                     // Only update if we don't have this host or if remote is newer
                                     let should_update = match db::get_host_config(hostname) {
                                         Ok(Some(_)) => {
@@ -104,7 +107,7 @@ impl ConfigSync {
                                         Ok(None) => true,
                                         Err(_) => false,
                                     };
-                                    
+
                                     if should_update {
                                         db::store_host_config(hostname, &config)?;
                                     }
@@ -124,7 +127,7 @@ impl ConfigSync {
                                         Ok(None) => true,
                                         Err(_) => false,
                                     };
-                                    
+
                                     if should_update {
                                         settings::set_setting(key, val_str)?;
                                     }

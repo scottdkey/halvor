@@ -11,8 +11,7 @@ services:
       - ../halvor-web:/app/halvor-web
       - halvor-data:/app/data # Shared database volume
       - /app/node_modules
-    env_file:
-      - ../.envrc
+    # Environment variables are inherited from direnv (loaded via .envrc)
     environment:
       - RUST_LOG=debug
       - HALVOR_DB_DIR=/app/data
@@ -26,8 +25,13 @@ services:
       start_period: 60s
     command: >
       sh -c "
-        # Start agent with web server
-        halvor agent start --port 13001
+        # Verify halvor binary is available
+        which halvor || echo 'halvor not in PATH, checking /usr/local/bin...'
+        ls -la /usr/local/bin/halvor || echo 'halvor binary not found'
+        # Start agent on 13001 and web server on 13000
+        # Web UI: http://localhost:13000
+        # Agent API (for CLI): port 13001
+        /usr/local/bin/halvor agent start --port 13001 --web-port 13000
       "
 
   halvor-web-prod:
@@ -40,8 +44,7 @@ services:
       - '13004:13000' # Web server port
     volumes:
       - halvor-data:/app/data # Shared database volume
-    env_file:
-      - ../.envrc
+    # Environment variables are inherited from direnv (loaded via .envrc)
     environment:
       - RUST_LOG=info
       - HALVOR_DB_DIR=/app/data
@@ -60,4 +63,4 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: ${PWD}/halvor-data # Mount to local filesystem
+      device: ${PWD}/../halvor-data # Mount to project root (one level up from halvor-web)

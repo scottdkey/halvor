@@ -44,43 +44,143 @@ impl DockerBuildConfig {
     }
 }
 
-/// Build a Docker image
+/// Build a Docker image (with multi-platform support)
+/// If push is true, builds for multiple platforms and pushes to registry
+/// If push is false, builds for current platform only and loads into local Docker
 pub fn build_image(config: &DockerBuildConfig) -> Result<()> {
-    let mut docker_args = vec!["build"];
+    build_image_with_push(config, false)
+}
+
+/// Build a Docker image with push option
+pub fn build_image_with_push(config: &DockerBuildConfig, push: bool) -> Result<()> {
+    // Check if buildx is available
+    let buildx_check = Command::new("docker").args(&["buildx", "version"]).output();
+
+    if buildx_check.is_err() || !buildx_check.unwrap().status.success() {
+        println!("⚠️  Docker buildx not available, falling back to regular docker build");
+        return build_image_single_platform(config);
+    }
+
+    // Determine platforms based on push option
+    let platforms = if push {
+        // Multi-platform build when pushing
+        "linux/amd64,linux/aarch64"
+    } else {
+        // Single platform for local use
+        if cfg!(target_arch = "aarch64") {
+            "linux/aarch64"
+        } else {
+            "linux/amd64"
+        }
+    };
+
+    let mut docker_args: Vec<String> = vec![
+        "buildx".to_string(),
+        "build".to_string(),
+        "--platform".to_string(),
+        platforms.to_string(),
+    ];
 
     // Add build args
-    let mut build_arg_strings = Vec::new();
     for (key, value) in &config.build_args {
-        build_arg_strings.push(format!("{}={}", key, value));
-    }
-    for arg in &build_arg_strings {
-        docker_args.push("--build-arg");
-        docker_args.push(arg);
+        docker_args.push("--build-arg".to_string());
+        docker_args.push(format!("{}={}", key, value));
     }
 
     // Add tags
     for tag in &config.tags {
-        docker_args.push("-t");
-        docker_args.push(tag);
+        docker_args.push("-t".to_string());
+        docker_args.push(tag.clone());
     }
 
     // Specify Dockerfile
-    docker_args.push("-f");
+    docker_args.push("-f".to_string());
     docker_args.push(
         config
             .dockerfile
             .to_str()
-            .context("Invalid dockerfile path")?,
+            .context("Invalid dockerfile path")?
+            .to_string(),
     );
 
     // Add target if specified
     if let Some(ref target) = config.target {
-        docker_args.push("--target");
-        docker_args.push(target);
+        docker_args.push("--target".to_string());
+        docker_args.push(target.clone());
+    }
+
+    // Use --push for multi-platform, --load for single platform
+    if push {
+        docker_args.push("--push".to_string());
+        println!(
+            "Building multi-platform Docker image (linux/amd64,linux/arm64) and pushing to registry..."
+        );
+    } else {
+        docker_args.push("--load".to_string());
+        println!("Building Docker image for platform: {}", platforms);
     }
 
     // Build context
-    docker_args.push(config.context.to_str().context("Invalid context path")?);
+    docker_args.push(
+        config
+            .context
+            .to_str()
+            .context("Invalid context path")?
+            .to_string(),
+    );
+
+    let status = Command::new("docker")
+        .args(&docker_args)
+        .status()
+        .context("Failed to build Docker image with buildx")?;
+
+    if !status.success() {
+        anyhow::bail!("Docker buildx build failed");
+    }
+
+    Ok(())
+}
+
+/// Build a Docker image (single platform, fallback)
+fn build_image_single_platform(config: &DockerBuildConfig) -> Result<()> {
+    let mut docker_args: Vec<String> = vec!["build".to_string()];
+
+    // Add build args
+    for (key, value) in &config.build_args {
+        docker_args.push("--build-arg".to_string());
+        docker_args.push(format!("{}={}", key, value));
+    }
+
+    // Add tags
+    for tag in &config.tags {
+        docker_args.push("-t".to_string());
+        docker_args.push(tag.clone());
+    }
+
+    // Specify Dockerfile
+    docker_args.push("-f".to_string());
+    docker_args.push(
+        config
+            .dockerfile
+            .to_str()
+            .context("Invalid dockerfile path")?
+            .to_string(),
+    );
+
+    // Add target if specified
+    if let Some(ref target) = config.target {
+        docker_args.push("--target".to_string());
+        docker_args.push(target.clone());
+    }
+
+    // Build context
+    docker_args.push(
+        config
+            .context
+            .to_str()
+            .context("Invalid context path")?
+            .to_string(),
+    );
 
     let status = Command::new("docker")
         .args(&docker_args)
@@ -190,5 +290,13 @@ pub fn generate_ghcr_tags(
     let image_tag = format!("{}:{}", base_image, tag);
     let hash_tag = format!("{}:{}", base_image, git_hash);
 
-    vec![image_tag, hash_tag]
+    let mut tags = vec![image_tag, hash_tag];
+
+    // For release builds, also add experimental tag
+    if release {
+        let experimental_tag = format!("{}:experimental", base_image);
+        tags.push(experimental_tag);
+    }
+
+    tags
 }

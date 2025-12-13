@@ -133,7 +133,8 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
         }
         Agent { command } => {
             let local_command: agent::AgentCommands = unsafe { mem::transmute(command) };
-            agent::handle_agent(local_command)?;
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(agent::handle_agent(local_command))?;
         }
         Build { command } => {
             let local_command: build::BuildCommands = unsafe { mem::transmute(command) };
