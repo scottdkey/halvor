@@ -1,7 +1,7 @@
 // C FFI bindings for Swift
 // This module exports C-compatible functions that Swift can call
 
-use crate::ffi::client::HalvorClient; // This is fine - c_ffi is part of the ffi module
+use crate::agent::HalvorClient;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::ptr;

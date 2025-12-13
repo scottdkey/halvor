@@ -1,5 +1,5 @@
 // Web server for serving Svelte app and exposing FFI functions via HTTP API
-use crate::ffi::client::HalvorClient;
+use crate::agent::HalvorClient;
 use axum::{
     Router,
     extract::State,

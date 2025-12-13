@@ -1,19 +1,18 @@
-// CLI binary build with cross-compilation support
+// CLI binary build with simple cross-compilation support
 use crate::services::build::common::{execute_command_output, get_binary_path};
 use crate::services::build::github::push_cli_to_github;
-use crate::services::build::zig::setup_zig_cross_compilation;
 use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Command;
 
 /// Platform targets mapping
+/// Note: Only macOS targets build reliably on macOS without Docker
+/// Linux/Windows targets require 'cross' with Docker running
 const PLATFORM_TARGETS: &[(&str, &[&str])] = &[
+    // Native macOS builds (no Docker needed)
     ("apple", &["aarch64-apple-darwin", "x86_64-apple-darwin"]),
-    (
-        "windows",
-        &["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"],
-    ),
+    // Cross-compilation targets (require Docker via 'cross')
     (
         "linux",
         &[
@@ -23,24 +22,68 @@ const PLATFORM_TARGETS: &[(&str, &[&str])] = &[
             "aarch64-unknown-linux-musl",
         ],
     ),
+    (
+        "windows",
+        &["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"],
+    ),
 ];
 
-/// Build CLI binaries for specified platforms
-pub fn build_cli(platforms: Option<&str>, push: bool) -> Result<()> {
+/// Build CLI binaries for specified platforms or targets
+pub fn build_cli(platforms: Option<&str>, targets: Option<&str>, push: bool) -> Result<()> {
     let platform_targets: HashMap<&str, Vec<&str>> = PLATFORM_TARGETS
         .iter()
         .map(|(k, v)| (*k, v.to_vec()))
         .collect();
 
-    // Determine which platforms to build
-    let platforms_to_build: HashSet<&str> = if let Some(platforms_str) = platforms {
-        let parsed: HashSet<&str> = platforms_str
+    // Get all available target triples for validation
+    let all_targets: HashSet<&str> = platform_targets
+        .values()
+        .flat_map(|v| v.iter())
+        .copied()
+        .collect();
+
+    // Determine which targets to build
+    let targets_to_build: Vec<&str> = if let Some(targets_str) = targets {
+        // Build specific targets
+        let parsed: Vec<&str> = targets_str
+            .split(',')
+            .map(|t| t.trim())
+            .filter(|t| !t.is_empty())
+            .collect();
+
+        if parsed.is_empty() {
+            anyhow::bail!("No valid targets specified");
+        }
+
+        // Validate that each target is a known target
+        for target in &parsed {
+            if !all_targets.contains(target) {
+                println!(
+                    "  ⚠️  Warning: '{}' is not a known target. Attempting to build anyway...",
+                    target
+                );
+                println!("  Known targets are:");
+                for platform_target in PLATFORM_TARGETS {
+                    println!("    {}: {}", platform_target.0, platform_target.1.join(", "));
+                }
+            }
+        }
+
+        println!(
+            "Building CLI binaries for targets: {}",
+            parsed.join(", ")
+        );
+
+        parsed
+    } else if let Some(platforms_str) = platforms {
+        // Build specific platforms
+        let platforms_to_build: HashSet<&str> = platforms_str
             .split(',')
             .map(|p| p.trim())
             .filter(|p| !p.is_empty())
             .collect();
 
-        if parsed.is_empty() {
+        if platforms_to_build.is_empty() {
             anyhow::bail!(
                 "No valid platforms specified. Valid platforms are: {}",
                 platform_targets
@@ -52,7 +95,7 @@ pub fn build_cli(platforms: Option<&str>, push: bool) -> Result<()> {
         }
 
         // Validate platforms
-        for platform in &parsed {
+        for platform in &platforms_to_build {
             if !platform_targets.contains_key(platform) {
                 anyhow::bail!(
                     "Unknown platform: '{}'. Valid platforms are: {}\n\nHint: Use comma-separated values like: --platforms apple,windows,linux",
@@ -66,42 +109,51 @@ pub fn build_cli(platforms: Option<&str>, push: bool) -> Result<()> {
             }
         }
 
-        parsed
-    } else {
-        // Build all platforms
-        platform_targets.keys().copied().collect()
-    };
+        println!(
+            "Building CLI binaries for platforms: {}",
+            platforms_to_build
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
 
-    println!(
-        "Building CLI binaries for platforms: {}",
+        // Collect all targets from selected platforms
         platforms_to_build
             .iter()
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
+            .flat_map(|platform| platform_targets.get(platform).unwrap().iter().copied())
+            .collect()
+    } else {
+        // Build only native macOS targets by default (others require Docker)
+        println!("Building CLI binaries for macOS (native targets)");
+        println!("💡 Tip: For Linux/Windows builds, ensure Docker is running or use GitHub Actions");
+        platform_targets
+            .get("apple")
+            .map(|v| v.clone())
+            .unwrap_or_default()
+    };
+
+    // Install all targets first before building
+    println!("\n🔧 Ensuring all Rust targets are installed...");
+    for target in &targets_to_build {
+        if !is_target_installed(target)? {
+            println!("  Installing target: {}", target);
+            install_target(target)?;
+        } else {
+            println!("  ✓ Target already installed: {}", target);
+        }
+    }
 
     let mut built_binaries: Vec<(String, PathBuf)> = Vec::new();
 
-    // Build for each platform
-    for platform in &platforms_to_build {
-        let targets = platform_targets.get(platform).unwrap();
-        println!("\n📦 Building for {} platform...", platform);
+    // Build for each target
+    for target in targets_to_build {
+        println!("\n📦 Building target: {}", target);
 
-        for target in targets {
-            println!("  Building target: {}", target);
-
-            // Ensure target is installed
-            if !is_target_installed(target)? {
-                println!("  Installing target: {}", target);
-                install_target(target)?;
-            }
-
-            // Build for target
-            if let Some(binary_path) = build_target(target)? {
-                println!("  ✓ Built: {}", binary_path.display());
-                built_binaries.push((target.to_string(), binary_path));
-            }
+        // Build for target
+        if let Some(binary_path) = build_target(target)? {
+            println!("  ✓ Built: {}", binary_path.display());
+            built_binaries.push((target.to_string(), binary_path));
         }
     }
 
@@ -151,14 +203,53 @@ fn install_target(target: &str) -> Result<()> {
 
 /// Build for a specific target
 pub fn build_target(target: &str) -> Result<Option<PathBuf>> {
-    let mut build_cmd = Command::new("cargo");
-    build_cmd.args(["build", "--release", "--bin", "halvor", "--target", target]);
+    // Detect if we're cross-compiling
+    let host_target = std::env::var("HOST")
+        .or_else(|_| std::env::var("CARGO_BUILD_TARGET"))
+        .unwrap_or_else(|_| {
+            // Get the current host triple
+            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+            { "aarch64-apple-darwin".to_string() }
+            #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+            { "x86_64-apple-darwin".to_string() }
+            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+            { "x86_64-unknown-linux-gnu".to_string() }
+            #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+            { "aarch64-unknown-linux-gnu".to_string() }
+            #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+            { "x86_64-pc-windows-msvc".to_string() }
+            #[cfg(not(any(
+                all(target_os = "macos", any(target_arch = "aarch64", target_arch = "x86_64")),
+                all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
+                all(target_os = "windows", target_arch = "x86_64")
+            )))]
+            { "unknown".to_string() }
+        });
 
-    // Configure Zig for cross-compilation on macOS for Linux and Windows targets
-    #[cfg(target_os = "macos")]
-    if target.contains("linux") || target.contains("windows") {
-        setup_zig_cross_compilation(&mut build_cmd, target)?;
+    let is_cross = target != host_target;
+
+    // Cross-compilation detection: Linux/Windows from macOS
+    let needs_cross = is_cross && (target.contains("linux") || target.contains("windows"));
+
+    if needs_cross {
+        // Cross-compilation is not supported reliably on macOS
+        eprintln!("  ⚠️  Skipping {}: Cross-compilation not supported", target);
+        eprintln!("     Cross-compiling from macOS to Linux/Windows is unreliable");
+        eprintln!("     Use GitHub Actions for production builds (see .github/workflows/)");
+        eprintln!("     Each platform builds natively for best results");
+        return Ok(None);
     }
+
+    // Native build (macOS only at this point)
+    let cargo_cmd = "cargo";
+    let cargo_args = vec!["build", "--release", "--bin", "halvor", "--target", target];
+
+    let mut build_cmd = Command::new(cargo_cmd);
+    build_cmd.args(&cargo_args);
+
+    // Clear any RUSTFLAGS that might interfere with cross-compilation
+    // (cross needs to control the build environment)
+    build_cmd.env_remove("RUSTFLAGS");
 
     // Build for target
     let build_result = build_cmd.output();

@@ -39,8 +39,11 @@ pub enum BuildCommands {
     /// Build CLI binary
     Cli {
         /// Platforms to build for (comma-separated: apple,windows,linux). If not specified, builds all.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "targets")]
         platforms: Option<String>,
+        /// Specific targets to build for (comma-separated Rust target triples, e.g., x86_64-unknown-linux-gnu,aarch64-apple-darwin)
+        #[arg(long, conflicts_with = "platforms")]
+        targets: Option<String>,
         /// Push built binaries to GitHub releases
         #[arg(long)]
         push: bool,
@@ -89,9 +92,10 @@ pub fn handle_build(command: BuildCommands) -> Result<()> {
             }
             println!("✓ Web build complete");
         }
-        BuildCommands::Cli { platforms, push } => {
+        BuildCommands::Cli { platforms, targets, push } => {
             let platforms_str: Option<&str> = platforms.as_deref();
-            build_cli(platforms_str, push)?;
+            let targets_str: Option<&str> = targets.as_deref();
+            build_cli(platforms_str, targets_str, push)?;
             println!("✓ CLI build complete");
         }
     }

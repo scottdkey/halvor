@@ -3,6 +3,7 @@ pub mod agent;
 pub mod commands;
 pub mod config;
 pub mod db;
+#[cfg(feature = "ffi")]
 pub mod ffi;
 pub mod services;
 pub mod utils;

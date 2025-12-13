@@ -6,7 +6,6 @@ pub mod cli;
 pub mod common;
 pub mod github;
 pub mod web;
-pub mod zig;
 
 // Re-export commonly used functions
 pub use android::{build_android, sign_android};

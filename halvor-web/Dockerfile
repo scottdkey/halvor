@@ -34,7 +34,7 @@ COPY src ./src
 ARG BUILD_TYPE=release
 ARG TARGETARCH
 ARG TARGETPLATFORM
-ENV RUSTFLAGS="-C link-arg=-Wl,--allow-multiple-definition"
+ENV RUSTFLAGS="-C link-arg=-Wl"
 ENV PKG_CONFIG_ALL_STATIC=1
 
 # Determine musl target based on TARGETARCH (set by Docker buildx)

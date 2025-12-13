@@ -151,7 +151,7 @@ jobs:
         uses: ./.github/actions/upload-rust-artifact
         with:
           target: ${{ matrix.target }}
-          binary_path: target/${{ matrix.target }}/release/hal.exe
+          binary_path: target/${{ matrix.target }}/release/halvor.exe
 
   release-experimental:
     name: Release Windows CLI (Experimental)
@@ -171,7 +171,7 @@ jobs:
         with:
           version_input: ${{ github.event.inputs.version }}
           platform: windows
-          binary_name: hal.exe
+          binary_name: halvor.exe
           archive_extension: .zip
           event_name: ${{ github.event_name }}
           experimental_input: 'true'
@@ -195,7 +195,7 @@ jobs:
         with:
           version_input: ${{ github.event.inputs.version }}
           platform: windows
-          binary_name: hal.exe
+          binary_name: halvor.exe
           archive_extension: .zip
           event_name: ${{ github.event_name }}
           experimental_input: 'false'

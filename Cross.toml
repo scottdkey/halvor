@@ -1,0 +1,27 @@
+# Cross-compilation configuration for halvor
+# Configures cross to use Docker containers for cross-compilation
+
+# Build environment settings
+[build.env]
+volumes = ["CARGO_HOME"]
+
+# Target-specific configurations
+# Use cross's default images for Linux targets
+[target.x86_64-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:latest"
+
+[target.aarch64-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:latest"
+
+[target.x86_64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-musl:latest"
+
+[target.aarch64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-musl:latest"
+
+# Windows targets (cross has limited Windows support)
+[target.x86_64-pc-windows-msvc]
+image = "ghcr.io/cross-rs/x86_64-pc-windows-msvc:latest"
+
+[target.aarch64-pc-windows-msvc]
+image = "ghcr.io/cross-rs/aarch64-pc-windows-msvc:latest"

@@ -90,7 +90,7 @@ jobs:
         uses: ./.github/actions/upload-rust-artifact
         with:
           target: ${{ matrix.target }}
-          binary_path: target/${{ matrix.target }}/release/hal
+          binary_path: target/${{ matrix.target }}/release/halvor
           skip_target: ${{ steps.deps.outputs.skip_target }}
 
   release-experimental:
@@ -111,7 +111,7 @@ jobs:
         with:
           version_input: ${{ github.event.inputs.version }}
           platform: linux
-          binary_name: hal
+          binary_name: halvor
           archive_extension: .tar.gz
           event_name: ${{ github.event_name }}
           experimental_input: 'true'
@@ -135,7 +135,7 @@ jobs:
         with:
           version_input: ${{ github.event.inputs.version }}
           platform: linux
-          binary_name: hal
+          binary_name: halvor
           archive_extension: .tar.gz
           event_name: ${{ github.event_name }}
           experimental_input: 'false'

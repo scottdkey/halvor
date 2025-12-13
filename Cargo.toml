@@ -6,6 +6,13 @@ authors = ["Scott Key <scott@scottkey.dev>"]
 description = "Homelab Automation Layer - CLI tool for managing homelab infrastructure"
 license = "MIT"
 
+# Library target for FFI (iOS, macOS, Android, WASM)
+[lib]
+name = "halvor"
+path = "src/lib.rs"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# Binary target for CLI
 [[bin]]
 name = "halvor"
 path = "src/main.rs"
@@ -53,3 +60,8 @@ cargo-watch = "8.5"
 
 [build-dependencies]
 # No build dependencies needed - using std only
+
+[features]
+# FFI feature - enables C FFI exports for mobile/WASM builds
+# Don't enable this for CLI builds to avoid duplicate symbol issues
+ffi = []

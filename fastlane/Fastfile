@@ -101,9 +101,10 @@ platform :ios do
     
     # Step 3: Build iOS app with xcodebuild (disable automatic signing - we'll sign manually later)
     UI.header("Step 2/2: Building iOS app with Xcode")
-    
+
     # Disable automatic code signing during build - we'll sign manually with Fastlane after build
-    sh("cd #{swift_dir} && xcodebuild -project HalvorApp.xcodeproj -scheme HalvorApp-iOS -configuration Release -sdk iphoneos -derivedDataPath build CODE_SIGN_IDENTITY=\"\" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO")
+    # Use generic/platform=iOS destination for device builds without automatic signing
+    sh("cd #{swift_dir} && xcodebuild -project HalvorApp.xcodeproj -scheme HalvorApp-iOS -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGN_IDENTITY=\"\" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO")
     
     app_path = File.join(swift_dir, "build/Build/Products/Release-iphoneos/HalvorApp-iOS.app")
     unless File.directory?(app_path)

@@ -73,6 +73,14 @@ install-rust-targets: install-rust
 	rustup target add armv7-linux-androideabi || true; \
 	rustup target add i686-linux-android || true; \
 	rustup target add x86_64-linux-android || true; \
+	echo "Installing Linux targets (for cross-compilation)..."; \
+	rustup target add x86_64-unknown-linux-gnu || true; \
+	rustup target add aarch64-unknown-linux-gnu || true; \
+	rustup target add x86_64-unknown-linux-musl || true; \
+	rustup target add aarch64-unknown-linux-musl || true; \
+	echo "Installing Windows targets (for cross-compilation)..."; \
+	rustup target add x86_64-pc-windows-msvc || true; \
+	rustup target add aarch64-pc-windows-msvc || true; \
 	echo "Installing WASM target..."; \
 	rustup target add wasm32-unknown-unknown || true; \
 	echo "✓ All Rust targets installed"
@@ -81,6 +89,15 @@ install-rust-targets: install-rust
 install-rust-deps: install-rust
 	@echo "Installing Rust crate dependencies..."
 	@. $$HOME/.cargo/env 2>/dev/null || true; \
+	echo "Installing cross for cross-compilation..."; \
+	if command -v cross >/dev/null 2>&1; then \
+		echo "Upgrading cross to latest version..."; \
+		cargo install cross --force || echo "⚠️  Failed to upgrade cross"; \
+	else \
+		echo "Installing cross..."; \
+		cargo install cross || echo "⚠️  Failed to install cross"; \
+	fi; \
+	echo "✓ cross installed: $$(cross --version 2>&1 | head -1)"; \
 	echo "Fetching dependencies for main crate..."; \
 	cargo fetch || echo "⚠️  Failed to fetch main crate dependencies"; \
 	if [ -d "halvor-swift/halvor-ffi" ]; then \

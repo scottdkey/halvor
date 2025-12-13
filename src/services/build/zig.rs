@@ -46,7 +46,6 @@ pub fn setup_zig_cross_compilation(cmd: &mut Command, target: &str) -> Result<()
         .to_string_lossy()
         .to_string();
 
-    // For gnu targets, try to use GNU ld (bfd) which supports --allow-multiple-definition
     // This is needed to resolve FFI symbol conflicts (halvor_string_free duplicate)
     // For musl targets, use LLD (Zig's default)
     let linker_flag = if target.contains("linux-gnu") {
@@ -83,14 +82,15 @@ pub fn setup_zig_cross_compilation(cmd: &mut Command, target: &str) -> Result<()
         String::new()
     };
 
+    // Wrapper script with verbose error output
     let cc_wrapper_content = if !linker_flag.is_empty() {
         format!(
-            "#!/bin/sh\nexec {} cc -target {} {} \"$@\"\n",
+            "#!/bin/sh\n# Debug: echo \"Zig CC called with: $@\" >&2\nexec {} cc -target {} {} \"$@\" 2>&1\n",
             zig_path, zig_target, linker_flag
         )
     } else {
         format!(
-            "#!/bin/sh\nexec {} cc -target {} \"$@\"\n",
+            "#!/bin/sh\n# Debug: echo \"Zig CC called with: $@\" >&2\nexec {} cc -target {} \"$@\" 2>&1\n",
             zig_path, zig_target
         )
     };
@@ -156,6 +156,12 @@ pub fn setup_zig_cross_compilation(cmd: &mut Command, target: &str) -> Result<()
     cmd.env(&ar_env_var, ar_wrapper_str);
     cmd.env(&linker_var_name, cc_wrapper_str);
 
+    // Also set generic CC/CXX/AR since some build scripts (like ring)
+    // may not respect target-specific variables properly when cross-compiling
+    cmd.env("CC", cc_wrapper_str);
+    cmd.env("CXX", cxx_wrapper_str);
+    cmd.env("AR", ar_wrapper_str);
+
     // Debug: Print what we're setting (only in verbose mode)
     if std::env::var("RUST_LOG").is_ok() || std::env::var("VERBOSE").is_ok() {
         eprintln!("  Setting {}={}", cc_env_var, cc_wrapper_str);
@@ -163,17 +169,10 @@ pub fn setup_zig_cross_compilation(cmd: &mut Command, target: &str) -> Result<()
         eprintln!("  Setting {}={}", ar_env_var, ar_wrapper_str);
     }
 
-    // For cross-compilation, we MUST unset CC/CXX to force cc-rs to use our CC_* variables
-    // cc-rs will prefer CC/CXX over CC_* if both are set, so we need to remove them
-    if target.contains("linux") || target.contains("windows") {
-        // Always remove CC/CXX for cross-compilation to ensure cc-rs uses our CC_* variables
-        cmd.env_remove("CC");
-        cmd.env_remove("CXX");
-        cmd.env_remove("AR");
-        // Also remove CFLAGS/CXXFLAGS that might interfere
-        cmd.env_remove("CFLAGS");
-        cmd.env_remove("CXXFLAGS");
-    }
+    // Remove any existing CFLAGS/CXXFLAGS from the parent environment
+    // that might interfere with cross-compilation
+    cmd.env_remove("CFLAGS");
+    cmd.env_remove("CXXFLAGS");
 
     // Set RUSTFLAGS to handle FFI symbol conflicts
     // Always set this for gnu targets - matches Dockerfile behavior
@@ -182,38 +181,30 @@ pub fn setup_zig_cross_compilation(cmd: &mut Command, target: &str) -> Result<()
     if target.contains("linux-gnu") {
         let existing_rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
         let rustflags = if existing_rustflags.is_empty() {
-            "-C link-arg=-Wl,--allow-multiple-definition".to_string()
+            "-C link-arg=-Wl".to_string()
         } else {
-            format!(
-                "{} -C link-arg=-Wl,--allow-multiple-definition",
-                existing_rustflags
-            )
+            format!("{} -C link-arg=-Wl", existing_rustflags)
         };
         cmd.env("RUSTFLAGS", rustflags);
     }
 
-    // Modify PATH to put our wrapper directory first, ensuring our wrappers are found
-    // This helps prevent cc-rs from finding clang in PATH
-    // Also filter out common clang/llvm paths to force use of our Zig wrapper
+    // Modify PATH to put our wrapper directory first
+    // Filter out standalone LLVM installations to force cc-rs to use our Zig wrapper
     let current_path = std::env::var("PATH").unwrap_or_default();
     let wrapper_dir = temp_dir.to_string_lossy().to_string();
 
-    // Filter out common clang/llvm paths from PATH to prevent cc-rs from finding clang
+    // Filter out LLVM-specific paths but keep most system paths
     let filtered_path: Vec<&str> = current_path
         .split(':')
         .filter(|p| {
+            // Only filter out standalone LLVM installations
             !p.contains("/opt/homebrew/opt/llvm")
                 && !p.contains("/usr/local/opt/llvm")
-                && !p.contains("/Applications/Xcode.app/Contents/Developer/Toolchains")
-                && !p.contains("/usr/bin") // Don't filter /usr/bin, but prioritize our wrapper
+                && !p.contains("/opt/llvm")
         })
         .collect();
 
-    let new_path = if filtered_path.is_empty() {
-        wrapper_dir
-    } else {
-        format!("{}:{}", wrapper_dir, filtered_path.join(":"))
-    };
+    let new_path = format!("{}:{}", wrapper_dir, filtered_path.join(":"));
     cmd.env("PATH", &new_path);
 
     println!(
