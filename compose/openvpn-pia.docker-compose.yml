@@ -58,4 +58,3 @@ volumes:
 networks:
   vpn_network:
     name: vpn_network
-    driver: bridge
