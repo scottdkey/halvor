@@ -1,6 +1,14 @@
+# Nginx Proxy Manager - Reverse proxy with SSL
+# Deploy: halvor install npm
+# Manual: docker compose up -d
+#
+# Access admin UI at http://localhost:81
+# Default login: admin@example.com / changeme
+
 services:
-  app:
-    image: 'docker.io/jc21/nginx-proxy-manager:latest'
+  nginx-proxy-manager:
+    container_name: nginx-proxy-manager
+    image: docker.io/jc21/nginx-proxy-manager:latest
     restart: unless-stopped
     ports:
       - '80:80'

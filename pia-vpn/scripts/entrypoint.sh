@@ -41,10 +41,10 @@ if [ "${UPDATE_CONFIGS:-false}" = "true" ]; then
             # Extract configs
             if unzip -q openvpn.zip; then
                 echo "✓ Extraction successful"
-                
+
                 # Copy .ovpn files to /config
                 find . -name "*.ovpn" -exec cp {} /config/ \;
-                
+
                 echo "✓ Configs copied to /config"
             else
                 echo "⚠ Failed to extract configs"
@@ -57,6 +57,26 @@ if [ "${UPDATE_CONFIGS:-false}" = "true" ]; then
             echo "⚠ Failed to download configs - continuing with existing configs"
         fi
     fi
+fi
+
+# Fix ALL existing config files for OpenVPN 2.6 compatibility (runs every startup)
+if ls /config/*.ovpn 1> /dev/null 2>&1; then
+    echo "Fixing configs for OpenVPN 2.6 compatibility..."
+    for ovpn in /config/*.ovpn; do
+        echo "  Processing: $ovpn"
+        # Show line 18 before fix
+        echo "  Line 18 before: $(sed -n '18p' "$ovpn")"
+        # Fix line endings (CRLF -> LF)
+        dos2unix "$ovpn" 2>/dev/null || sed -i 's/\r$//' "$ovpn" 2>/dev/null || true
+        # Fix malformed certificate boundaries (normalize to exactly 5 dashes)
+        sed -i -E 's/-{3,}BEGIN/-----BEGIN/g; s/-{3,}END/-----END/g' "$ovpn"
+        # Show line 18 after fix
+        echo "  Line 18 after: $(sed -n '18p' "$ovpn")"
+        # Remove IPv6 directives (prevents issues when IPv6 is disabled)
+        # Remove crl-verify (CRL files often missing, causes TLS errors)
+        sed -i '/ifconfig-ipv6/d; /route-ipv6/d; /crl-verify/d' "$ovpn" 2>/dev/null || true
+    done
+    echo "✓ Configs fixed"
 fi
 
 # Handle PIA credentials from environment variables
@@ -220,6 +240,8 @@ openvpn \
     --auth-user-pass /config/auth.txt \
     --daemon \
     --log /var/log/openvpn/openvpn.log \
+    --pull-filter ignore "ifconfig-ipv6" \
+    --pull-filter ignore "route-ipv6" \
     --mssfix 1450 \
     --sndbuf 393216 \
     --rcvbuf 393216 \

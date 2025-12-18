@@ -68,12 +68,8 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
         List { verbose } => {
             list::handle_list(hostname.as_deref(), verbose)?;
         }
-        Install {
-            service,
-            edition,
-            host,
-        } => {
-            install::handle_install(hostname.as_deref(), &service, &edition, host)?;
+        Install { app, list } => {
+            install::handle_install(hostname.as_deref(), app.as_deref(), list)?;
         }
         Uninstall { service } => {
             if let Some(service) = service {
@@ -83,10 +79,10 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
             }
         }
         Provision {
+            yes,
             portainer_host,
-            portainer_edition,
         } => {
-            provision::handle_provision(hostname.as_deref(), portainer_host, &portainer_edition)?;
+            provision::handle_provision(hostname.as_deref(), yes, portainer_host)?;
         }
         Smb { uninstall } => {
             smb::handle_smb(hostname.as_deref(), uninstall)?;

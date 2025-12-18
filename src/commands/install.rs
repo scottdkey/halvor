@@ -1,176 +1,76 @@
+//! Install Command
+//!
+//! Unified installer for platform tools and Docker services.
+//!
+//! Usage:
+//!   halvor install <app>              # Install on current system
+//!   halvor install <app> -H <host>    # Install on remote host
+//!   halvor install --list             # Show all available apps
+
 use crate::config;
 use crate::services;
-use crate::services::build::cli::build_target;
-use anyhow::{Context, Result};
-use std::path::PathBuf;
-use std::process::Command;
+use crate::services::compose_deployer::{find_app, list_apps, AppCategory};
+use anyhow::Result;
 
 /// Handle install command
-/// hostname: None = local, Some(hostname) = remote host
-pub fn handle_install(
-    hostname: Option<&str>,
-    service: &str,
-    edition: &str,
-    host: bool,
-) -> Result<()> {
+pub fn handle_install(hostname: Option<&str>, app: Option<&str>, list: bool) -> Result<()> {
+    // Handle --list flag
+    if list {
+        list_apps();
+        return Ok(());
+    }
+
+    // Require app name
+    let app_name = match app {
+        Some(name) => name,
+        None => {
+            list_apps();
+            println!("\nError: No app specified. Use 'halvor install <app>' to install.");
+            return Ok(());
+        }
+    };
+
+    // Look up the app
+    let app_def = match find_app(app_name) {
+        Some(def) => def,
+        None => {
+            println!("Unknown app: {}\n", app_name);
+            list_apps();
+            anyhow::bail!("App '{}' not found. See available apps above.", app_name);
+        }
+    };
+
     let config = config::load_config()?;
     let target_host = hostname.unwrap_or("localhost");
 
-    match service.to_lowercase().as_str() {
+    match app_def.category {
+        AppCategory::Platform => {
+            install_platform_tool(target_host, app_def.name, &config)?;
+        }
+        AppCategory::DockerService => {
+            services::compose_deployer::deploy_compose_service(target_host, app_def, &config)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Install a platform tool (docker, tailscale)
+fn install_platform_tool(hostname: &str, tool: &str, config: &config::EnvConfig) -> Result<()> {
+    match tool {
         "docker" => {
-            services::docker::install_docker(target_host, &config)?;
+            services::docker::install_docker(hostname, config)?;
         }
         "tailscale" => {
-            if target_host == "localhost" {
+            if hostname == "localhost" {
                 services::tailscale::install_tailscale()?;
             } else {
-                services::tailscale::install_tailscale_on_host(target_host, &config)?;
+                services::tailscale::install_tailscale_on_host(hostname, config)?;
             }
-        }
-        "portainer" => {
-            if host {
-                services::portainer::install_portainer_host(target_host, edition, &config)?;
-            } else {
-                services::portainer::install_portainer_agent(target_host, edition, &config)?;
-            }
-        }
-        "npm" => {
-            anyhow::bail!(
-                "NPM installation not yet implemented. Use 'halvor {} npm' to configure proxy hosts",
-                target_host
-            );
-        }
-        "cli" => {
-            install_cli()?;
         }
         _ => {
-            anyhow::bail!(
-                "Unknown service: {}. Supported services: docker, tailscale, portainer, npm, cli",
-                service
-            );
+            anyhow::bail!("Unknown platform tool: {}", tool);
         }
     }
-
     Ok(())
-}
-
-/// Build and install CLI to system
-fn install_cli() -> Result<()> {
-    println!("Building and installing CLI to system...");
-
-    // Determine the current target triple
-    let current_target = get_current_target()?;
-    println!("Building for target: {}", current_target);
-
-    // Build the CLI for the current platform
-    let binary_path = match build_target(&current_target)? {
-        Some(path) => {
-            println!("✓ Built: {}", path.display());
-            path
-        }
-        None => {
-            anyhow::bail!("Failed to build CLI for target: {}", current_target);
-        }
-    };
-
-    // Install the binary to cargo's bin directory
-    println!("Installing CLI to system...");
-    let cargo_home = std::env::var("CARGO_HOME")
-        .ok()
-        .or_else(|| {
-            std::env::var("HOME")
-                .map(|home| format!("{}/.cargo", home))
-                .ok()
-        })
-        .unwrap_or_else(|| String::from("~/.cargo"));
-
-    let cargo_bin = PathBuf::from(&cargo_home).join("bin");
-    std::fs::create_dir_all(&cargo_bin).context("Failed to create cargo bin directory")?;
-
-    let install_path = cargo_bin.join("halvor");
-
-    // Copy the binary to the install location
-    std::fs::copy(&binary_path, &install_path).with_context(|| {
-        format!(
-            "Failed to copy binary from {} to {}",
-            binary_path.display(),
-            install_path.display()
-        )
-    })?;
-
-    // Make it executable (if on Unix)
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&install_path, std::fs::Permissions::from_mode(0o755))
-            .context("Failed to make binary executable")?;
-    }
-
-    println!("✓ CLI installed to {}", install_path.display());
-    println!("  The 'halvor' command is now available in your PATH");
-
-    Ok(())
-}
-
-/// Get the current Rust target triple
-fn get_current_target() -> Result<String> {
-    // Try to get target from rustc
-    let output = Command::new("rustc")
-        .args(["-vV"])
-        .output()
-        .context("Failed to run rustc")?;
-
-    if !output.status.success() {
-        anyhow::bail!("rustc command failed");
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if line.starts_with("host: ") {
-            return Ok(line[6..].trim().to_string());
-        }
-    }
-
-    // Fallback: use compile-time target
-    if let Ok(target) = std::env::var("TARGET") {
-        return Ok(target);
-    }
-
-    // Use compile-time target detection
-    let default_target: &str = {
-        #[cfg(all(target_arch = "x86_64", target_os = "macos"))]
-        {
-            "x86_64-apple-darwin"
-        }
-        #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-        {
-            "aarch64-apple-darwin"
-        }
-        #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-        {
-            "x86_64-unknown-linux-gnu"
-        }
-        #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
-        {
-            "aarch64-unknown-linux-gnu"
-        }
-        #[cfg(all(target_arch = "x86_64", target_os = "windows"))]
-        {
-            "x86_64-pc-windows-msvc"
-        }
-        #[cfg(not(any(
-            all(target_arch = "x86_64", target_os = "macos"),
-            all(target_arch = "aarch64", target_os = "macos"),
-            all(target_arch = "x86_64", target_os = "linux"),
-            all(target_arch = "aarch64", target_os = "linux"),
-            all(target_arch = "x86_64", target_os = "windows")
-        )))]
-        {
-            anyhow::bail!(
-                "Unable to determine current target triple. Please set TARGET environment variable."
-            );
-        }
-    };
-
-    Ok(default_target.to_string())
 }

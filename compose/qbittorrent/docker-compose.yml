@@ -1,0 +1,33 @@
+# qBittorrent - Torrent download client
+# Deploy: halvor install qbittorrent
+# Manual: docker compose up -d
+#
+# Requires: VPN service running (halvor install vpn)
+# Access: http://localhost:8081
+
+services:
+  qbittorrent:
+    container_name: qbittorrent
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-Etc/UTC}
+      - HTTP_PROXY=http://pia-vpn:8888
+      - HTTPS_PROXY=http://pia-vpn:8888
+    volumes:
+      - qbittorrent_data:/config
+      - ${DOWNLOADS_PATH:-/mnt/downloads}:/downloads
+    ports:
+      - 8081:8080
+    networks:
+      - vpn_network
+    restart: unless-stopped
+
+volumes:
+  qbittorrent_data:
+    name: qbittorrent_data
+
+networks:
+  vpn_network:
+    external: true

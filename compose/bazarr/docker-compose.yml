@@ -1,0 +1,37 @@
+# Bazarr - Subtitle management for Radarr/Sonarr
+# Deploy: halvor install bazarr
+# Manual: docker compose up -d
+#
+# Requires: VPN service running (halvor install vpn)
+# Access: http://localhost:6767
+
+services:
+  bazarr:
+    container_name: bazarr
+    image: lscr.io/linuxserver/bazarr:latest
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-Etc/UTC}
+      - HTTP_PROXY=http://pia-vpn:8888
+      - HTTPS_PROXY=http://pia-vpn:8888
+    volumes:
+      - bazarr_data:/config
+      - ${MOVIES_PATH:-/mnt/media/movies}:/media/movies
+      - ${TV_PATH:-/mnt/media/tv}:/media/tv
+      - ${MOVIES_4K_PATH:-/mnt/media/movies-4k}:/media/4k
+      - ${DOWNLOADS_PATH:-/mnt/downloads}:/downloads
+      - ${MUSIC_PATH:-/mnt/media/music}:/media/music
+    ports:
+      - 6767:6767
+    networks:
+      - vpn_network
+    restart: unless-stopped
+
+volumes:
+  bazarr_data:
+    name: bazarr_data
+
+networks:
+  vpn_network:
+    external: true

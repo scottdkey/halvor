@@ -1,0 +1,32 @@
+# Prowlarr - Indexer manager for *arr apps
+# Deploy: halvor install prowlarr
+# Manual: docker compose up -d
+#
+# Requires: VPN service running (halvor install vpn)
+# Access: http://localhost:9696
+
+services:
+  prowlarr:
+    container_name: prowlarr
+    image: lscr.io/linuxserver/prowlarr:latest
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-Etc/UTC}
+      - HTTP_PROXY=http://pia-vpn:8888
+      - HTTPS_PROXY=http://pia-vpn:8888
+    volumes:
+      - prowlarr_data:/config
+    ports:
+      - 9696:9696
+    networks:
+      - vpn_network
+    restart: unless-stopped
+
+volumes:
+  prowlarr_data:
+    name: prowlarr_data
+
+networks:
+  vpn_network:
+    external: true

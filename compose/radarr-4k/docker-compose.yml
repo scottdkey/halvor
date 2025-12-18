@@ -1,0 +1,34 @@
+# Radarr 4K - Movie management for 4K content
+# Deploy: halvor install radarr-4k
+# Manual: docker compose up -d
+#
+# Requires: VPN service running (halvor install vpn)
+# Access: http://localhost:7879
+
+services:
+  radarr-4k:
+    container_name: radarr-4k
+    image: lscr.io/linuxserver/radarr:latest
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-Etc/UTC}
+      - HTTP_PROXY=http://pia-vpn:8888
+      - HTTPS_PROXY=http://pia-vpn:8888
+    volumes:
+      - radarr_4k_data:/config
+      - ${MOVIES_4K_PATH:-/mnt/media/movies-4k}:/media/movies
+      - ${DOWNLOADS_PATH:-/mnt/downloads}:/downloads
+    ports:
+      - 7879:7878
+    networks:
+      - vpn_network
+    restart: unless-stopped
+
+volumes:
+  radarr_4k_data:
+    name: radarr_4k_data
+
+networks:
+  vpn_network:
+    external: true

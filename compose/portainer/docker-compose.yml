@@ -1,7 +1,11 @@
+# Portainer CE/BE - Container Management UI
+# Deploy: halvor install portainer
+# Manual: docker compose up -d
+
 services:
   portainer:
     container_name: portainer
-    image: portainer/portainer-ce:lts
+    image: ${PORTAINER_IMAGE:-portainer/portainer-ce:latest}
     restart: always
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -9,12 +13,14 @@ services:
     ports:
       - 9443:9443
       - 9000:9000
-      - 8000:8000 # Remove if you do not intend to use Edge Agents
+      - 8000:8000  # Edge Agents
+    networks:
+      - portainer_network
 
 volumes:
   portainer_data:
     name: portainer_data
 
 networks:
-  default:
+  portainer_network:
     name: portainer_network

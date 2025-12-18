@@ -300,6 +300,11 @@ impl Executor {
     /// Create an executor based on hostname and config
     /// Automatically determines if execution should be local or remote
     pub fn new(hostname: &str, config: &crate::config::EnvConfig) -> Result<Self> {
+        // Handle "localhost" as a special case - always local execution
+        if hostname == "localhost" || hostname == "127.0.0.1" {
+            return Ok(Executor::Local);
+        }
+
         // Try to find hostname (with normalization for TLDs)
         let actual_hostname = crate::config::service::find_hostname_in_config(hostname, config)
             .ok_or_else(|| anyhow::anyhow!("Host '{}' not found in config", hostname))?;

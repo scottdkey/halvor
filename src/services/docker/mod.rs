@@ -6,6 +6,11 @@ use serde_json::{Value, json};
 pub mod build;
 pub mod diagnostics;
 
+/// Check if Docker is installed
+pub fn is_docker_installed<E: CommandExecutor>(exec: &E) -> bool {
+    exec.check_command_exists("docker").unwrap_or(false)
+}
+
 /// Check if Docker daemon is running and start it if needed
 pub fn ensure_docker_running<E: CommandExecutor>(exec: &E) -> Result<()> {
     // Try to run a simple docker command to check if daemon is accessible

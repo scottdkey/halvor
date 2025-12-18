@@ -53,30 +53,27 @@ pub enum Commands {
         #[arg(long)]
         verbose: bool,
     },
-    /// Install a service on a host
+    /// Install an app on a host
     Install {
-        /// Service to install: docker, tailscale, portainer, npm
-        service: String,
-        /// Portainer edition (ce or be) - only used with portainer
-        #[arg(long, default_value = "ce")]
-        edition: String,
-        /// Install Portainer host (with UI) instead of agent - only used with portainer
+        /// App to install (e.g., docker, sonarr, portainer). Use --list to see all.
+        app: Option<String>,
+        /// List all available apps
         #[arg(long)]
-        host: bool,
+        list: bool,
     },
     /// Uninstall a service from a host or halvor itself
     Uninstall {
         /// Service to uninstall: npm, portainer, smb. If not provided, guided uninstall of halvor
         service: Option<String>,
     },
-    /// Provision a host (install Docker, Tailscale, Portainer)
+    /// Provision a host with guided setup (Docker, Tailscale, Portainer, services)
     Provision {
-        /// Install Portainer host instead of Portainer Agent
+        /// Skip interactive prompts and use defaults
+        #[arg(long, short = 'y')]
+        yes: bool,
+        /// Install Portainer host instead of agent (non-interactive only)
         #[arg(long)]
         portainer_host: bool,
-        /// Portainer edition to install (ce or be). Only used with --portainer-host
-        #[arg(long, default_value = "ce")]
-        portainer_edition: String,
     },
     /// Setup and mount SMB shares
     Smb {

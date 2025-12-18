@@ -71,6 +71,6 @@ echo ""
 
 echo "=== Access Information ==="
 echo "  From host: http://<host-ip>:8888"
-echo "  From containers: http://openvpn-pia:8888"
+echo "  From containers: http://pia-vpn:8888"
 echo "  Example: curl --proxy http://10.10.10.14:8888 https://api.ipify.org"
 echo ""

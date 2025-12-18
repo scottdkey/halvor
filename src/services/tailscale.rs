@@ -4,6 +4,11 @@ use crate::utils::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
 use std::process::Command;
 
+/// Check if Tailscale is installed
+pub fn is_tailscale_installed<E: CommandExecutor>(exec: &E) -> bool {
+    exec.check_command_exists("tailscale").unwrap_or(false)
+}
+
 pub fn install_tailscale() -> Result<()> {
     let os = config::get_os();
     let arch = config::get_arch();

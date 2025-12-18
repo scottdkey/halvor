@@ -82,16 +82,12 @@ pub fn get_env_file_path() -> Result<PathBuf> {
 pub fn load_env_config(_homelab_dir: &Path) -> Result<EnvConfig> {
     let env_file = get_env_file_path()?;
 
-    if !env_file.exists() {
-        anyhow::bail!(
-            "Error: .env file not found at {}\n\nRun 'hal config init' to configure the environment file location.\nOr copy .env.example to .env and configure your settings.",
-            env_file.display()
-        );
+    // Load .env file if it exists, but don't require it
+    // Environment variables may already be set via direnv/.envrc
+    if env_file.exists() {
+        dotenv::from_path(&env_file)
+            .with_context(|| format!("Failed to load .env file from {}", env_file.display()))?;
     }
-
-    // Load .env file
-    dotenv::from_path(&env_file)
-        .with_context(|| format!("Failed to load .env file from {}", env_file.display()))?;
 
     let tailnet_base = env::var("TAILNET_BASE").unwrap_or_else(|_| "ts.net".to_string());
 

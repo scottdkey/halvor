@@ -3,6 +3,7 @@
 
 pub mod backup;
 pub mod build;
+pub mod compose_deployer;
 pub mod dev;
 pub mod docker;
 pub mod host;
@@ -27,7 +28,7 @@ pub use host::{
 };
 pub use pia_vpn::{build_and_push_vpn_image, deploy_vpn, verify_vpn};
 pub use portainer::{install_agent, install_host};
-pub use provision::provision_host;
+pub use provision::{provision_defaults, provision_guided};
 pub use smb::{setup_smb_mounts, uninstall_smb_mounts};
 pub use sync::sync_data;
 pub use tailscale::{

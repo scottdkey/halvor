@@ -1,0 +1,33 @@
+# SABnzbd - Usenet download client
+# Deploy: halvor install sabnzbd
+# Manual: docker compose up -d
+#
+# Requires: VPN service running (halvor install vpn)
+# Access: http://localhost:8080
+
+services:
+  sabnzbd:
+    container_name: sabnzbd
+    image: lscr.io/linuxserver/sabnzbd:latest
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-Etc/UTC}
+      - HTTP_PROXY=http://pia-vpn:8888
+      - HTTPS_PROXY=http://pia-vpn:8888
+    volumes:
+      - sabnzbd_data:/config
+      - ${DOWNLOADS_PATH:-/mnt/downloads}:/downloads
+    ports:
+      - 8080:8080
+    networks:
+      - vpn_network
+    restart: unless-stopped
+
+volumes:
+  sabnzbd_data:
+    name: sabnzbd_data
+
+networks:
+  vpn_network:
+    external: true

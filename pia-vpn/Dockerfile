@@ -1,8 +1,7 @@
-FROM alpine:3.23
+FROM alpine:latest
 
 # Install OpenVPN, Privoxy and required tools
-# Using --update to refresh package index, with retry for multi-platform builds
-RUN apk update --no-cache || apk update --no-cache && \
+RUN apk update && \
     apk add --no-cache \
     openvpn \
     privoxy \
@@ -12,7 +11,10 @@ RUN apk update --no-cache || apk update --no-cache && \
     net-tools \
     unzip \
     wget \
-    ca-certificates
+    dos2unix \
+    sed \
+    ca-certificates \
+    && rm -rf /var/cache/apk/*
 
 # Create necessary directories
 RUN mkdir -p /etc/openvpn /var/log/openvpn /etc/privoxy /var/log/privoxy /config
