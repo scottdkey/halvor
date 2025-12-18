@@ -3,6 +3,8 @@
 # Script to check proxy connectivity and network status
 # Usage: docker exec <container> check-proxy.sh
 
+PROXY_PORT="${PROXY_PORT:-8888}"
+
 echo "=== Network Status ==="
 echo ""
 echo "Container Network Interfaces:"
@@ -43,11 +45,11 @@ else
 fi
 echo ""
 
-echo "Port 8888 Listening:"
+echo "Port $PROXY_PORT Listening:"
 if command -v netstat >/dev/null 2>&1; then
-    netstat -tlnp 2>/dev/null | grep 8888 | sed 's/^/  /'
+    netstat -tlnp 2>/dev/null | grep "$PROXY_PORT" | sed 's/^/  /'
 elif command -v ss >/dev/null 2>&1; then
-    ss -tlnp 2>/dev/null | grep 8888 | sed 's/^/  /'
+    ss -tlnp 2>/dev/null | grep "$PROXY_PORT" | sed 's/^/  /'
 else
     echo "  (netstat/ss not available)"
 fi
@@ -55,8 +57,8 @@ echo ""
 
 echo "Proxy Test:"
 echo "  Testing local connection..."
-if curl -s --proxy http://127.0.0.1:8888 --max-time 5 https://api.ipify.org >/dev/null 2>&1; then
-    VPN_IP=$(curl -s --proxy http://127.0.0.1:8888 --max-time 5 https://api.ipify.org)
+if curl -s --proxy "http://127.0.0.1:$PROXY_PORT" --max-time 5 https://api.ipify.org >/dev/null 2>&1; then
+    VPN_IP=$(curl -s --proxy "http://127.0.0.1:$PROXY_PORT" --max-time 5 https://api.ipify.org)
     echo "  ✓ Proxy is working"
     echo "  VPN IP (via proxy): $VPN_IP"
 else
@@ -70,7 +72,7 @@ echo "  $PUBLIC_IP"
 echo ""
 
 echo "=== Access Information ==="
-echo "  From host: http://<host-ip>:8888"
-echo "  From containers: http://pia-vpn:8888"
-echo "  Example: curl --proxy http://10.10.10.14:8888 https://api.ipify.org"
+echo "  From host: http://<host-ip>:$PROXY_PORT"
+echo "  From containers: http://pia-vpn:$PROXY_PORT"
+echo "  Example: curl --proxy http://<host-ip>:$PROXY_PORT https://api.ipify.org"
 echo ""

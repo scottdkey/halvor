@@ -2,6 +2,9 @@
 
 set -e
 
+# Default proxy port
+PROXY_PORT="${PROXY_PORT:-8888}"
+
 # Debug: Print environment variables if DEBUG is set
 if [ "${DEBUG:-false}" = "true" ]; then
     echo "=== Environment Variables ==="
@@ -9,22 +12,35 @@ if [ "${DEBUG:-false}" = "true" ]; then
     echo "PIA_USERNAME: ${PIA_USERNAME:-<not set>}"
     echo "PIA_PASSWORD: ${PIA_PASSWORD:+<set>}"
     echo "UPDATE_CONFIGS: ${UPDATE_CONFIGS:-<not set>}"
+    echo "PROXY_PORT: ${PROXY_PORT}"
     echo "TZ: ${TZ:-<not set>}"
     echo "=============================="
     echo ""
 fi
+
+# Configure Privoxy listen address with the specified port
+echo "Configuring Privoxy to listen on port ${PROXY_PORT}..."
+sed -i '/listen-address/d' /etc/privoxy/config 2>/dev/null || true
+echo "listen-address 0.0.0.0:${PROXY_PORT}" >> /etc/privoxy/config
 
 # PIA OpenVPN config download URL
 PIA_CONFIG_URL="https://www.privateinternetaccess.com/openvpn/openvpn.zip"
 
 # Download PIA configs if UPDATE_CONFIGS environment variable is set
 if [ "${UPDATE_CONFIGS:-false}" = "true" ]; then
-    echo "UPDATE_CONFIGS is set - downloading PIA OpenVPN configs..."
-    
+    # Normalize region name for filename matching
+    REGION_NORMALIZED=""
+    if [ -n "${REGION:-}" ]; then
+        REGION_NORMALIZED=$(echo "$REGION" | tr '[:upper:]' '[:lower:]' | tr '-' '_')
+        echo "UPDATE_CONFIGS is set - downloading PIA config for region: $REGION_NORMALIZED"
+    else
+        echo "UPDATE_CONFIGS is set - downloading all PIA OpenVPN configs (no REGION specified)"
+    fi
+
     # Ensure /config directory exists and is writable
     mkdir -p /config
     chmod 755 /config
-    
+
     # Check if config directory is writable
     if [ ! -w /config ]; then
         echo "⚠ Warning: /config is not writable, cannot download configs"
@@ -33,23 +49,37 @@ if [ "${UPDATE_CONFIGS:-false}" = "true" ]; then
         # Create temp directory for download
         TEMP_DIR=$(mktemp -d)
         cd "$TEMP_DIR"
-        
+
         echo "Downloading PIA OpenVPN configs from: $PIA_CONFIG_URL"
         if wget -q "$PIA_CONFIG_URL" -O openvpn.zip; then
             echo "✓ Download successful"
-            
-            # Extract configs
-            if unzip -q openvpn.zip; then
-                echo "✓ Extraction successful"
 
-                # Copy .ovpn files to /config
-                find . -name "*.ovpn" -exec cp {} /config/ \;
-
-                echo "✓ Configs copied to /config"
+            if [ -n "$REGION_NORMALIZED" ]; then
+                # Extract only the specified region's config
+                CONFIG_FILE="${REGION_NORMALIZED}.ovpn"
+                if unzip -q openvpn.zip "$CONFIG_FILE" 2>/dev/null; then
+                    echo "✓ Extracted: $CONFIG_FILE"
+                    cp "$CONFIG_FILE" /config/
+                    echo "✓ Config copied to /config/$CONFIG_FILE"
+                else
+                    echo "⚠ Config '$CONFIG_FILE' not found in archive"
+                    echo "  Available configs:"
+                    unzip -l openvpn.zip | grep "\.ovpn" | awk '{print "    " $4}' | head -20
+                    echo "  Falling back to extracting all configs..."
+                    unzip -q openvpn.zip "*.ovpn"
+                    find . -name "*.ovpn" -exec cp {} /config/ \;
+                fi
             else
-                echo "⚠ Failed to extract configs"
+                # Extract all configs when no region specified
+                if unzip -q openvpn.zip; then
+                    echo "✓ Extraction successful"
+                    find . -name "*.ovpn" -exec cp {} /config/ \;
+                    echo "✓ All configs copied to /config"
+                else
+                    echo "⚠ Failed to extract configs"
+                fi
             fi
-            
+
             # Cleanup
             cd /
             rm -rf "$TEMP_DIR"
@@ -63,18 +93,20 @@ fi
 if ls /config/*.ovpn 1> /dev/null 2>&1; then
     echo "Fixing configs for OpenVPN 2.6 compatibility..."
     for ovpn in /config/*.ovpn; do
-        echo "  Processing: $ovpn"
-        # Show line 18 before fix
-        echo "  Line 18 before: $(sed -n '18p' "$ovpn")"
+        echo "  Processing: $(basename "$ovpn")"
+
         # Fix line endings (CRLF -> LF)
         dos2unix "$ovpn" 2>/dev/null || sed -i 's/\r$//' "$ovpn" 2>/dev/null || true
-        # Fix malformed certificate boundaries (normalize to exactly 5 dashes)
-        sed -i -E 's/-{3,}BEGIN/-----BEGIN/g; s/-{3,}END/-----END/g' "$ovpn"
-        # Show line 18 after fix
-        echo "  Line 18 after: $(sed -n '18p' "$ovpn")"
+
+        # Remove entire <crl-verify>...</crl-verify> block (multi-line)
+        # CRL verification often fails due to missing/expired CRL files
+        sed -i '/<crl-verify>/,/<\/crl-verify>/d' "$ovpn" 2>/dev/null || true
+
+        # Remove standalone crl-verify directive if present
+        sed -i '/^crl-verify/d' "$ovpn" 2>/dev/null || true
+
         # Remove IPv6 directives (prevents issues when IPv6 is disabled)
-        # Remove crl-verify (CRL files often missing, causes TLS errors)
-        sed -i '/ifconfig-ipv6/d; /route-ipv6/d; /crl-verify/d' "$ovpn" 2>/dev/null || true
+        sed -i '/ifconfig-ipv6/d; /route-ipv6/d' "$ovpn" 2>/dev/null || true
     done
     echo "✓ Configs fixed"
 fi
@@ -311,8 +343,15 @@ echo ""
 echo "VPN Status:"
 ip addr show tun0 2>/dev/null | grep "inet " | sed 's/^/  VPN IP: /' || echo "  TUN interface: Not available"
 echo ""
-echo "Proxy: http://0.0.0.0:8888"
+echo "Proxy: http://0.0.0.0:${PROXY_PORT}"
 echo ""
+
+# Run VPN and proxy tests at startup
+echo "=== Running Startup Tests ==="
+echo ""
+/usr/local/bin/test-vpn.sh
+echo ""
+
 echo "=== Service Logs ==="
 echo ""
 

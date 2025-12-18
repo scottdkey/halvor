@@ -5,6 +5,9 @@
 
 set +e  # Don't exit on errors, we want to see all test results
 
+# Get proxy port from environment or default
+PROXY_PORT="${PROXY_PORT:-8888}"
+
 echo "=== VPN Connection Test ==="
 echo ""
 
@@ -64,7 +67,7 @@ echo ""
 # Test 5: Get public IP via Privoxy proxy
 echo "5. Testing connection via Privoxy proxy..."
 if pgrep privoxy >/dev/null; then
-    PROXY_IP=$(curl -s --proxy http://127.0.0.1:8888 --max-time 10 https://api.ipify.org 2>/dev/null || echo "Failed")
+    PROXY_IP=$(curl -s --proxy http://127.0.0.1:${PROXY_PORT} --max-time 10 https://api.ipify.org 2>/dev/null || echo "Failed")
     if [ "$PROXY_IP" != "Failed" ]; then
         echo "   Proxy IP: $PROXY_IP"
         echo "   ✓ Proxy connection working"
@@ -103,7 +106,7 @@ echo ""
 
 # Test 8: Test HTTPS connectivity via proxy
 echo "8. Testing HTTPS via proxy..."
-if curl -s --proxy http://127.0.0.1:8888 --max-time 10 https://www.google.com >/dev/null 2>&1; then
+if curl -s --proxy http://127.0.0.1:${PROXY_PORT} --max-time 10 https://www.google.com >/dev/null 2>&1; then
     echo "   ✓ HTTPS via proxy working"
 else
     echo "   ✗ HTTPS via proxy failed"
@@ -121,7 +124,7 @@ if [ "$DIRECT_IP" != "Failed" ] && [ -n "$VPN_IP" ]; then
     fi
     echo ""
     echo "To test from host:"
-    echo "  curl --proxy http://<host-ip>:8888 https://api.ipify.org"
+    echo "  curl --proxy http://<host-ip>:${PROXY_PORT} https://api.ipify.org"
 else
     echo "✗ VPN connection test failed"
     exit 1

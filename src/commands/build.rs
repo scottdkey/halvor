@@ -3,6 +3,7 @@ use crate::services::build::{
     build_and_sign_ios, build_and_sign_mac, build_android, build_cli, build_web, build_web_docker,
     push_ios_to_app_store, run_web_prod, sign_android,
 };
+use crate::services::docker;
 use anyhow::Result;
 use clap::Subcommand;
 
@@ -47,6 +48,19 @@ pub enum BuildCommands {
         /// Push built binaries to GitHub releases
         #[arg(long)]
         push: bool,
+    },
+    /// Build PIA VPN Docker container
+    #[command(name = "pia-vpn", alias = "vpn")]
+    PiaVpn {
+        /// Build without using cache
+        #[arg(long)]
+        no_cache: bool,
+        /// Push to GitHub Container Registry (experimental tag)
+        #[arg(long)]
+        push: bool,
+        /// Push as release (latest tag instead of experimental)
+        #[arg(long)]
+        release: bool,
     },
 }
 
@@ -97,6 +111,10 @@ pub fn handle_build(command: BuildCommands) -> Result<()> {
             let targets_str: Option<&str> = targets.as_deref();
             build_cli(platforms_str, targets_str, push)?;
             println!("✓ CLI build complete");
+        }
+        BuildCommands::PiaVpn { no_cache, push, release } => {
+            docker::build_container("pia-vpn", no_cache, push, release)?;
+            println!("✓ PIA VPN build complete");
         }
     }
 

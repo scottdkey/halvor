@@ -19,12 +19,14 @@ RUN apk update && \
 # Create necessary directories
 RUN mkdir -p /etc/openvpn /var/log/openvpn /etc/privoxy /var/log/privoxy /config
 
-# Configure Privoxy
-RUN echo "confdir /etc/privoxy" >> /etc/privoxy/config && \
-    echo "listen-address 0.0.0.0:8888" >> /etc/privoxy/config && \
+# Configure Privoxy base config (port set at runtime via entrypoint)
+RUN echo "confdir /etc/privoxy" > /etc/privoxy/config && \
     echo "forward / ." >> /etc/privoxy/config && \
     echo "logfile /var/log/privoxy/logfile" >> /etc/privoxy/config && \
     echo "logdir /var/log/privoxy" >> /etc/privoxy/config
+
+# Default proxy port (can be overridden via PROXY_PORT env var)
+ENV PROXY_PORT=8888
 
 # Copy scripts
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh

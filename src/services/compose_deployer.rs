@@ -6,6 +6,8 @@
 //! Environment variables:
 //! - HALVOR_ENV: Set to "development" for dev mode (builds locally, runs from repo)
 //! - COMPOSE_DEPLOY_PATH: Base path for production deployments (default: $HOME)
+//! - HOMELAB_REPO: GitHub repo for fetching compose files (default: scottdkey/homelab)
+//! - HOMELAB_BRANCH: Branch to fetch from (default: main)
 
 use crate::config::EnvConfig;
 use crate::services::docker;
@@ -25,6 +27,26 @@ fn get_deploy_base_path() -> String {
     std::env::var("COMPOSE_DEPLOY_PATH").unwrap_or_else(|_| "$HOME".to_string())
 }
 
+/// Get the GitHub repo for fetching compose files
+fn get_repo() -> String {
+    std::env::var("HOMELAB_REPO").unwrap_or_else(|_| "scottdkey/homelab".to_string())
+}
+
+/// Get the branch to fetch from
+fn get_branch() -> String {
+    std::env::var("HOMELAB_BRANCH").unwrap_or_else(|_| "main".to_string())
+}
+
+/// Get raw GitHub URL for a file
+fn get_github_raw_url(compose_dir: &str, filename: &str) -> String {
+    let repo = get_repo();
+    let branch = get_branch();
+    format!(
+        "https://raw.githubusercontent.com/{}/{}/compose/{}/{}",
+        repo, branch, compose_dir, filename
+    )
+}
+
 /// App category determines how an app is installed
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppCategory {
@@ -42,6 +64,8 @@ pub struct AppDefinition {
     pub description: &'static str,
     /// For DockerService: name of the compose directory
     pub compose_dir: Option<&'static str>,
+    /// For DockerService: directory containing Dockerfile for local builds (relative to repo root)
+    pub build_dir: Option<&'static str>,
     /// Whether this service requires vpn_network
     pub requires_vpn: bool,
     /// Aliases for the app name
@@ -56,6 +80,7 @@ pub static APPS: &[AppDefinition] = &[
         category: AppCategory::Platform,
         description: "Docker container runtime",
         compose_dir: None,
+        build_dir: None,
         requires_vpn: false,
         aliases: &[],
     },
@@ -64,6 +89,7 @@ pub static APPS: &[AppDefinition] = &[
         category: AppCategory::Platform,
         description: "Tailscale VPN client",
         compose_dir: None,
+        build_dir: None,
         requires_vpn: false,
         aliases: &["ts"],
     },
@@ -73,6 +99,7 @@ pub static APPS: &[AppDefinition] = &[
         category: AppCategory::DockerService,
         description: "Container management UI",
         compose_dir: Some("portainer"),
+        build_dir: None, // Uses official image
         requires_vpn: false,
         aliases: &[],
     },
@@ -81,6 +108,7 @@ pub static APPS: &[AppDefinition] = &[
         category: AppCategory::DockerService,
         description: "Portainer agent for remote management",
         compose_dir: Some("portainer-agent"),
+        build_dir: None, // Uses official image
         requires_vpn: false,
         aliases: &["agent"],
     },
@@ -88,7 +116,8 @@ pub static APPS: &[AppDefinition] = &[
         name: "pia-vpn",
         category: AppCategory::DockerService,
         description: "PIA VPN with HTTP proxy",
-        compose_dir: Some("vpn"),
+        compose_dir: Some("pia-vpn"),
+        build_dir: Some("compose/pia-vpn"), // Dockerfile in same dir as compose
         requires_vpn: false,
         aliases: &["pia", "vpn"],
     },
@@ -97,6 +126,7 @@ pub static APPS: &[AppDefinition] = &[
         category: AppCategory::DockerService,
         description: "Reverse proxy with SSL",
         compose_dir: Some("nginx-proxy-manager"),
+        build_dir: None, // Uses official image
         requires_vpn: false,
         aliases: &["npm", "proxy"],
     },
@@ -105,6 +135,7 @@ pub static APPS: &[AppDefinition] = &[
         category: AppCategory::DockerService,
         description: "Usenet download client",
         compose_dir: Some("sabnzbd"),
+        build_dir: None, // Uses official image
         requires_vpn: true,
         aliases: &["sab"],
     },
@@ -113,6 +144,7 @@ pub static APPS: &[AppDefinition] = &[
         category: AppCategory::DockerService,
         description: "Torrent download client",
         compose_dir: Some("qbittorrent"),
+        build_dir: None, // Uses official image
         requires_vpn: true,
         aliases: &["qbt", "torrent"],
     },
@@ -121,6 +153,7 @@ pub static APPS: &[AppDefinition] = &[
         category: AppCategory::DockerService,
         description: "Movie management and automation",
         compose_dir: Some("radarr"),
+        build_dir: None, // Uses official image
         requires_vpn: true,
         aliases: &[],
     },
@@ -129,6 +162,7 @@ pub static APPS: &[AppDefinition] = &[
         category: AppCategory::DockerService,
         description: "Movie management for 4K content",
         compose_dir: Some("radarr-4k"),
+        build_dir: None, // Uses official image
         requires_vpn: true,
         aliases: &["radarr4k"],
     },
@@ -137,6 +171,7 @@ pub static APPS: &[AppDefinition] = &[
         category: AppCategory::DockerService,
         description: "TV show management and automation",
         compose_dir: Some("sonarr"),
+        build_dir: None, // Uses official image
         requires_vpn: true,
         aliases: &[],
     },
@@ -145,6 +180,7 @@ pub static APPS: &[AppDefinition] = &[
         category: AppCategory::DockerService,
         description: "Indexer manager for *arr apps",
         compose_dir: Some("prowlarr"),
+        build_dir: None, // Uses official image
         requires_vpn: true,
         aliases: &[],
     },
@@ -153,6 +189,7 @@ pub static APPS: &[AppDefinition] = &[
         category: AppCategory::DockerService,
         description: "Subtitle management",
         compose_dir: Some("bazarr"),
+        build_dir: None, // Uses official image
         requires_vpn: true,
         aliases: &[],
     },
@@ -261,48 +298,112 @@ fn deploy_development_mode<E: CommandExecutor>(
         compose_path_str, compose_cmd
     ))?;
 
-    // Build the container locally
-    println!("  Building {} container...", app.name);
-    exec.execute_shell_interactive(&format!(
-        "cd \"{}\" && {} build",
-        compose_path_str, compose_cmd
-    ))?;
+    // Build the container locally if build_dir is specified
+    if let Some(build_dir) = app.build_dir {
+        let build_path = find_build_path(build_dir)?;
+        let build_path_str = build_path
+            .canonicalize()
+            .with_context(|| format!("Failed to resolve build path: {}", build_path.display()))?;
+        let build_path_str = build_path_str.to_string_lossy();
 
-    // Start the service
-    println!("  Starting {}...", app.name);
-    exec.execute_shell_interactive(&format!(
-        "cd \"{}\" && {} up -d",
-        compose_path_str, compose_cmd
-    ))?;
+        // Get image name from compose file or use default
+        let image_name = format!("{}:dev", app.name);
+
+        println!("  Building {} from {}...", image_name, build_path_str);
+        exec.execute_shell_interactive(&format!(
+            "docker build -t \"{}\" \"{}\"",
+            image_name, build_path_str
+        ))?;
+
+        // Set VPN_IMAGE env var for compose to use the local image
+        println!("  Starting {} with local image...", app.name);
+        exec.execute_shell_interactive(&format!(
+            "cd \"{}\" && VPN_IMAGE=\"{}\" {} up -d",
+            compose_path_str, image_name, compose_cmd
+        ))?;
+    } else {
+        // No build needed, just start the service
+        println!("  Starting {}...", app.name);
+        exec.execute_shell_interactive(&format!(
+            "cd \"{}\" && {} up -d",
+            compose_path_str, compose_cmd
+        ))?;
+    }
 
     Ok(())
 }
 
-/// Deploy in production mode - copy files to target and run
+/// Find the build directory path (for Dockerfiles)
+fn find_build_path(build_dir: &str) -> Result<std::path::PathBuf> {
+    // Try relative to current directory first
+    let relative = Path::new(build_dir);
+    if relative.exists() {
+        return Ok(relative.to_path_buf());
+    }
+
+    // Try relative to executable (for installed binary)
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let dev_path = exe_dir
+                .parent()
+                .and_then(|p| p.parent())
+                .map(|p| p.join(build_dir));
+
+            if let Some(path) = dev_path {
+                if path.exists() {
+                    return Ok(path);
+                }
+            }
+        }
+    }
+
+    // Try from CARGO_MANIFEST_DIR (development)
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        let path = Path::new(&manifest_dir).join(build_dir);
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+
+    anyhow::bail!(
+        "Could not find build directory '{}'. Make sure {} exists.",
+        build_dir,
+        build_dir
+    )
+}
+
+/// Deploy in production mode - fetch files from GitHub and run
 fn deploy_production_mode<E: CommandExecutor>(
     exec: &E,
     app: &AppDefinition,
     compose_dir: &str,
     compose_cmd: &str,
 ) -> Result<()> {
-    // Get the compose file content from the local compose directory
-    let compose_content = get_compose_file_content(compose_dir)?;
-
     // Create target directory
     let base_path = get_deploy_base_path();
     let target_dir = format!("{}/{}", base_path, app.name);
     exec.mkdir_p(&target_dir)?;
 
-    // Write compose file to target
+    // Fetch docker-compose.yml from GitHub
+    let compose_url = get_github_raw_url(compose_dir, "docker-compose.yml");
     let target_compose = format!("{}/docker-compose.yml", target_dir);
-    exec.write_file(&target_compose, compose_content.as_bytes())?;
+    println!("  Fetching docker-compose.yml from GitHub...");
+    exec.execute_shell_interactive(&format!(
+        "curl -fsSL \"{}\" -o \"{}\"",
+        compose_url, target_compose
+    ))?;
 
-    // Copy .env.example if it exists and .env doesn't
-    if let Ok(env_example) = get_env_example_content(compose_dir) {
-        let target_env = format!("{}/.env", target_dir);
-        if !exec.file_exists(&target_env).unwrap_or(false) {
-            println!("  Creating .env from example...");
-            exec.write_file(&target_env, env_example.as_bytes())?;
+    // Fetch .env.example from GitHub if .env doesn't exist
+    let target_env = format!("{}/.env", target_dir);
+    if !exec.file_exists(&target_env).unwrap_or(false) {
+        let env_url = get_github_raw_url(compose_dir, ".env.example");
+        println!("  Fetching .env.example from GitHub...");
+        // Use || true since .env.example might not exist for all services
+        let result = exec.execute_shell(&format!(
+            "curl -fsSL \"{}\" -o \"{}\" 2>/dev/null",
+            env_url, target_env
+        ));
+        if result.is_ok() && result.unwrap().status.success() {
             println!("  Note: Edit {}/.env to configure the service", app.name);
         }
     }
