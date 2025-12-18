@@ -3,10 +3,16 @@
 # Manual: docker compose up -d
 #
 # Creates vpn_network which media services connect to for privacy
+#
+# In development mode (HALVOR_ENV=development), builds from local Dockerfile
+# In production mode, uses pre-built image from ghcr.io
 
 services:
   pia-vpn:
     container_name: pia-vpn
+    build:
+      context: ../../pia-vpn
+      dockerfile: Dockerfile
     image: ${VPN_IMAGE:-ghcr.io/scottdkey/pia-vpn:latest}
     cap_add:
       - NET_ADMIN
