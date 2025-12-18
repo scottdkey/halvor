@@ -126,6 +126,21 @@ pub mod local {
             .with_context(|| format!("Failed to set permissions for: {}", path_ref.display()))
     }
 
+    /// Get the current user's home directory using native Rust
+    pub fn get_home_dir() -> Result<String> {
+        std::env::var("HOME")
+            .or_else(|_| -> Result<String, std::env::VarError> {
+                // Fallback to using whoami crate
+                let username = whoami::username();
+                if cfg!(target_os = "macos") {
+                    Ok(format!("/Users/{}", username))
+                } else {
+                    Ok(format!("/home/{}", username))
+                }
+            })
+            .with_context(|| "Failed to get home directory")
+    }
+
     /// Execute a shell command (only when absolutely necessary)
     /// Prefer using execute() with specific programs instead
     pub fn execute_shell(command: &str) -> Result<Output> {
@@ -190,6 +205,9 @@ pub trait CommandExecutor {
     /// Get current group ID (native Rust for local, id -g for remote)
     #[cfg(unix)]
     fn get_gid(&self) -> Result<u32>;
+
+    /// Get the current user's home directory
+    fn get_home_dir(&self) -> Result<String>;
 }
 
 /// Package manager types
@@ -532,6 +550,13 @@ impl CommandExecutor for Executor {
             Executor::Remote(exec) => exec.get_gid(),
         }
     }
+
+    fn get_home_dir(&self) -> Result<String> {
+        match self {
+            Executor::Local => local::get_home_dir(),
+            Executor::Remote(exec) => exec.get_home_dir(),
+        }
+    }
 }
 
 /// Remote command executor (SSH) - SshConnection already implements CommandExecutor
@@ -598,5 +623,11 @@ impl CommandExecutor for SshConnection {
     #[cfg(unix)]
     fn get_gid(&self) -> Result<u32> {
         SshConnection::get_gid(self)
+    }
+
+    fn get_home_dir(&self) -> Result<String> {
+        let output = self.execute_shell("echo $HOME")?;
+        let home_dir = String::from_utf8(output.stdout)?.trim().to_string();
+        Ok(home_dir)
     }
 }

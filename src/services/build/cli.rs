@@ -124,11 +124,22 @@ pub fn build_cli(platforms: Option<&str>, targets: Option<&str>, push: bool) -> 
             .flat_map(|platform| platform_targets.get(platform).unwrap().iter().copied())
             .collect()
     } else {
-        // Build only native macOS targets by default (others require Docker)
-        println!("Building CLI binaries for macOS (native targets)");
-        println!("💡 Tip: For Linux/Windows builds, ensure Docker is running or use GitHub Actions");
+        // Build for current platform by default
+        use std::env::consts::OS;
+        let current_platform = match OS {
+            "macos" => "apple",
+            "linux" => "linux",
+            "windows" => "windows",
+            _ => {
+                anyhow::bail!("Unsupported platform: {}. Please specify --platforms explicitly", OS);
+            }
+        };
+
+        println!("Building CLI binaries for {} (native targets)", current_platform);
+        println!("💡 Tip: For cross-platform builds, use --platforms apple,linux,windows or GitHub Actions");
+
         platform_targets
-            .get("apple")
+            .get(current_platform)
             .map(|v| v.clone())
             .unwrap_or_default()
     };
@@ -207,34 +218,32 @@ pub fn build_target(target: &str) -> Result<Option<PathBuf>> {
     let host_target = std::env::var("HOST")
         .or_else(|_| std::env::var("CARGO_BUILD_TARGET"))
         .unwrap_or_else(|_| {
-            // Get the current host triple
-            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            { "aarch64-apple-darwin".to_string() }
-            #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-            { "x86_64-apple-darwin".to_string() }
-            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-            { "x86_64-unknown-linux-gnu".to_string() }
-            #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-            { "aarch64-unknown-linux-gnu".to_string() }
-            #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-            { "x86_64-pc-windows-msvc".to_string() }
-            #[cfg(not(any(
-                all(target_os = "macos", any(target_arch = "aarch64", target_arch = "x86_64")),
-                all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
-                all(target_os = "windows", target_arch = "x86_64")
-            )))]
-            { "unknown".to_string() }
+            // Get the current host triple at RUNTIME (not compile-time)
+            // This ensures correct detection when SSH'd into a different platform
+            use std::env::consts::{ARCH, OS};
+            match (OS, ARCH) {
+                ("macos", "aarch64") => "aarch64-apple-darwin".to_string(),
+                ("macos", "x86_64") => "x86_64-apple-darwin".to_string(),
+                ("linux", "x86_64") => "x86_64-unknown-linux-gnu".to_string(),
+                ("linux", "aarch64") => "aarch64-unknown-linux-gnu".to_string(),
+                ("windows", "x86_64") => "x86_64-pc-windows-msvc".to_string(),
+                _ => "unknown".to_string(),
+            }
         });
 
     let is_cross = target != host_target;
 
-    // Cross-compilation detection: Linux/Windows from macOS
-    let needs_cross = is_cross && (target.contains("linux") || target.contains("windows"));
+    // Cross-compilation detection: Only skip when cross-compiling FROM macOS TO linux/windows
+    // Same-OS cross-arch builds (e.g., x86_64 -> aarch64 on Linux) are OK
+    use std::env::consts::OS;
+    let is_macos_to_other = OS == "macos" && (target.contains("linux") || target.contains("windows"));
+    let is_linux_to_windows = OS == "linux" && target.contains("windows");
+    let is_windows_to_linux = OS == "windows" && target.contains("linux");
 
-    if needs_cross {
-        // Cross-compilation is not supported reliably on macOS
-        eprintln!("  ⚠️  Skipping {}: Cross-compilation not supported", target);
-        eprintln!("     Cross-compiling from macOS to Linux/Windows is unreliable");
+    if is_macos_to_other || is_linux_to_windows || is_windows_to_linux {
+        // Cross-OS compilation is not reliably supported
+        eprintln!("  ⚠️  Skipping {}: Cross-OS compilation not supported", target);
+        eprintln!("     Cross-compiling between different operating systems is unreliable");
         eprintln!("     Use GitHub Actions for production builds (see .github/workflows/)");
         eprintln!("     Each platform builds natively for best results");
         return Ok(None);

@@ -8,7 +8,7 @@ use crate::services::compose_deployer::{deploy_compose_service, find_app};
 use crate::services::docker;
 use crate::services::tailscale;
 use crate::utils::exec::{CommandExecutor, Executor};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::io::{self, BufRead, Write};
 
 /// Provision with defaults (non-interactive)

@@ -9,7 +9,7 @@ pub mod services;
 pub mod utils;
 
 // CLI-specific types (used by both library and binary)
-use clap::{Subcommand, arg};
+use clap::Subcommand;
 
 #[derive(Subcommand)]
 pub enum Commands {

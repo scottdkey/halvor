@@ -84,6 +84,12 @@ halvor dev web --prod
 ```
 
 ### Installation
+
+**Platform Support:**
+- **macOS**: Full support for all platforms (CLI, iOS, macOS, Android, Web)
+- **Linux**: CLI and Web development (iOS/macOS builds not available)
+- **Windows**: CLI only (via WSL recommended)
+
 Install all dependencies for all platforms:
 ```bash
 make install
@@ -91,25 +97,36 @@ make install
 
 Install individual platform dependencies:
 ```bash
-make install-rust          # Rust toolchain
-make install-rust-targets  # Cross-compilation targets
-make install-swift         # Xcode/Swift dependencies
-make install-android       # Android NDK/Java
-make install-web           # Node.js, wasm-pack
-make install-tools         # Docker, direnv, 1Password CLI, Fastlane
+make install-rust          # Rust toolchain (all platforms)
+make install-rust-targets  # Cross-compilation targets (all platforms)
+make install-swift         # Xcode/Swift dependencies (macOS only)
+make install-android       # Android NDK/Java (optional on Linux)
+make install-web           # Node.js, wasm-pack (all platforms)
+make install-tools         # Docker, direnv, 1Password CLI, Fastlane (all platforms)
 ```
+
+**Linux-Specific Notes:**
+- Swift/Xcode dependencies are automatically skipped on Linux (macOS only)
+- Ruby/Fastlane are automatically skipped on Linux (macOS only, for iOS/macOS builds)
+- Java 17 (OpenJDK) is automatically installed via system package manager
+- Node.js 24 LTS is installed via NVM (Node Version Manager) for all platforms
+- Cross-compilation toolchains (`gcc-aarch64-linux-gnu`, `musl-tools`) are automatically installed on Debian/Ubuntu
+- All Rust-based CLI and Web features work natively on Linux
+- Linux can cross-compile to all Linux architectures (x86_64, aarch64, gnu, musl)
 
 ### Cross-Compilation Setup
 
 **TL;DR:**
-- **Local development**: Build macOS targets only (`halvor build cli`)
+- **Local development**: `halvor build cli` detects your OS and builds native targets
 - **Production releases**: Use GitHub Actions (builds all platforms natively)
-- **Linux/Windows on macOS**: Requires Docker + `cross` (often unreliable, not recommended)
+- **Cross-platform**: Use `--platforms apple,linux,windows` (not recommended, see below)
 
 **Default Behavior:**
 ```bash
-halvor build cli  # Builds ONLY macOS targets (aarch64 + x86_64)
-                  # Fast, reliable, no dependencies
+halvor build cli  # Auto-detects your OS and builds native targets
+                  # macOS: aarch64 + x86_64 (darwin)
+                  # Linux: x86_64 + aarch64 (gnu/musl)
+                  # Windows: x86_64 + aarch64 (msvc)
 ```
 
 **Why not cross-compile locally?**

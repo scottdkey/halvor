@@ -173,7 +173,7 @@ impl AgentServer {
         &self,
         command: &str,
         args: &[String],
-        token: &str,
+        _token: &str,
     ) -> Result<AgentResponse> {
         // TODO: Validate token
         // TODO: Check permissions
