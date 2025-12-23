@@ -399,7 +399,21 @@ fn _connect_ssh(host: &str, user: Option<&str>, ssh_args: &[String]) -> Result<(
     }
 }
 
-fn _copy_ssh_key(host: &str, server_user: Option<&str>, target_user: Option<&str>) -> Result<()> {
+/// Copy SSH key to remote host
+///
+/// This function handles copying SSH keys to a remote host, prompting for passwords as needed.
+/// It uses ssh-copy-id when the server and target users are the same, or manually installs
+/// the key when they differ (requiring sudo).
+///
+/// # Arguments
+/// * `host` - The hostname or IP address of the remote host
+/// * `server_user` - Optional username to SSH into the server (defaults to local username)
+/// * `target_user` - Optional username where the key should be installed (defaults to server_user)
+pub fn copy_ssh_key(
+    host: &str,
+    server_user: Option<&str>,
+    target_user: Option<&str>,
+) -> Result<()> {
     // Determine server username (to SSH into the server)
     let default_server_user = config::get_default_username();
     let server_username = if let Some(u) = server_user {
@@ -524,63 +538,64 @@ fn _copy_ssh_key(host: &str, server_user: Option<&str>, target_user: Option<&str
             // User exists, check if password is set
             println!("✓ User '{}' already exists", target_username);
 
-            // Check if password is set by looking at /etc/shadow
-            // Empty password field means ! or * or empty
-            let check_password_cmd = format!(
-                r#"sudo grep '^{}:' /etc/shadow | cut -d: -f2 | grep -qE '^[!*]?$' && echo 'NO_PASSWORD' || echo 'HAS_PASSWORD'"#,
-                target_username
-            );
-
-            // Use SshConnection for non-interactive command execution
+            // Check if password is set by reading /etc/shadow and parsing with Rust
             let ssh_conn = SshConnection::new(&host_str)?;
-            let password_check_output = ssh_conn.execute_shell(&check_password_cmd)?;
-            let password_status_str = String::from_utf8_lossy(&password_check_output.stdout);
-            let password_status = password_status_str.trim();
+            let shadow_content = ssh_conn.execute_shell("sudo cat /etc/shadow")?;
+            let shadow_text = String::from_utf8_lossy(&shadow_content.stdout);
 
-            // Check if the command succeeded and what the output was
-            if password_check_output.status.success() {
-                if password_status == "NO_PASSWORD" {
-                    println!("User '{}' exists but has no password set.", target_username);
-                    print!(
-                        "Set password for user '{}' (press Enter to skip): ",
-                        target_username
-                    );
-                    io::stdout().flush()?;
-
-                    let mut password_input = String::new();
-                    io::stdin().read_line(&mut password_input)?;
-                    let password = password_input.trim();
-
-                    if !password.is_empty() {
-                        // Set the password
-                        let set_password_cmd =
-                            format!(r#"echo '{}:{}' | sudo chpasswd"#, target_username, password);
-
-                        // Use SshConnection for interactive command execution (needs TTY for sudo)
-                        let ssh_conn = SshConnection::new(&host_str)?;
-                        if ssh_conn
-                            .execute_shell_interactive(&set_password_cmd)
-                            .is_ok()
-                        {
-                            println!("✓ Password set for user '{}'", target_username);
-                        } else {
-                            eprintln!(
-                                "Warning: Failed to set password for user '{}'",
-                                target_username
-                            );
-                        }
+            // Parse shadow file: find line starting with username, extract password field (2nd field)
+            let password_status = shadow_text
+                .lines()
+                .find(|line| line.starts_with(&format!("{}:", target_username)))
+                .and_then(|line| {
+                    line.split(':').nth(1) // Get password field (2nd field, index 1)
+                })
+                .map(|pwd_field| {
+                    // Empty password field means ! or * or empty string
+                    if pwd_field.is_empty() || pwd_field == "!" || pwd_field == "*" {
+                        "NO_PASSWORD"
                     } else {
-                        println!("Skipping password setup - user can login with SSH keys only");
+                        "HAS_PASSWORD"
                     }
-                } else {
-                    println!("✓ User '{}' has a password set", target_username);
-                }
-            } else {
-                // If we can't check, assume password is set (safer assumption)
-                println!(
-                    "Note: Could not verify password status for user '{}'",
+                })
+                .unwrap_or("HAS_PASSWORD"); // Default to HAS_PASSWORD if user not found
+
+            // Check password status (already determined from parsing)
+            if password_status == "NO_PASSWORD" {
+                println!("User '{}' exists but has no password set.", target_username);
+                print!(
+                    "Set password for user '{}' (press Enter to skip): ",
                     target_username
                 );
+                io::stdout().flush()?;
+
+                let mut password_input = String::new();
+                io::stdin().read_line(&mut password_input)?;
+                let password = password_input.trim();
+
+                if !password.is_empty() {
+                    // Set the password
+                    let set_password_cmd =
+                        format!(r#"echo '{}:{}' | sudo chpasswd"#, target_username, password);
+
+                    // Use SshConnection for interactive command execution (needs TTY for sudo)
+                    let ssh_conn = SshConnection::new(&host_str)?;
+                    if ssh_conn
+                        .execute_shell_interactive(&set_password_cmd)
+                        .is_ok()
+                    {
+                        println!("✓ Password set for user '{}'", target_username);
+                    } else {
+                        eprintln!(
+                            "Warning: Failed to set password for user '{}'",
+                            target_username
+                        );
+                    }
+                } else {
+                    println!("Skipping password setup - user can login with SSH keys only");
+                }
+            } else {
+                println!("✓ User '{}' has a password set", target_username);
             }
         }
 
@@ -614,32 +629,91 @@ fn _copy_ssh_key(host: &str, server_user: Option<&str>, target_user: Option<&str
         );
         Ok(())
     } else {
-        // Same user, use standard ssh-copy-id
-        if !local::check_command_exists("ssh-copy-id") {
-            anyhow::bail!(
-                "ssh-copy-id not found. Please install openssh-client or openssh-clients"
-            );
+        // Same user - manually install the key using our SSH infrastructure
+        // This avoids the ssh-copy-id TTY issues and uses our proven interactive SSH code
+        println!("Setting up SSH key authentication...");
+        io::stdout().flush()?;
+
+        // Check if key is already installed to avoid duplicates
+        // Read authorized_keys file and check if key exists using native Rust
+        let ssh_conn = SshConnection::new(&host_str)?;
+
+        // Ensure .ssh directory exists
+        ssh_conn.execute_shell("mkdir -p \"$HOME/.ssh\" && chmod 700 \"$HOME/.ssh\"")?;
+
+        // Read authorized_keys file if it exists
+        let authorized_keys_path = "$HOME/.ssh/authorized_keys";
+        let key_status =
+            if let Ok(authorized_keys_content) = ssh_conn.read_file(authorized_keys_path) {
+                // Check if the public key line is already in the file
+                if authorized_keys_content
+                    .lines()
+                    .any(|line| line.trim() == pubkey_line.trim())
+                {
+                    "EXISTS"
+                } else {
+                    "NOT_FOUND"
+                }
+            } else {
+                "NOT_FOUND"
+            };
+
+        if key_status == "EXISTS" {
+            println!("✓ SSH key already installed on {}", host_str);
+            return Ok(());
         }
 
-        // Use exec::local for local command execution
-        let output = local::execute(
-            "ssh-copy-id",
-            &[
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-o",
-                "PreferredAuthentications=keyboard-interactive,password",
-                "-f", // Force mode - don't check if key is already installed
-                &host_str,
-            ],
-        )?;
+        // Install the key using interactive SSH (will prompt for password)
+        // Break into separate commands to avoid shell parsing issues with complex && chains
+        println!("Installing SSH key...");
 
-        if output.status.success() {
-            println!("✓ SSH key copied successfully to {}", host_str);
-            Ok(())
-        } else {
-            anyhow::bail!("Failed to copy SSH key to {}", host_str);
+        // First, ensure .ssh directory exists and has correct permissions
+        let setup_dir_cmd =
+            r#"test -d "$HOME/.ssh" || mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh""#;
+        ssh_conn
+            .execute_shell_interactive(setup_dir_cmd)
+            .with_context(|| format!("Failed to create .ssh directory on {}", host))?;
+
+        // Then append the key and set permissions
+        // Use write_file pattern - write key content through stdin to avoid all quoting issues
+        // Use -t (single TTY) to allow stdin piping while still allowing password prompts
+        let mut ssh_args = ssh_conn.build_ssh_args();
+        ssh_args.push("-t".to_string()); // Single TTY for password prompts but allow stdin
+        ssh_args.push("sh".to_string());
+        ssh_args.push("-c".to_string());
+        ssh_args.push(
+            r#"cat >> "$HOME/.ssh/authorized_keys" && chmod 600 "$HOME/.ssh/authorized_keys""#
+                .to_string(),
+        );
+
+        let mut cmd = Command::new("ssh");
+        cmd.args(&ssh_args);
+        cmd.stdin(Stdio::piped());
+        cmd.stdout(Stdio::null());
+        cmd.stderr(Stdio::inherit());
+
+        let mut child = cmd
+            .spawn()
+            .with_context(|| format!("Failed to spawn SSH command for installing key"))?;
+
+        // Write the key through stdin (same pattern as write_file)
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(pubkey_line.as_bytes())?;
+            stdin.write_all(b"\n")?; // Add newline
+            stdin.flush()?;
+            drop(stdin); // Close stdin so cat knows input is complete
         }
+
+        let status = child
+            .wait()
+            .with_context(|| format!("Failed to install SSH key on {}", host))?;
+
+        if !status.success() {
+            anyhow::bail!("Failed to install SSH key on {}", host);
+        }
+
+        println!("✓ SSH key copied successfully to {}", host_str);
+        Ok(())
     }
 }
 
@@ -667,9 +741,9 @@ pub fn _ssh_to_host(
     if let Some(ip) = &host_config.ip {
         all_hosts.push(ip.clone());
     }
-    if let Some(tailscale) = &host_config.tailscale {
-        all_hosts.push(tailscale.clone());
-        all_hosts.push(format!("{}.{}", tailscale, config._tailnet_base));
+    if let Some(hostname) = &host_config.hostname {
+        all_hosts.push(hostname.clone());
+        all_hosts.push(format!("{}.{}", hostname, config._tailnet_base));
     }
 
     // If fix_keys is enabled, remove host keys for all possible addresses
@@ -688,8 +762,8 @@ pub fn _ssh_to_host(
     if copy_keys {
         let target_host = if let Some(ip) = &host_config.ip {
             ip.as_str()
-        } else if let Some(tailscale) = &host_config.tailscale {
-            tailscale.as_str()
+        } else if let Some(hostname) = &host_config.hostname {
+            hostname.as_str()
         } else {
             anyhow::bail!("No IP or Tailscale hostname configured for {}", hostname);
         };
@@ -734,7 +808,7 @@ pub fn _ssh_to_host(
             input.trim().to_string()
         };
 
-        _copy_ssh_key(
+        copy_ssh_key(
             target_host,
             username_for_keys.as_deref(), // Server username (to SSH into)
             Some(&target_username),       // Target username (where to install key)
@@ -759,11 +833,11 @@ pub fn _ssh_to_host(
         hosts_to_try.push((ip.clone(), format!("IP: {}", ip)));
     }
 
-    if let Some(tailscale) = &host_config.tailscale {
-        hosts_to_try.push((tailscale.clone(), format!("Tailscale: {}", tailscale)));
+    if let Some(hostname) = &host_config.hostname {
+        hosts_to_try.push((hostname.clone(), format!("Hostname: {}", hostname)));
         hosts_to_try.push((
-            format!("{}.{}", tailscale, config._tailnet_base),
-            format!("Tailscale FQDN: {}.{}", tailscale, config._tailnet_base),
+            format!("{}.{}", hostname, config._tailnet_base),
+            format!("FQDN: {}.{}", hostname, config._tailnet_base),
         ));
     }
 

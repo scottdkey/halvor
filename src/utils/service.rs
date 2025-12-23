@@ -74,7 +74,8 @@ impl ServiceContext {
 
     /// Get Tailscale hostname from host config
     pub fn tailscale(&self) -> Option<&str> {
-        self.host_config.tailscale.as_deref()
+        // Use hostname field for Tailscale hostname
+        self.host_config.hostname.as_deref()
     }
 
     /// Print operation start message

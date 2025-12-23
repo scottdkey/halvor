@@ -3,10 +3,10 @@ use anyhow::{Context, Result};
 use std::env;
 
 pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<()> {
-    let homelab_dir = crate::config::find_homelab_dir()?;
+    let halvor_dir = crate::config::find_halvor_dir()?;
 
     // Load PIA credentials from local .env
-    dotenv::from_path(homelab_dir.join(".env")).context("Failed to load .env file")?;
+    dotenv::from_path(halvor_dir.join(".env")).context("Failed to load .env file")?;
 
     let pia_username = env::var("PIA_USERNAME").context("PIA_USERNAME not found in .env file")?;
     let pia_password = env::var("PIA_PASSWORD").context("PIA_PASSWORD not found in .env file")?;
@@ -25,7 +25,7 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
 
     // Read compose file - use local build version for now (avoids registry auth issues)
     // User can switch to portainer version after making image public
-    let compose_file = homelab_dir
+    let compose_file = halvor_dir
         .join("compose")
         .join("openvpn-pia.docker-compose.yml");
     if !compose_file.exists() {
@@ -63,7 +63,7 @@ pub fn deploy_vpn(hostname: &str, config: &crate::config::EnvConfig) -> Result<(
         println!("VPN configuration files not found, attempting to copy...");
 
         // Copy OpenVPN config files
-        let openvpn_dir = homelab_dir.join("openvpn");
+        let openvpn_dir = halvor_dir.join("openvpn");
         let auth_file = openvpn_dir.join("auth.txt");
         let config_file = openvpn_dir.join("ca-montreal.ovpn");
 

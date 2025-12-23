@@ -11,8 +11,7 @@ pub mod service;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct HostConfig {
     pub ip: Option<String>,
-    pub hostname: Option<String>, // Primary hostname (replaces tailscale)
-    pub tailscale: Option<String>, // Optional different tailscale hostname
+    pub hostname: Option<String>, // Hostname (typically Tailscale hostname)
     pub backup_path: Option<String>,
 }
 
@@ -30,10 +29,13 @@ pub struct EnvConfig {
     pub smb_servers: HashMap<String, SmbServerConfig>,
 }
 
-pub fn find_homelab_dir() -> Result<PathBuf> {
+pub fn find_halvor_dir() -> Result<PathBuf> {
     use crate::config::config_manager;
 
-    // Check for environment variable override
+    // Check for environment variable override (support both new and legacy names)
+    if let Ok(dir) = env::var("HALVOR_DIR") {
+        return Ok(PathBuf::from(dir));
+    }
     if let Ok(dir) = env::var("HOMELAB_DIR") {
         return Ok(PathBuf::from(dir));
     }
@@ -61,10 +63,19 @@ pub fn find_homelab_dir() -> Result<PathBuf> {
     Ok(env::current_dir()?)
 }
 
+/// Alias for backward compatibility
+#[inline]
+pub fn find_homelab_dir() -> Result<PathBuf> {
+    find_halvor_dir()
+}
+
 pub fn get_env_file_path() -> Result<PathBuf> {
     use crate::config::config_manager;
 
-    // Check for environment variable override
+    // Check for environment variable override (support both new and legacy names)
+    if let Ok(path) = env::var("HALVOR_ENV_FILE") {
+        return Ok(PathBuf::from(path));
+    }
     if let Ok(path) = env::var("HOMELAB_ENV_FILE") {
         return Ok(PathBuf::from(path));
     }
@@ -74,12 +85,12 @@ pub fn get_env_file_path() -> Result<PathBuf> {
         return Ok(env_path);
     }
 
-    // Fallback: try to find .env in homelab directory
-    let homelab_dir = find_homelab_dir()?;
-    Ok(homelab_dir.join(".env"))
+    // Fallback: try to find .env in halvor directory
+    let halvor_dir = find_halvor_dir()?;
+    Ok(halvor_dir.join(".env"))
 }
 
-pub fn load_env_config(_homelab_dir: &Path) -> Result<EnvConfig> {
+pub fn load_env_config(_halvor_dir: &Path) -> Result<EnvConfig> {
     let env_file = get_env_file_path()?;
 
     // Load .env file if it exists, but don't require it
@@ -105,7 +116,6 @@ pub fn load_env_config(_homelab_dir: &Path) -> Result<EnvConfig> {
                 let config = hosts.entry(hostname_lower).or_insert_with(|| HostConfig {
                     ip: None,
                     hostname: None,
-                    tailscale: None,
                     backup_path: None,
                 });
                 // Only set IP if not already set by HOST_<name>_IP
@@ -117,7 +127,6 @@ pub fn load_env_config(_homelab_dir: &Path) -> Result<EnvConfig> {
                 let config = hosts.entry(hostname_lower).or_insert_with(|| HostConfig {
                     ip: None,
                     hostname: None,
-                    tailscale: None,
                     backup_path: None,
                 });
                 config.ip = Some(value);
@@ -126,25 +135,14 @@ pub fn load_env_config(_homelab_dir: &Path) -> Result<EnvConfig> {
                 let config = hosts.entry(hostname_lower).or_insert_with(|| HostConfig {
                     ip: None,
                     hostname: None,
-                    tailscale: None,
                     backup_path: None,
                 });
                 config.hostname = Some(value);
-            } else if let Some(rest) = hostname.strip_suffix("_TAILSCALE") {
-                let hostname_lower = rest.to_lowercase();
-                let config = hosts.entry(hostname_lower).or_insert_with(|| HostConfig {
-                    ip: None,
-                    hostname: None,
-                    tailscale: None,
-                    backup_path: None,
-                });
-                config.tailscale = Some(value);
             } else if let Some(rest) = hostname.strip_suffix("_BACKUP_PATH") {
                 let hostname_lower = rest.to_lowercase();
                 let config = hosts.entry(hostname_lower).or_insert_with(|| HostConfig {
                     ip: None,
                     hostname: None,
-                    tailscale: None,
                     backup_path: None,
                 });
                 config.backup_path = Some(value);
@@ -245,15 +243,13 @@ pub fn get_npm_password() -> Option<String> {
 }
 
 /// Helper function to load config - used by commands and services
-/// Merges database and .env file configurations (database takes precedence)
+/// Only uses .env file (loaded from 1Password via .envrc)
 pub fn load_config() -> Result<EnvConfig> {
-    use crate::db;
-
     #[cfg(debug_assertions)]
     println!("[DEBUG] Loading configuration...");
 
-    let homelab_dir = find_homelab_dir()?;
-    let mut env_config = load_env_config(&homelab_dir)?;
+    let halvor_dir = find_halvor_dir()?;
+    let env_config = load_env_config(&halvor_dir)?;
 
     #[cfg(debug_assertions)]
     println!(
@@ -261,21 +257,7 @@ pub fn load_config() -> Result<EnvConfig> {
         env_config.hosts.len()
     );
 
-    // Merge database hosts (database takes precedence)
-    if let Ok(db_hosts) = db::list_hosts() {
-        #[cfg(debug_assertions)]
-        println!("[DEBUG] Found {} hosts in database", db_hosts.len());
-
-        for hostname in db_hosts {
-            if let Ok(Some(db_config)) = db::get_host_config(&hostname) {
-                #[cfg(debug_assertions)]
-                println!("[DEBUG] Merging database config for '{}'", hostname);
-
-                // Database config overrides .env config
-                env_config.hosts.insert(hostname, db_config);
-            }
-        }
-    }
+    // Only use .env config (loaded from 1Password via .envrc)
 
     #[cfg(debug_assertions)]
     println!("[DEBUG] Final config has {} hosts", env_config.hosts.len());

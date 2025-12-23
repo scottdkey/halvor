@@ -2,6 +2,7 @@ use crate::config::{self, EnvConfig, HostConfig};
 use crate::utils::exec::PackageManager;
 use crate::utils::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
+use reqwest;
 use std::process::Command;
 
 /// Check if Tailscale is installed
@@ -122,8 +123,33 @@ pub fn check_and_install_remote<E: CommandExecutor>(exec: &E) -> Result<()> {
                 "Detected {} - using Tailscale install script",
                 pkg_mgr.display_name()
             );
-            let install_cmd = "curl -fsSL https://tailscale.com/install.sh | sh";
-            let output = exec.execute_shell(install_cmd)?;
+
+            // Download install script using native Rust HTTP client
+            println!("Downloading Tailscale install script...");
+            let script_url = "https://tailscale.com/install.sh";
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .context("Failed to create HTTP client")?;
+
+            let script_content = client
+                .get(script_url)
+                .send()
+                .context("Failed to download Tailscale install script")?
+                .error_for_status()
+                .context("HTTP error downloading Tailscale install script")?
+                .text()
+                .context("Failed to read Tailscale install script content")?;
+
+            // Write script to remote host and execute
+            let remote_script_path = "/tmp/tailscale-install.sh";
+            exec.write_file(remote_script_path, script_content.as_bytes())
+                .context("Failed to write Tailscale install script to remote host")?;
+
+            exec.execute_shell(&format!("chmod +x {}", remote_script_path))
+                .context("Failed to make Tailscale install script executable")?;
+
+            let output = exec.execute_shell(&format!("sh {}", remote_script_path))?;
             if !output.status.success() {
                 anyhow::bail!("Failed to install Tailscale");
             }
@@ -176,7 +202,7 @@ pub fn get_host_config<'a>(config: &'a EnvConfig, hostname: &str) -> Result<&'a 
         .unwrap_or_else(|| hostname.to_string());
     config.hosts.get(&actual_hostname).with_context(|| {
         format!(
-            "Host '{}' not found in .env\n\nAdd configuration to .env:\n  HOST_{}_IP=\"<ip-address>\"\n  HOST_{}_TAILSCALE=\"<tailscale-hostname>\"",
+            "Host '{}' not found in .env\n\nAdd configuration to .env:\n  HOST_{}_IP=\"<ip-address>\"\n  HOST_{}_HOSTNAME=\"<hostname>\"",
             hostname,
             hostname.to_uppercase(),
             hostname.to_uppercase()
@@ -240,6 +266,132 @@ pub fn get_tailscale_ip() -> Result<Option<String>> {
             let ip = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !ip.is_empty() {
                 return Ok(Some(ip));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+/// Get Tailscale IP on a remote host via executor
+pub fn get_tailscale_ip_remote<E: CommandExecutor>(exec: &E) -> Result<Option<String>> {
+    // Try tailscale ip -4 first
+    let output = exec.execute_shell("tailscale ip -4 2>/dev/null")?;
+
+    if output.status.success() {
+        let ip = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !ip.is_empty() {
+            return Ok(Some(ip));
+        }
+    }
+
+    // Fallback: try tailscale status --json and extract IP from there
+    // This is more reliable as it doesn't require the 'ip' subcommand
+    let status_output = exec.execute_shell("tailscale status --json 2>/dev/null")?;
+    if status_output.status.success() {
+        if let Ok(status_json) = serde_json::from_slice::<serde_json::Value>(&status_output.stdout)
+        {
+            if let Some(self_data) = status_json.get("Self") {
+                if let Some(ips) = self_data.get("TailscaleIPs").and_then(|v| v.as_array()) {
+                    // Find IPv4 address (starts with 100.)
+                    if let Some(ip) = ips.iter().find_map(|v| v.as_str()) {
+                        if ip.starts_with("100.") {
+                            return Ok(Some(ip.to_string()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+/// Get Tailscale IP with fallback to connection IP from config
+/// This is the main function to use when you need a Tailscale IP and want automatic fallback
+/// to the connection IP if commands fail (e.g., when connecting via Tailscale but commands have issues)
+pub fn get_tailscale_ip_with_fallback<E: CommandExecutor>(
+    exec: &E,
+    hostname: &str,
+    config: &EnvConfig,
+) -> Result<String> {
+    // First try to get IP via command
+    let tailscale_ip = get_tailscale_ip_remote(exec)
+        .context("Failed to get Tailscale IP. Ensure Tailscale is running.")?;
+
+    if let Some(ip) = tailscale_ip {
+        return Ok(ip);
+    }
+
+    // Fallback: check if we're connecting via Tailscale IP (100.x.x.x range)
+    // If we successfully connected via SSH to a Tailscale address, Tailscale is working
+    let host_config = get_host_config(config, hostname)?;
+
+    // Check IP first (most reliable indicator)
+    if let Some(ip) = &host_config.ip {
+        if ip.starts_with("100.") {
+            println!(
+                "✓ Detected Tailscale connection (connecting via Tailscale IP: {})",
+                ip
+            );
+            return Ok(ip.clone());
+        }
+    }
+
+    // Also check hostname for Tailscale indicators
+    if let Some(hostname_val) = &host_config.hostname {
+        if hostname_val.ends_with(".ts.net") || hostname_val.contains("100.") {
+            println!(
+                "✓ Detected Tailscale connection (connecting via Tailscale hostname: {})",
+                hostname_val
+            );
+            // Try to get actual IP, or use placeholder
+            if let Some(ip) = &host_config.ip {
+                if ip.starts_with("100.") {
+                    return Ok(ip.clone());
+                }
+            }
+            // Use placeholder - connection works via Tailscale
+            return Ok("100.0.0.0".to_string());
+        }
+    }
+
+    // Last resort: try tailscale status command to see if it's running
+    let status_output = exec.execute_shell("tailscale status --json 2>/dev/null")?;
+    if status_output.status.success() {
+        // Try to extract IP from status JSON
+        if let Ok(status_json) = serde_json::from_slice::<serde_json::Value>(&status_output.stdout)
+        {
+            if let Some(self_data) = status_json.get("Self") {
+                if let Some(ips) = self_data.get("TailscaleIPs").and_then(|v| v.as_array()) {
+                    if let Some(ip) = ips.iter().find_map(|v| v.as_str()) {
+                        if ip.starts_with("100.") {
+                            println!("✓ Tailscale is running with IP: {}", ip);
+                            return Ok(ip.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        println!("✓ Tailscale is running (detected via status command)");
+        return Ok("100.0.0.0".to_string()); // Placeholder - status works but couldn't extract IP
+    }
+
+    anyhow::bail!(
+        "Tailscale is not running or not accessible. Please ensure Tailscale is running with 'sudo tailscale up'"
+    )
+}
+
+/// Get Tailscale hostname on a remote host via executor
+pub fn get_tailscale_hostname_remote<E: CommandExecutor>(exec: &E) -> Result<Option<String>> {
+    let output = exec.execute_shell("tailscale status --json 2>/dev/null")?;
+
+    if output.status.success() {
+        if let Ok(status_json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+            if let Some(dns_name) = status_json.get("Self").and_then(|s| s.get("DNSName")) {
+                if let Some(hostname) = dns_name.as_str() {
+                    return Ok(Some(hostname.to_string()));
+                }
             }
         }
     }

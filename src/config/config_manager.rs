@@ -218,18 +218,17 @@ fn get_default_env_path() -> Result<PathBuf> {
     Ok(home.join(".env"))
 }
 
-/// Show configuration summary with servers from env and database
+/// Show configuration summary from .env (loaded from 1Password)
 fn show_config_summary() -> Result<()> {
     use crate::config;
-    use crate::db;
 
     println!("Configuration Summary");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!();
 
     // Get servers from env file
-    let homelab_dir = config::find_homelab_dir();
-    let env_hosts = if let Ok(dir) = &homelab_dir {
+    let halvor_dir = config::find_halvor_dir();
+    let env_hosts = if let Ok(dir) = &halvor_dir {
         match config::load_env_config(dir) {
             Ok(cfg) => Some(cfg.hosts),
             Err(_) => None,
@@ -238,21 +237,10 @@ fn show_config_summary() -> Result<()> {
         None
     };
 
-    // Get servers from database
-    let db_hosts = db::list_hosts().ok();
-    let mut db_host_configs = std::collections::HashMap::new();
-    if let Some(hosts) = &db_hosts {
-        for hostname in hosts {
-            if let Ok(Some(config)) = db::get_host_config(hostname) {
-                db_host_configs.insert(hostname.clone(), config);
-            }
-        }
-    }
-
-    // Show env file servers
+    // Show .env file servers (loaded from 1Password)
     if let Some(hosts) = &env_hosts {
         if !hosts.is_empty() {
-            println!("Servers in .env file:");
+            println!("Servers in .env file (from 1Password):");
             let mut hostnames: Vec<_> = hosts.keys().collect();
             hostnames.sort();
             for hostname in hostnames {
@@ -261,8 +249,8 @@ fn show_config_summary() -> Result<()> {
                 if host_config.ip.is_some() {
                     info.push("IP");
                 }
-                if host_config.tailscale.is_some() {
-                    info.push("Tailscale");
+                if host_config.hostname.is_some() {
+                    info.push("Hostname");
                 }
                 if host_config.backup_path.is_some() {
                     info.push("Backup");
@@ -277,59 +265,6 @@ fn show_config_summary() -> Result<()> {
     }
 
     println!();
-
-    // Show database servers
-    if let Some(hosts) = &db_hosts {
-        if !hosts.is_empty() {
-            println!("Servers in database:");
-            let mut hostnames = hosts.clone();
-            hostnames.sort();
-            for hostname in hostnames {
-                let config = db_host_configs.get(&hostname);
-                let mut info = vec![];
-                if let Some(cfg) = config {
-                    if cfg.ip.is_some() {
-                        info.push("IP");
-                    }
-                    if cfg.tailscale.is_some() {
-                        info.push("Tailscale");
-                    }
-                    if cfg.backup_path.is_some() {
-                        info.push("Backup");
-                    }
-                }
-                if info.is_empty() {
-                    println!("  • {} (no config)", hostname);
-                } else {
-                    println!("  • {} ({})", hostname, info.join(", "));
-                }
-            }
-        } else {
-            println!("No servers found in database");
-        }
-    } else {
-        println!("No servers found in database");
-    }
-
-    println!();
-
-    // Show overlap
-    if let (Some(env_hosts), Some(db_hosts)) = (&env_hosts, &db_hosts) {
-        let env_set: std::collections::HashSet<_> = env_hosts.keys().collect();
-        let db_set: std::collections::HashSet<_> = db_hosts.iter().collect();
-        let in_both: Vec<_> = env_set.intersection(&db_set).collect();
-
-        if !in_both.is_empty() {
-            println!("Servers in both .env file and database:");
-            let mut sorted: Vec<_> = in_both.iter().map(|s| s.to_string()).collect();
-            sorted.sort();
-            for hostname in sorted {
-                println!("  • {}", hostname);
-            }
-        } else {
-            println!("No servers found in both .env file and database");
-        }
-    }
 
     Ok(())
 }

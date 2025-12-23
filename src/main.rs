@@ -12,7 +12,7 @@ use clap::Parser;
 
 #[derive(Parser)]
 #[command(name = "halvor")]
-#[command(about = "Homelab Automation Layer - CLI tool for managing homelab infrastructure", long_about = None)]
+#[command(about = "Halvor - CLI tool for managing homelab infrastructure", long_about = None)]
 #[command(version = commands::utils::get_version_string())]
 struct Cli {
     /// Hostname to operate on (defaults to localhost if not provided)

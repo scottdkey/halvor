@@ -193,11 +193,33 @@ fn verify_vpn_with_executor(hostname: &str, target_host: &str, exec: &Executor) 
         println!("⚠ Host proxy connection failed (may be firewall/network issue)");
     }
 
-    // Check for errors in logs
+    // Check for errors in logs - read file and filter with Rust
     println!();
     println!("Checking for errors in logs...");
-    let error_check = exec.execute_shell("docker exec openvpn-pia cat /var/log/openvpn/openvpn.log 2>/dev/null | tail -50 | grep -iE 'error|failed|frag_in' | tail -5 || echo 'No errors found'")?;
-    vpn_utils::print_summary(hostname, target_host, all_passed, &error_check.stdout)?;
+    let log_output = exec.execute_shell(
+        "docker exec openvpn-pia cat /var/log/openvpn/openvpn.log 2>/dev/null || echo ''",
+    )?;
+    let log_content = String::from_utf8_lossy(&log_output.stdout);
+
+    // Take last 50 lines, filter for errors, take last 5
+    let error_lines: Vec<&str> = log_content
+        .lines()
+        .rev()
+        .take(50)
+        .filter(|line| {
+            let lower = line.to_lowercase();
+            lower.contains("error") || lower.contains("failed") || lower.contains("frag_in")
+        })
+        .take(5)
+        .collect();
+
+    let error_summary = if error_lines.is_empty() {
+        "No errors found".to_string()
+    } else {
+        error_lines.into_iter().rev().collect::<Vec<_>>().join("\n")
+    };
+
+    vpn_utils::print_summary(hostname, target_host, all_passed, error_summary.as_bytes())?;
 
     if !all_passed {
         anyhow::bail!("VPN verification failed - some tests did not pass");

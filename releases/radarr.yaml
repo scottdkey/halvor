@@ -1,0 +1,16 @@
+# Radarr - Default Instance Values
+# Deploy with: halvor helm install radarr --name radarr -f releases/radarr.yaml
+
+service:
+  port: 7878
+
+persistence:
+  media:
+    path: /mnt/media/movies
+  downloads:
+    path: /mnt/downloads
+
+env:
+  PUID: "1000"
+  PGID: "1000"
+  TZ: "America/Chicago"

@@ -6,13 +6,14 @@
 //! Environment variables:
 //! - HALVOR_ENV: Set to "development" for dev mode (builds locally, runs from repo)
 //! - COMPOSE_DEPLOY_PATH: Base path for production deployments (default: $HOME)
-//! - HOMELAB_REPO: GitHub repo for fetching compose files (default: scottdkey/homelab)
-//! - HOMELAB_BRANCH: Branch to fetch from (default: main)
+//! - HALVOR_REPO: GitHub repo for fetching compose files (default: scottdkey/halvor)
+//! - HALVOR_BRANCH: Branch to fetch from (default: main)
 
 use crate::config::EnvConfig;
 use crate::services::docker;
 use crate::utils::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
+use reqwest;
 use std::path::Path;
 
 /// Check if we're in development mode
@@ -29,12 +30,18 @@ fn get_deploy_base_path() -> String {
 
 /// Get the GitHub repo for fetching compose files
 fn get_repo() -> String {
-    std::env::var("HOMELAB_REPO").unwrap_or_else(|_| "scottdkey/homelab".to_string())
+    // Support both new and legacy env var names
+    std::env::var("HALVOR_REPO")
+        .or_else(|_| std::env::var("HOMELAB_REPO"))
+        .unwrap_or_else(|_| "scottdkey/halvor".to_string())
 }
 
 /// Get the branch to fetch from
 fn get_branch() -> String {
-    std::env::var("HOMELAB_BRANCH").unwrap_or_else(|_| "main".to_string())
+    // Support both new and legacy env var names
+    std::env::var("HALVOR_BRANCH")
+        .or_else(|_| std::env::var("HOMELAB_BRANCH"))
+        .unwrap_or_else(|_| "main".to_string())
 }
 
 /// Get raw GitHub URL for a file
@@ -198,9 +205,8 @@ pub static APPS: &[AppDefinition] = &[
 /// Find an app by name or alias
 pub fn find_app(name: &str) -> Option<&'static AppDefinition> {
     let lower = name.to_lowercase();
-    APPS.iter().find(|app| {
-        app.name == lower || app.aliases.iter().any(|alias| *alias == lower)
-    })
+    APPS.iter()
+        .find(|app| app.name == lower || app.aliases.iter().any(|alias| *alias == lower))
 }
 
 /// List all available apps
@@ -213,7 +219,10 @@ pub fn list_apps() {
     }
 
     println!("\nDocker Services:");
-    for app in APPS.iter().filter(|a| a.category == AppCategory::DockerService) {
+    for app in APPS
+        .iter()
+        .filter(|a| a.category == AppCategory::DockerService)
+    {
         print_app(app);
     }
 
@@ -228,8 +237,15 @@ fn print_app(app: &AppDefinition) {
     } else {
         format!(" (aliases: {})", app.aliases.join(", "))
     };
-    let vpn_note = if app.requires_vpn { " [requires vpn]" } else { "" };
-    println!("  {:<20} - {}{}{}", app.name, app.description, aliases, vpn_note);
+    let vpn_note = if app.requires_vpn {
+        " [requires vpn]"
+    } else {
+        ""
+    };
+    println!(
+        "  {:<20} - {}{}{}",
+        app.name, app.description, aliases, vpn_note
+    );
 }
 
 /// Deploy a Docker Compose service to a target host
@@ -238,11 +254,16 @@ pub fn deploy_compose_service(
     app: &AppDefinition,
     config: &EnvConfig,
 ) -> Result<()> {
-    let compose_dir = app.compose_dir.context("App does not have a compose directory")?;
+    let compose_dir = app
+        .compose_dir
+        .context("App does not have a compose directory")?;
 
     let is_dev = is_development_mode();
     let mode_str = if is_dev { "development" } else { "production" };
-    println!("Deploying {} to {} ({} mode)...", app.name, hostname, mode_str);
+    println!(
+        "Deploying {} to {} ({} mode)...",
+        app.name, hostname, mode_str
+    );
 
     // Create executor for target host
     let exec = Executor::new(hostname, config)?;
@@ -384,27 +405,45 @@ fn deploy_production_mode<E: CommandExecutor>(
     let target_dir = format!("{}/{}", base_path, app.name);
     exec.mkdir_p(&target_dir)?;
 
-    // Fetch docker-compose.yml from GitHub
+    // Fetch docker-compose.yml from GitHub using native Rust HTTP client
     let compose_url = get_github_raw_url(compose_dir, "docker-compose.yml");
     let target_compose = format!("{}/docker-compose.yml", target_dir);
     println!("  Fetching docker-compose.yml from GitHub...");
-    exec.execute_shell_interactive(&format!(
-        "curl -fsSL \"{}\" -o \"{}\"",
-        compose_url, target_compose
-    ))?;
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .context("Failed to create HTTP client")?;
+
+    let compose_content = client
+        .get(&compose_url)
+        .send()
+        .context("Failed to download docker-compose.yml")?
+        .error_for_status()
+        .context("HTTP error downloading docker-compose.yml")?
+        .text()
+        .context("Failed to read docker-compose.yml content")?;
+
+    exec.write_file(&target_compose, compose_content.as_bytes())
+        .context("Failed to write docker-compose.yml")?;
 
     // Fetch .env.example from GitHub if .env doesn't exist
     let target_env = format!("{}/.env", target_dir);
     if !exec.file_exists(&target_env).unwrap_or(false) {
         let env_url = get_github_raw_url(compose_dir, ".env.example");
         println!("  Fetching .env.example from GitHub...");
-        // Use || true since .env.example might not exist for all services
-        let result = exec.execute_shell(&format!(
-            "curl -fsSL \"{}\" -o \"{}\" 2>/dev/null",
-            env_url, target_env
-        ));
-        if result.is_ok() && result.unwrap().status.success() {
-            println!("  Note: Edit {}/.env to configure the service", app.name);
+        // .env.example might not exist for all services, so handle gracefully
+        if let Ok(env_content) = client
+            .get(&env_url)
+            .send()
+            .and_then(|r| r.error_for_status())
+            .and_then(|r| r.text())
+        {
+            if let Err(e) = exec.write_file(&target_env, env_content.as_bytes()) {
+                eprintln!("  Warning: Failed to write .env.example: {}", e);
+            } else {
+                println!("  Note: Edit {}/.env to configure the service", app.name);
+            }
         }
     }
 
@@ -445,12 +484,8 @@ fn get_compose_file_content(compose_dir: &str) -> Result<String> {
     let compose_path = find_compose_path(compose_dir)?;
     let compose_file = compose_path.join("docker-compose.yml");
 
-    std::fs::read_to_string(&compose_file).with_context(|| {
-        format!(
-            "Failed to read compose file: {}",
-            compose_file.display()
-        )
-    })
+    std::fs::read_to_string(&compose_file)
+        .with_context(|| format!("Failed to read compose file: {}", compose_file.display()))
 }
 
 /// Get .env.example content if it exists
@@ -458,9 +493,8 @@ fn get_env_example_content(compose_dir: &str) -> Result<String> {
     let compose_path = find_compose_path(compose_dir)?;
     let env_file = compose_path.join(".env.example");
 
-    std::fs::read_to_string(&env_file).with_context(|| {
-        format!("Failed to read .env.example: {}", env_file.display())
-    })
+    std::fs::read_to_string(&env_file)
+        .with_context(|| format!("Failed to read .env.example: {}", env_file.display()))
 }
 
 /// Find the compose directory path

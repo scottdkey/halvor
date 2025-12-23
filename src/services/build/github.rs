@@ -17,7 +17,7 @@ pub fn push_cli_to_github(binaries: &[(String, PathBuf)]) -> Result<()> {
     let github_token = std::env::var("GITHUB_TOKEN")
         .context("GITHUB_TOKEN environment variable is required for pushing releases")?;
 
-    let repo = format!("{}/homelab", github_user);
+    let repo = format!("{}/halvor", github_user);
     let api_url = format!("https://api.github.com/repos/{}/releases", repo);
 
     println!("Creating GitHub release: {}", tag);

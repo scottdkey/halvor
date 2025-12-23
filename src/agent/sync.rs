@@ -1,6 +1,6 @@
 use crate::agent::api::AgentClient;
 use crate::agent::discovery::DiscoveredHost;
-use crate::db;
+use crate::services::host;
 use anyhow::Result;
 
 /// Sync configuration between halvor agents
@@ -30,32 +30,19 @@ impl ConfigSync {
             );
 
             if let Ok(remote_info) = client.get_host_info() {
-                // Update local database with remote host info
-                db::store_host_info(
-                    &remote_info.hostname,
-                    remote_info.docker_version.as_deref(),
-                    remote_info.tailscale_installed,
-                    remote_info.portainer_installed,
-                    None,
-                )?;
-
-                // Update host config with discovered addresses
-                if let Some(config) = db::get_host_config(&remote_info.hostname)? {
-                    let mut updated_config = config;
-
+                // Update host config with discovered addresses (write to .env)
+                if let Some(mut config) = host::get_host_config(&remote_info.hostname)? {
                     // Update IP if we discovered a new one
-                    if remote_info.local_ip.is_some() && updated_config.ip.is_none() {
-                        updated_config.ip = remote_info.local_ip;
+                    if remote_info.local_ip.is_some() && config.ip.is_none() {
+                        config.ip = remote_info.local_ip;
                     }
 
-                    // Update Tailscale info
-                    if remote_info.tailscale_hostname.is_some()
-                        && updated_config.tailscale.is_none()
-                    {
-                        updated_config.tailscale = remote_info.tailscale_hostname;
+                    // Update hostname info (from Tailscale discovery)
+                    if remote_info.tailscale_hostname.is_some() && config.hostname.is_none() {
+                        config.hostname = remote_info.tailscale_hostname;
                     }
 
-                    db::store_host_config(&remote_info.hostname, &updated_config)?;
+                    host::store_host_config(&remote_info.hostname, &config)?;
                 }
             }
         }
@@ -63,11 +50,8 @@ impl ConfigSync {
         Ok(())
     }
 
-    /// Sync encrypted environment data and database
+    /// Sync encrypted environment data (from .env file)
     pub fn sync_encrypted_data(&self, hosts: &[DiscoveredHost]) -> Result<()> {
-        use crate::db;
-        use crate::db::generated::settings;
-
         for host in hosts {
             if !host.reachable {
                 continue;
@@ -86,10 +70,10 @@ impl ConfigSync {
                 host.agent_port,
             );
 
-            // Sync database
+            // Sync host configs from remote
             if let Ok(sync_data_str) = client.sync_database(&self.local_hostname, None) {
                 if let Ok(sync_data) = serde_json::from_str::<serde_json::Value>(&sync_data_str) {
-                    // Sync host configs
+                    // Sync host configs (write to .env)
                     if let Some(hosts_json) = sync_data.get("hosts") {
                         if let Some(hosts_map) = hosts_json.as_object() {
                             for (hostname, config_json) in hosts_map {
@@ -98,38 +82,11 @@ impl ConfigSync {
                                         config_json.clone(),
                                     )
                                 {
-                                    // Only update if we don't have this host or if remote is newer
-                                    let should_update = match db::get_host_config(hostname) {
-                                        Ok(Some(_)) => {
-                                            // Could add timestamp comparison here
-                                            true
-                                        }
-                                        Ok(None) => true,
-                                        Err(_) => false,
-                                    };
+                                    // Only update if we don't have this host
+                                    let should_update = host::get_host_config(hostname)?.is_none();
 
                                     if should_update {
-                                        db::store_host_config(hostname, &config)?;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Sync settings
-                    if let Some(settings_json) = sync_data.get("settings") {
-                        if let Some(settings_map) = settings_json.as_object() {
-                            for (key, value) in settings_map {
-                                if let Some(val_str) = value.as_str() {
-                                    // Only sync if we don't have it or if it's different
-                                    let should_update = match settings::get_setting(key) {
-                                        Ok(Some(existing)) => existing != val_str,
-                                        Ok(None) => true,
-                                        Err(_) => false,
-                                    };
-
-                                    if should_update {
-                                        settings::set_setting(key, val_str)?;
+                                        host::store_host_config(hostname, &config)?;
                                     }
                                 }
                             }

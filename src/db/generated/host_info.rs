@@ -252,10 +252,11 @@ pub fn list_hosts() -> Result<Vec<String>> {
 
 impl From<HostInfoRow> for config::HostConfig {
     fn from(row: HostInfoRow) -> Self {
+        // Map tailscale column to hostname field (for backward compatibility)
+        // Prefer hostname_field if set, otherwise use tailscale column
         config::HostConfig {
             ip: row.ip,
-            hostname: row.hostname_field,
-            tailscale: row.tailscale,
+            hostname: row.hostname_field.or(row.tailscale),
             backup_path: row.backup_path,
         }
     }
@@ -281,7 +282,7 @@ pub fn store_host_config(hostname: &str, config: &config::HostConfig) -> Result<
             metadata: None,
             ip: config.ip.clone(),
             hostname_field: config.hostname.clone(),
-            tailscale: config.tailscale.clone(),
+            tailscale: config.hostname.clone(), // Map hostname to tailscale column for backward compatibility
             backup_path: config.backup_path.clone(),
         },
     )?;

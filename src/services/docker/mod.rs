@@ -1,6 +1,7 @@
 use crate::config::EnvConfig;
 use crate::utils::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
+use reqwest;
 use serde_json::{Value, json};
 
 pub mod build;
@@ -313,18 +314,43 @@ fn install_fedora<E: CommandExecutor>(exec: &E) -> Result<()> {
     Ok(())
 }
 
-/// Install Docker GPG key using curl (works with any CommandExecutor)
+/// Install Docker GPG key using native Rust HTTP client
 fn install_gpg_key<E: CommandExecutor>(exec: &E, url: &str) -> Result<()> {
-    // Use curl to download and process the key in one command
-    let curl_cmd = format!(
-        "curl -fsSL {} | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg",
-        url
+    // Download GPG key using native Rust HTTP client
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .context("Failed to create HTTP client")?;
+
+    let key_content = client
+        .get(url)
+        .send()
+        .context("Failed to download Docker GPG key")?
+        .error_for_status()
+        .context("HTTP error downloading Docker GPG key")?
+        .bytes()
+        .context("Failed to read Docker GPG key content")?;
+
+    // Write key to temporary file, then use gpg to process it
+    let temp_key_path = "/tmp/docker-gpg-key.asc";
+    exec.write_file(temp_key_path, &key_content)
+        .context("Failed to write GPG key to temporary file")?;
+
+    // Process the key with gpg and install it
+    let gpg_cmd = format!(
+        "sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg {}",
+        temp_key_path
     );
-    let output = exec.execute_shell(&curl_cmd)?;
+    let output = exec.execute_shell(&gpg_cmd)?;
     if !output.status.success() {
-        anyhow::bail!("Failed to download and install Docker GPG key");
+        anyhow::bail!("Failed to process and install Docker GPG key");
     }
+
     exec.execute_interactive("sudo", &["chmod", "a+r", "/etc/apt/keyrings/docker.gpg"])?;
+
+    // Clean up temporary file
+    let _ = exec.execute_shell(&format!("rm -f {}", temp_key_path));
+
     Ok(())
 }
 
@@ -829,13 +855,11 @@ struct ContainerDef {
 }
 
 /// Registry of buildable containers
-const CONTAINERS: &[ContainerDef] = &[
-    ContainerDef {
-        name: "pia-vpn",
-        build_dir: "compose/pia-vpn",
-        image_name: "ghcr.io/scottdkey/pia-vpn",
-    },
-];
+const CONTAINERS: &[ContainerDef] = &[ContainerDef {
+    name: "pia-vpn",
+    build_dir: "compose/pia-vpn",
+    image_name: "ghcr.io/scottdkey/pia-vpn",
+}];
 
 /// Build a Docker container
 pub fn build_container(name: &str, no_cache: bool, push: bool, release: bool) -> Result<()> {
@@ -847,7 +871,11 @@ pub fn build_container(name: &str, no_cache: bool, push: bool, release: bool) ->
 
     // Find the build directory
     let build_path = find_container_build_path(container.build_dir)?;
-    println!("Building {} from {}...", container.name, build_path.display());
+    println!(
+        "Building {} from {}...",
+        container.name,
+        build_path.display()
+    );
 
     // Determine the tag
     let tag = if release { "latest" } else { "experimental" };
@@ -902,7 +930,10 @@ fn push_container(full_image: &str, base_image: &str, release: bool) -> Result<(
     if gh_check.is_err() || !gh_check.unwrap().success() {
         println!("  Logging in to ghcr.io using GitHub CLI...");
         let login_output = std::process::Command::new("sh")
-            .args(["-c", "gh auth token | docker login ghcr.io -u USERNAME --password-stdin"])
+            .args([
+                "-c",
+                "gh auth token | docker login ghcr.io -u USERNAME --password-stdin",
+            ])
             .status()
             .with_context(|| "Failed to login to ghcr.io")?;
 

@@ -33,9 +33,6 @@ pub fn write_host_to_env_file(
     if let Some(ref hostname_val) = config.hostname {
         lines.push(format!("HOST_{}_HOSTNAME={}", hostname_upper, hostname_val));
     }
-    if let Some(ref tailscale) = config.tailscale {
-        lines.push(format!("HOST_{}_TAILSCALE={}", hostname_upper, tailscale));
-    }
     if let Some(ref backup_path) = config.backup_path {
         lines.push(format!(
             "HOST_{}_BACKUP_PATH={}",

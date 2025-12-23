@@ -46,14 +46,9 @@ pub enum ConfigCommands {
         /// IP address
         value: String,
     },
-    /// Set hostname for hostname (primary hostname)
+    /// Set hostname (typically Tailscale hostname)
     Hostname {
         /// Hostname value
-        value: String,
-    },
-    /// Set Tailscale hostname (optional, different from primary hostname)
-    Tailscale {
-        /// Tailscale hostname value
         value: String,
     },
     /// Set backup path for hostname

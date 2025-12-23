@@ -9,11 +9,14 @@
 pub mod agent;
 pub mod backup;
 pub mod build;
+pub mod cluster;
 pub mod config;
 pub mod dev;
 pub mod docker;
 pub mod generate;
+pub mod helm;
 pub mod install;
+pub mod k3s;
 pub mod list;
 pub mod npm;
 pub mod pia_vpn;
@@ -80,9 +83,17 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
         }
         Provision {
             yes,
-            portainer_host,
+            cluster_role,
+            cluster_server,
+            cluster_token,
         } => {
-            provision::handle_provision(hostname.as_deref(), yes, portainer_host)?;
+            provision::handle_provision(
+                hostname.as_deref(),
+                yes,
+                cluster_role.as_deref(),
+                cluster_server.as_deref(),
+                cluster_token.as_deref(),
+            )?;
         }
         Smb { uninstall } => {
             smb::handle_smb(hostname.as_deref(), uninstall)?;
@@ -144,6 +155,18 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
         Generate { command } => {
             let local_command: generate::GenerateCommands = unsafe { mem::transmute(command) };
             generate::handle_generate(local_command)?;
+        }
+        K3s { command } => {
+            let local_command: k3s::K3sCommands = unsafe { mem::transmute(command) };
+            k3s::handle_k3s(hostname.as_deref(), local_command)?;
+        }
+        Helm { command } => {
+            let local_command: helm::HelmCommands = unsafe { mem::transmute(command) };
+            helm::handle_helm(hostname.as_deref(), local_command)?;
+        }
+        Cluster { command } => {
+            let local_command: cluster::ClusterCommands = unsafe { mem::transmute(command) };
+            cluster::handle_cluster(hostname.as_deref(), local_command)?;
         }
     }
     Ok(())

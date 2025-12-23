@@ -6,7 +6,7 @@ use std::io::Write;
 
 const GITHUB_API_BASE: &str = "https://api.github.com";
 const REPO_OWNER: &str = "scottdkey"; // TODO: Make this configurable
-const REPO_NAME: &str = "homelab";
+const REPO_NAME: &str = "halvor";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReleaseChannel {

@@ -1,8 +1,7 @@
 use crate::config::{config_manager, env_file};
 use crate::db;
-use crate::db::generated::settings;
 use crate::{
-    config::{EnvConfig, HostConfig, find_homelab_dir, load_env_config},
+    config::{EnvConfig, HostConfig, find_halvor_dir, load_env_config},
     services::{
         delete_host_config as delete_host_config_service, get_host_config, list_hosts,
         store_host_config,
@@ -17,14 +16,12 @@ pub fn set_host_field(hostname: &str, field: &str, value: &str) -> Result<()> {
     let mut config = get_host_config(hostname)?.unwrap_or_else(|| HostConfig {
         ip: None,
         hostname: None,
-        tailscale: None,
         backup_path: None,
     });
 
     match field {
         "ip" => config.ip = Some(value.to_string()),
         "hostname" => config.hostname = Some(value.to_string()),
-        "tailscale" => config.tailscale = Some(value.to_string()),
         "backup_path" => config.backup_path = Some(value.to_string()),
         _ => anyhow::bail!("Unknown field: {}", field),
     }
@@ -40,7 +37,6 @@ pub fn update_host_config(hostname: &str, updates: &HostConfig) -> Result<()> {
     let mut config = get_host_config(hostname)?.unwrap_or_else(|| HostConfig {
         ip: None,
         hostname: None,
-        tailscale: None,
         backup_path: None,
     });
 
@@ -50,9 +46,6 @@ pub fn update_host_config(hostname: &str, updates: &HostConfig) -> Result<()> {
     }
     if let Some(ref hostname_val) = updates.hostname {
         config.hostname = Some(hostname_val.clone());
-    }
-    if let Some(ref tailscale) = updates.tailscale {
-        config.tailscale = Some(tailscale.clone());
     }
     if let Some(ref backup_path) = updates.backup_path {
         config.backup_path = Some(backup_path.clone());
@@ -82,24 +75,22 @@ pub fn show_host_config(hostname: &str) -> Result<()> {
     if let Some(ref hostname_val) = config.hostname {
         println!("  Hostname: {}", hostname_val);
     }
-    if let Some(ref tailscale) = config.tailscale {
-        println!("  Tailscale: {}", tailscale);
-    }
+    // Hostname is shown above, no separate tailscale field
     if let Some(ref backup_path) = config.backup_path {
         println!("  Backup Path: {}", backup_path);
     }
     Ok(())
 }
 
-/// Commit host configuration from .env to database
+/// Commit host configuration (no-op - config is only in .env)
 pub fn commit_host_config_to_db(hostname: &str) -> Result<()> {
-    let homelab_dir = find_homelab_dir()?;
-    let env_config = load_env_config(&homelab_dir)?;
+    let halvor_dir = find_halvor_dir()?;
+    let env_config = load_env_config(&halvor_dir)?;
 
-    if let Some(config) = env_config.hosts.get(hostname) {
-        store_host_config(hostname, config)?;
+    if env_config.hosts.get(hostname).is_some() {
+        // Config is already in .env (loaded from 1Password)
         println!(
-            "✓ Committed host configuration for '{}' from .env to database",
+            "✓ Host configuration for '{}' is in .env file (loaded from 1Password)",
             hostname
         );
     } else {
@@ -113,8 +104,8 @@ pub fn backup_host_config_to_env(hostname: &str) -> Result<()> {
     let config = get_host_config(hostname)?
         .with_context(|| format!("Host '{}' not found in database", hostname))?;
 
-    let homelab_dir = find_homelab_dir()?;
-    let env_path = homelab_dir.join(".env");
+    let halvor_dir = find_halvor_dir()?;
+    let env_path = halvor_dir.join(".env");
 
     env_file::write_host_to_env_file(&env_path, hostname, &config)?;
     println!(
@@ -133,8 +124,8 @@ pub fn delete_host_config(hostname: &str, from_env: bool) -> Result<()> {
     );
 
     if from_env {
-        let homelab_dir = find_homelab_dir()?;
-        let env_path = homelab_dir.join(".env");
+        let halvor_dir = find_halvor_dir()?;
+        let env_path = halvor_dir.join(".env");
         env_file::remove_host_from_env_file(&env_path, hostname)?;
         println!(
             "✓ Removed host configuration for '{}' from .env file",
@@ -146,8 +137,8 @@ pub fn delete_host_config(hostname: &str, from_env: bool) -> Result<()> {
 
 /// Commit all host configurations from .env to database
 pub fn commit_all_to_db() -> Result<()> {
-    let homelab_dir = find_homelab_dir()?;
-    let env_config = load_env_config(&homelab_dir)?;
+    let halvor_dir = find_halvor_dir()?;
+    let env_config = load_env_config(&halvor_dir)?;
 
     let mut count = 0;
     for (hostname, config) in &env_config.hosts {
@@ -167,13 +158,13 @@ pub fn backup_all_to_env_with_backup() -> Result<()> {
     use chrono::Utc;
     use std::fs;
 
-    let homelab_dir = find_homelab_dir()?;
-    let env_path = homelab_dir.join(".env");
+    let halvor_dir = find_halvor_dir()?;
+    let env_path = halvor_dir.join(".env");
 
     // Backup current .env file if it exists
     if env_path.exists() {
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
-        let backup_path = homelab_dir.join(format!(".env.backup_{}", timestamp));
+        let backup_path = halvor_dir.join(format!(".env.backup_{}", timestamp));
         fs::copy(&env_path, &backup_path)
             .with_context(|| format!("Failed to backup .env file to {}", backup_path.display()))?;
         println!("✓ Backed up current .env to {}", backup_path.display());
@@ -250,11 +241,7 @@ pub fn show_db_config(verbose: bool) -> Result<()> {
                     println!("  Hostname: {}", hostname_val);
                 }
             }
-            if verbose || config.tailscale.is_some() {
-                if let Some(ref tailscale) = config.tailscale {
-                    println!("  Tailscale: {}", tailscale);
-                }
-            }
+            // Hostname is shown above, no separate tailscale field
             if verbose || config.backup_path.is_some() {
                 if let Some(ref backup_path) = config.backup_path {
                     println!("  Backup Path: {}", backup_path);
@@ -266,29 +253,12 @@ pub fn show_db_config(verbose: bool) -> Result<()> {
     Ok(())
 }
 
-/// Show current configuration from .env
+/// Show current configuration from .env (loaded from 1Password)
 pub fn show_current_config(verbose: bool) -> Result<()> {
-    use crate::db;
-    use crate::db::generated::smb_servers;
-    use std::collections::HashMap;
     use std::env;
-    let homelab_dir = find_homelab_dir()?;
-    let env_config = load_env_config(&homelab_dir)?;
-    // Load DB hosts and SMB configs for comparison
-    let db_hosts = db::list_hosts().unwrap_or_default();
-    let mut db_host_map: HashMap<String, HostConfig> = HashMap::new();
-    for h in &db_hosts {
-        if let Ok(Some(cfg)) = db::get_host_config(h) {
-            db_host_map.insert(h.clone(), cfg);
-        }
-    }
-    let db_smb_names = smb_servers::list_smb_servers().unwrap_or_default();
-    let mut db_smb_map: HashMap<String, crate::config::SmbServerConfig> = HashMap::new();
-    for name in &db_smb_names {
-        if let Ok(Some(cfg)) = smb_servers::get_smb_server(name) {
-            db_smb_map.insert(name.clone(), cfg);
-        }
-    }
+    let halvor_dir = find_halvor_dir()?;
+    let env_config = load_env_config(&halvor_dir)?;
+    // Only use .env config (loaded from 1Password via .envrc)
 
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("Configuration (.env file)");
@@ -299,105 +269,48 @@ pub fn show_current_config(verbose: bool) -> Result<()> {
     println!("Tailnet:");
     let env_tld = env::var("TAILNET_TLD").or_else(|_| env::var("TLD")).ok();
     let env_acme = env::var("ACME_EMAIL").ok();
-    let _db_base = settings::get_setting("TAILNET_BASE").ok().flatten();
-    let db_tld = settings::get_setting("TAILNET_TLD")
-        .ok()
-        .flatten()
-        .or_else(|| settings::get_setting("TLD").ok().flatten());
-    let db_acme = settings::get_setting("ACME_EMAIL").ok().flatten();
 
     println!("  Base: {}", env_config._tailnet_base);
-    if let Some(tld) = env_tld.clone() {
-        println!(
-            "  TLD: {}{}",
-            tld,
-            if let Some(db) = &db_tld {
-                if db == &tld {
-                    " [db: match]"
-                } else {
-                    " [db: mismatch]"
-                }
-            } else {
-                " [db: missing]"
-            }
-        );
-    } else if let Some(db) = db_tld {
-        println!("  TLD: (env missing) [db: {}]", db);
+    if let Some(tld) = env_tld {
+        println!("  TLD: {}", tld);
     }
-    if let Some(acme) = env_acme.clone() {
-        println!(
-            "  ACME Email: {}{}",
-            acme,
-            if let Some(db) = &db_acme {
-                if db == &acme {
-                    " [db: match]"
-                } else {
-                    " [db: mismatch]"
-                }
-            } else {
-                " [db: missing]"
-            }
-        );
-    } else if let Some(db) = db_acme {
-        println!("  ACME Email: (env missing) [db: {}]", db);
+    if let Some(acme) = env_acme {
+        println!("  ACME Email: {}", acme);
     }
     println!();
 
-    // Show PIA VPN configuration (env vs db)
+    // Show PIA VPN configuration (from .env)
     println!("PIA VPN:");
     let pia_username = env::var("PIA_USERNAME").ok();
     let pia_password = env::var("PIA_PASSWORD").ok();
-    let db_pia_username = settings::get_setting("PIA_USERNAME").ok().flatten();
-    let db_pia_password = settings::get_setting("PIA_PASSWORD").ok().flatten();
-    if pia_username.is_some()
-        || pia_password.is_some()
-        || db_pia_username.is_some()
-        || db_pia_password.is_some()
-    {
+    if pia_username.is_some() || pia_password.is_some() {
         if let Some(ref username) = pia_username {
-            let status = match &db_pia_username {
-                Some(db) if db == username => " [db: match]",
-                Some(_) => " [db: mismatch]",
-                None => " [db: missing]",
-            };
-            println!("  Username: {}{}", username, status);
-        } else if let Some(db) = db_pia_username {
-            println!("  Username: (env missing) [db: {}]", db);
+            println!("  Username: {}", username);
         } else {
             println!("  Username: (not set)");
         }
-        let pw_mask = |p: &Option<String>| {
-            if p.is_some() { "***" } else { "(not set)" }
-        };
         if verbose {
             if let Some(ref password) = pia_password {
-                let status = match &db_pia_password {
-                    Some(db) if db == password => " [db: match]",
-                    Some(_) => " [db: mismatch]",
-                    None => " [db: missing]",
-                };
-                println!("  Password: {}{}", password, status);
-            } else if let Some(db) = db_pia_password {
-                println!("  Password: (env missing) [db: {}]", db);
+                println!("  Password: {}", password);
             } else {
                 println!("  Password: (not set)");
             }
         } else {
-            let status = match (&pia_password, &db_pia_password) {
-                (Some(pw), Some(db)) if pw == db => " [db: match]",
-                (Some(_), Some(_)) => " [db: mismatch]",
-                (Some(_), None) => " [db: missing]",
-                (None, Some(_)) => " [env missing]",
-                (None, None) => "",
-            };
-            println!("  Password: {}{}", pw_mask(&pia_password), status);
+            println!(
+                "  Password: {}",
+                if pia_password.is_some() {
+                    "***"
+                } else {
+                    "(not set)"
+                }
+            );
         }
     } else {
         println!("  (not configured)");
     }
     println!();
 
-    // Show media paths (env vs db)
+    // Show media paths (from .env)
     println!("Media Paths:");
     let paths = [
         ("Downloads", "DOWNLOADS_PATH"),
@@ -408,20 +321,9 @@ pub fn show_current_config(verbose: bool) -> Result<()> {
     ];
     let mut has_paths = false;
     for (name, var) in &paths {
-        let env_val = env::var(var).ok();
-        let db_val = settings::get_setting(var).ok().flatten();
-        if env_val.is_some() || db_val.is_some() {
+        if let Ok(path) = env::var(var) {
             has_paths = true;
-            if let Some(ref path) = env_val {
-                let status = match &db_val {
-                    Some(db) if db == path => " [db: match]",
-                    Some(_) => " [db: mismatch]",
-                    None => " [db: missing]",
-                };
-                println!("  {}: {}{}", name, path, status);
-            } else if let Some(db) = db_val {
-                println!("  {}: (env missing) [db: {}]", name, db);
-            }
+            println!("  {}: {}", name, path);
         }
     }
     if !has_paths {
@@ -429,76 +331,32 @@ pub fn show_current_config(verbose: bool) -> Result<()> {
     }
     println!();
 
-    // Show NPM configuration (env vs db)
+    // Show NPM configuration (from .env)
     println!("Nginx Proxy Manager:");
     let npm_url = crate::config::get_npm_url();
     let npm_username = crate::config::get_npm_username();
     let npm_password = crate::config::get_npm_password();
-    let db_npm_url = settings::get_setting("NGINX_PROXY_MANAGER_URL")
-        .ok()
-        .flatten();
-    let db_npm_username = settings::get_setting("NGINX_PROXY_MANAGER_USERNAME")
-        .ok()
-        .flatten();
-    let db_npm_password = settings::get_setting("NGINX_PROXY_MANAGER_PASSWORD")
-        .ok()
-        .flatten();
-    if npm_url.is_some()
-        || npm_username.is_some()
-        || npm_password.is_some()
-        || db_npm_url.is_some()
-        || db_npm_username.is_some()
-        || db_npm_password.is_some()
-    {
+    if npm_url.is_some() || npm_username.is_some() || npm_password.is_some() {
         if let Some(ref url) = npm_url {
-            let status = match &db_npm_url {
-                Some(db) if db == url => " [db: match]",
-                Some(_) => " [db: mismatch]",
-                None => " [db: missing]",
-            };
-            println!("  URL: {}{}", url, status);
-        } else if let Some(db) = db_npm_url {
-            println!("  URL: (env missing) [db: {}]", db);
+            println!("  URL: {}", url);
         }
         if let Some(ref username) = npm_username {
-            let status = match &db_npm_username {
-                Some(db) if db == username => " [db: match]",
-                Some(_) => " [db: mismatch]",
-                None => " [db: missing]",
-            };
-            println!("  Username: {}{}", username, status);
-        } else if let Some(db) = db_npm_username {
-            println!("  Username: (env missing) [db: {}]", db);
+            println!("  Username: {}", username);
         }
         if verbose {
             if let Some(ref password) = npm_password {
-                let status = match &db_npm_password {
-                    Some(db) if db == password => " [db: match]",
-                    Some(_) => " [db: mismatch]",
-                    None => " [db: missing]",
-                };
-                println!("  Password: {}{}", password, status);
-            } else if let Some(db) = db_npm_password {
-                println!("  Password: (env missing) [db: {}]", db);
+                println!("  Password: {}", password);
             } else {
                 println!("  Password: (not set)");
             }
         } else {
-            let status = match (&npm_password, &db_npm_password) {
-                (Some(pw), Some(db)) if pw == db => " [db: match]",
-                (Some(_), Some(_)) => " [db: mismatch]",
-                (Some(_), None) => " [db: missing]",
-                (None, Some(_)) => " [env missing]",
-                (None, None) => "",
-            };
             println!(
-                "  Password: {}{}",
+                "  Password: {}",
                 if npm_password.is_some() {
                     "***"
                 } else {
                     "(not set)"
-                },
-                status
+                }
             );
         }
     } else {
@@ -509,144 +367,52 @@ pub fn show_current_config(verbose: bool) -> Result<()> {
     // Show SMB servers (env vs db)
     println!("SMB Servers:");
     let mut server_names: Vec<String> = env_config.smb_servers.keys().cloned().collect();
-    for name in db_smb_names.iter() {
-        if !server_names.contains(name) {
-            server_names.push(name.clone());
-        }
-    }
     server_names.sort();
     if server_names.is_empty() {
         println!("  (none configured)");
     }
     for server_name in server_names {
         let env_cfg = env_config.smb_servers.get(&server_name);
-        let db_cfg = db_smb_map.get(&server_name);
         println!("  {}:", server_name);
-        let host_line = |label: &str, env_val: Option<String>, db_val: Option<String>| {
+        let host_line = |label: &str, env_val: Option<String>| {
             if let Some(ev) = env_val {
-                let status = match db_val.as_ref() {
-                    Some(dv) if dv == &ev => " [db: match]",
-                    Some(_) => " [db: mismatch]",
-                    None => " [db: missing]",
-                };
-                println!("    {}: {}{}", label, ev, status);
-            } else if let Some(dv) = db_val {
-                println!("    {}: (env missing) [db: {}]", label, dv);
+                println!("    {}: {}", label, ev);
             }
         };
         if let Some(cfg) = env_cfg {
-            host_line(
-                "Host",
-                Some(cfg.host.clone()),
-                db_cfg.map(|c| c.host.clone()),
-            );
-            host_line(
-                "Shares",
-                Some(cfg.shares.join(", ")),
-                db_cfg.map(|c| c.shares.join(", ")),
-            );
-            host_line(
-                "Username",
-                cfg.username.clone(),
-                db_cfg.and_then(|c| c.username.clone()),
-            );
+            host_line("Host", Some(cfg.host.clone()));
+            host_line("Shares", Some(cfg.shares.join(", ")));
+            host_line("Username", cfg.username.clone());
             if verbose {
-                host_line(
-                    "Password",
-                    cfg.password.clone(),
-                    db_cfg.and_then(|c| c.password.clone()),
-                );
+                host_line("Password", cfg.password.clone());
             } else {
                 let mask = cfg.password.as_ref().map(|_| "***".to_string());
-                let db_mask = db_cfg
-                    .and_then(|c| c.password.as_ref())
-                    .map(|_| "***".to_string());
-                host_line("Password", mask, db_mask);
+                host_line("Password", mask);
             }
-            host_line(
-                "Options",
-                cfg.options.clone(),
-                db_cfg.and_then(|c| c.options.clone()),
-            );
-        } else if let Some(cfg) = db_cfg {
-            println!("    Host: (env missing) [db: {}]", cfg.host);
-            println!("    Shares: (env missing) [db: {}]", cfg.shares.join(", "));
-            if let Some(u) = &cfg.username {
-                println!("    Username: (env missing) [db: {}]", u);
-            }
-            if verbose {
-                if let Some(p) = &cfg.password {
-                    println!("    Password: (env missing) [db: {}]", p);
-                }
-            } else if cfg.password.is_some() {
-                println!("    Password: [db: ***]");
-            }
-            if let Some(o) = &cfg.options {
-                println!("    Options: (env missing) [db: {}]", o);
-            }
+            host_line("Options", cfg.options.clone());
         }
     }
     println!();
 
-    // Show hosts (env vs db)
+    // Show hosts (from .env file loaded from 1Password)
     println!("Hosts:");
     let mut hostnames: Vec<String> = env_config.hosts.keys().cloned().collect();
-    for h in db_host_map.keys() {
-        if !hostnames.contains(h) {
-            hostnames.push(h.clone());
-        }
-    }
     hostnames.sort();
     if hostnames.is_empty() {
         println!("  (none configured)");
         println!();
     } else {
         for hostname in hostnames {
-            let env_cfg = env_config.hosts.get(&hostname);
-            let db_cfg = db_host_map.get(&hostname);
+            let cfg = env_config.hosts.get(&hostname).unwrap();
             println!("  {}:", hostname);
-            let field = |label: &str, env_val: Option<String>, db_val: Option<String>| {
-                if let Some(ev) = env_val {
-                    let status = match db_val.as_ref() {
-                        Some(dv) if dv == &ev => " [db: match]",
-                        Some(_) => " [db: mismatch]",
-                        None => " [db: missing]",
-                    };
-                    println!("    {}: {}{}", label, ev, status);
-                } else if let Some(dv) = db_val {
-                    println!("    {}: (env missing) [db: {}]", label, dv);
-                }
-            };
-            if let Some(cfg) = env_cfg {
-                field("IP", cfg.ip.clone(), db_cfg.and_then(|c| c.ip.clone()));
-                field(
-                    "Hostname",
-                    cfg.hostname.clone(),
-                    db_cfg.and_then(|c| c.hostname.clone()),
-                );
-                field(
-                    "Tailscale",
-                    cfg.tailscale.clone(),
-                    db_cfg.and_then(|c| c.tailscale.clone()),
-                );
-                field(
-                    "Backup Path",
-                    cfg.backup_path.clone(),
-                    db_cfg.and_then(|c| c.backup_path.clone()),
-                );
-            } else if let Some(cfg) = db_cfg {
-                if let Some(ip) = &cfg.ip {
-                    println!("    IP: (env missing) [db: {}]", ip);
-                }
-                if let Some(h) = &cfg.hostname {
-                    println!("    Hostname: (env missing) [db: {}]", h);
-                }
-                if let Some(ts) = &cfg.tailscale {
-                    println!("    Tailscale: (env missing) [db: {}]", ts);
-                }
-                if let Some(bp) = &cfg.backup_path {
-                    println!("    Backup Path: (env missing) [db: {}]", bp);
-                }
+            if let Some(ip) = &cfg.ip {
+                println!("    IP: {}", ip);
+            }
+            if let Some(hostname_val) = &cfg.hostname {
+                println!("    Hostname: {}", hostname_val);
+            }
+            if let Some(backup_path) = &cfg.backup_path {
+                println!("    Backup Path: {}", backup_path);
             }
         }
         println!();
@@ -736,8 +502,8 @@ pub fn set_env_path(path: &str) -> Result<()> {
 
 /// Create example .env file
 pub fn create_example_env_file() -> Result<()> {
-    let homelab_dir = find_homelab_dir()?;
-    let env_path = homelab_dir.join(".env.example");
+    let halvor_dir = find_halvor_dir()?;
+    let env_path = halvor_dir.join(".env.example");
 
     let example_content = r#"# HAL Configuration
 # Copy this file to .env and fill in your values
@@ -750,7 +516,7 @@ TAILNET_BASE=ts.net
 # Example:
 # HOST_bellerophon_IP=192.168.1.100
 # HOST_bellerophon_HOSTNAME=bellerophon
-# HOST_bellerophon_TAILSCALE=bellerophon
+# HOST_bellerophon_HOSTNAME=bellerophon
 # HOST_bellerophon_BACKUP_PATH=/mnt/backups/bellerophon
 
 # SMB Server configurations
@@ -826,111 +592,34 @@ pub fn backup_database(path: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// Show differences between .env and database configurations
+/// Show configuration (from .env file loaded from 1Password)
+/// Note: Database comparison removed - only .env is used
 pub fn show_config_diff() -> Result<()> {
-    let homelab_dir = find_homelab_dir()?;
-    let env_config = load_env_config(&homelab_dir)?;
-    let db_hosts = list_hosts().unwrap_or_default();
+    let halvor_dir = find_halvor_dir()?;
+    let env_config = load_env_config(&halvor_dir)?;
 
-    let mut env_hostnames: Vec<_> = env_config.hosts.keys().collect();
-    env_hostnames.sort();
-
-    let mut all_hostnames = std::collections::HashSet::new();
-    for hostname in &env_hostnames {
-        all_hostnames.insert(*hostname);
-    }
-    for hostname in &db_hosts {
-        all_hostnames.insert(hostname);
-    }
-
-    let mut all_hostnames: Vec<_> = all_hostnames.into_iter().collect();
-    all_hostnames.sort();
-
-    if all_hostnames.is_empty() {
-        println!("No hosts found in either .env or database.");
+    if env_config.hosts.is_empty() {
+        println!("No hosts found in .env file.");
         return Ok(());
     }
 
-    println!("Configuration differences between .env and database:");
+    println!("Hosts in .env file (loaded from 1Password):");
     println!();
 
-    for hostname in &all_hostnames {
-        let env_config = env_config.hosts.get(*hostname);
-        let db_config = get_host_config(hostname).ok().flatten();
+    let mut hostnames: Vec<_> = env_config.hosts.keys().collect();
+    hostnames.sort();
 
-        match (env_config, db_config) {
-            (Some(env), Some(db)) => {
-                // Compare fields
-                let mut has_diff = false;
-                if env.ip != db.ip {
-                    println!("  {} - IP differs:", hostname);
-                    if let Some(ref ip) = env.ip {
-                        println!("    .env: {}", ip);
-                    } else {
-                        println!("    .env: (not set)");
-                    }
-                    if let Some(ref ip) = db.ip {
-                        println!("    db:   {}", ip);
-                    } else {
-                        println!("    db:   (not set)");
-                    }
-                    has_diff = true;
-                }
-                if env.hostname != db.hostname {
-                    println!("  {} - Hostname differs:", hostname);
-                    if let Some(ref h) = env.hostname {
-                        println!("    .env: {}", h);
-                    } else {
-                        println!("    .env: (not set)");
-                    }
-                    if let Some(ref h) = db.hostname {
-                        println!("    db:   {}", h);
-                    } else {
-                        println!("    db:   (not set)");
-                    }
-                    has_diff = true;
-                }
-                if env.tailscale != db.tailscale {
-                    println!("  {} - Tailscale differs:", hostname);
-                    if let Some(ref t) = env.tailscale {
-                        println!("    .env: {}", t);
-                    } else {
-                        println!("    .env: (not set)");
-                    }
-                    if let Some(ref t) = db.tailscale {
-                        println!("    db:   {}", t);
-                    } else {
-                        println!("    db:   (not set)");
-                    }
-                    has_diff = true;
-                }
-                if env.backup_path != db.backup_path {
-                    println!("  {} - Backup path differs:", hostname);
-                    if let Some(ref p) = env.backup_path {
-                        println!("    .env: {}", p);
-                    } else {
-                        println!("    .env: (not set)");
-                    }
-                    if let Some(ref p) = db.backup_path {
-                        println!("    db:   {}", p);
-                    } else {
-                        println!("    db:   (not set)");
-                    }
-                    has_diff = true;
-                }
-                if !has_diff {
-                    println!("  {} - No differences", hostname);
-                }
-            }
-            (Some(_), None) => {
-                println!("  {} - Only in .env (not in database)", hostname);
-            }
-            (None, Some(_)) => {
-                println!("  {} - Only in database (not in .env)", hostname);
-            }
-            (None, None) => {
-                // Shouldn't happen, but handle it
-            }
+    for hostname in &hostnames {
+        let cfg = env_config.hosts.get(*hostname).unwrap();
+        println!("  {}:", hostname);
+        if let Some(ip) = &cfg.ip {
+            println!("    IP: {}", ip);
+        }
+        if let Some(hostname_val) = &cfg.hostname {
+            println!("    Hostname: {}", hostname_val);
+        }
+        if let Some(backup_path) = &cfg.backup_path {
+            println!("    Backup Path: {}", backup_path);
         }
         println!();
     }
@@ -1052,7 +741,7 @@ pub fn ensure_host_in_config(hostname: Option<&str>, config: &EnvConfig) -> Resu
         }
         // Hostname provided but not found - return error with helpful message
         anyhow::bail!(
-            "Host '{}' not found in config.\n\nAdd to .env:\n  HOST_{}_IP=\"<ip-address>\"\n  HOST_{}_TAILSCALE=\"<tailscale-hostname>\"",
+            "Host '{}' not found in config.\n\nAdd to .env:\n  HOST_{}_IP=\"<ip-address>\"\n  HOST_{}_HOSTNAME=\"<hostname>\"",
             host,
             host.to_uppercase(),
             host.to_uppercase()
@@ -1309,26 +998,26 @@ pub fn ensure_host_in_config(hostname: Option<&str>, config: &EnvConfig) -> Resu
     }
 
     // Create host config
+    // Note: tailscale variable is now stored in hostname field
     let host_config = HostConfig {
         ip: Some(final_ip),
-        hostname: Some(current_hostname.clone()),
-        tailscale,
+        hostname: tailscale, // Use tailscale hostname as the hostname field
         backup_path: None,
     };
 
-    // Store in database only (not .env file)
+    // Store to .env file (loaded from 1Password)
     #[cfg(debug_assertions)]
-    println!("[DEBUG] Storing host config to database:");
+    println!("[DEBUG] Storing host config to .env file:");
     #[cfg(debug_assertions)]
     println!("[DEBUG]   hostname: {}", current_hostname);
     #[cfg(debug_assertions)]
     println!("[DEBUG]   ip: {:?}", host_config.ip);
     #[cfg(debug_assertions)]
-    println!("[DEBUG]   tailscale: {:?}", host_config.tailscale);
-
+    println!("[DEBUG]   hostname field: {:?}", host_config.hostname);
+    // Hostname field covers both hostname and tailscale
     store_host_config(&current_hostname, &host_config).with_context(|| {
         format!(
-            "Failed to store host config for '{}' in database",
+            "Failed to store host config for '{}' to .env file",
             current_hostname
         )
     })?;
@@ -1344,7 +1033,7 @@ pub fn ensure_host_in_config(hostname: Option<&str>, config: &EnvConfig) -> Resu
                 println!("[DEBUG] ✓ Verified: Host config retrieved from database");
                 println!("[DEBUG]   Retrieved hostname: {:?}", retrieved.hostname);
                 println!("[DEBUG]   Retrieved IP: {:?}", retrieved.ip);
-                println!("[DEBUG]   Retrieved tailscale: {:?}", retrieved.tailscale);
+                // Hostname field covers both hostname and tailscale
             }
             Ok(None) => {
                 eprintln!("[DEBUG] ⚠ Warning: Host config not found after storing");
@@ -1452,9 +1141,7 @@ pub fn handle_config_command(
                 Some(ConfigCommands::Hostname { value }) => {
                     set_host_field(hostname, "hostname", &value)?;
                 }
-                Some(ConfigCommands::Tailscale { value }) => {
-                    set_host_field(hostname, "tailscale", &value)?;
-                }
+                // Tailscale command removed - use hostname instead
                 Some(ConfigCommands::BackupPath { value }) => {
                     set_host_field(hostname, "backup_path", &value)?;
                 }
@@ -1543,7 +1230,6 @@ pub fn handle_config_command(
         }
         ConfigCommands::Ip { .. }
         | ConfigCommands::Hostname { .. }
-        | ConfigCommands::Tailscale { .. }
         | ConfigCommands::BackupPath { .. } => {
             anyhow::bail!(
                 "This command requires a hostname. Usage: halvor config <hostname> <command>"
@@ -1602,151 +1288,14 @@ pub fn handle_migrate_command(command: crate::commands::config::MigrateCommands)
 
 /// Sync environment file to database (load env values into DB, delete DB values not in env)
 pub fn sync_db_from_env() -> Result<()> {
-    use crate::db::generated::{settings, smb_servers};
-    use std::collections::HashSet;
-
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("Syncing .env file to database");
+    println!("Configuration Sync");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!();
 
-    // Load .env config
-    let homelab_dir = find_homelab_dir()?;
-    let env_config = load_env_config(&homelab_dir)?;
-
-    // Get all DB hosts
-    let db_hosts = list_hosts()?;
-    let db_hosts_set: HashSet<String> = db_hosts.iter().cloned().collect();
-    let env_hosts_set: HashSet<String> = env_config.hosts.keys().cloned().collect();
-
-    // Add/update hosts from .env
-    let mut added = 0;
-    let mut updated = 0;
-    for (hostname, config) in &env_config.hosts {
-        let exists = db_hosts_set.contains(hostname);
-        store_host_config(hostname, config)?;
-        if exists {
-            updated += 1;
-        } else {
-            added += 1;
-        }
-    }
-
-    // Delete hosts from DB that aren't in .env
-    let mut deleted = 0;
-    for hostname in &db_hosts {
-        if !env_hosts_set.contains(hostname) {
-            delete_host_config_service(hostname)?;
-            deleted += 1;
-        }
-    }
-
-    println!("✓ Sync complete:");
-    println!("  Added: {}", added);
-    println!("  Updated: {}", updated);
-    println!("  Deleted: {}", deleted);
-    println!();
-
-    // Sync SMB servers
-    let db_smb_servers = smb_servers::list_smb_servers().unwrap_or_default();
-    let db_smb_set: HashSet<String> = db_smb_servers.iter().cloned().collect();
-    let env_smb_set: HashSet<String> = env_config.smb_servers.keys().cloned().collect();
-
-    let mut smb_added = 0;
-    let mut smb_updated = 0;
-    for (name, cfg) in &env_config.smb_servers {
-        let exists = db_smb_set.contains(name);
-        smb_servers::store_smb_server(name, cfg)?;
-        if exists {
-            smb_updated += 1;
-        } else {
-            smb_added += 1;
-        }
-    }
-    let mut smb_deleted = 0;
-    for name in &db_smb_servers {
-        if !env_smb_set.contains(name) {
-            smb_servers::delete_smb_server(name)?;
-            smb_deleted += 1;
-        }
-    }
-    println!("SMB servers synced:");
-    println!("  Added: {}", smb_added);
-    println!("  Updated: {}", smb_updated);
-    println!("  Deleted: {}", smb_deleted);
-    println!();
-
-    // Sync settings (tailnet, ACME, PIA, media paths, NPM)
-    let tailnet_tld = std::env::var("TAILNET_TLD")
-        .or_else(|_| std::env::var("TLD"))
-        .unwrap_or_default();
-    let acme_email = std::env::var("ACME_EMAIL").unwrap_or_default();
-    let pia_username = std::env::var("PIA_USERNAME").unwrap_or_default();
-    let pia_password = std::env::var("PIA_PASSWORD").unwrap_or_default();
-    let downloads_path = std::env::var("DOWNLOADS_PATH").unwrap_or_default();
-    let movies_path = std::env::var("MOVIES_PATH").unwrap_or_default();
-    let tv_path = std::env::var("TV_PATH").unwrap_or_default();
-    let movies_4k_path = std::env::var("MOVIES_4K_PATH").unwrap_or_default();
-    let music_path = std::env::var("MUSIC_PATH").unwrap_or_default();
-    let npm_url = std::env::var("NGINX_PROXY_MANAGER_URL").unwrap_or_default();
-    let npm_user = std::env::var("NGINX_PROXY_MANAGER_USERNAME").unwrap_or_default();
-    let npm_pass = std::env::var("NGINX_PROXY_MANAGER_PASSWORD").unwrap_or_default();
-
-    let setting_keys: Vec<(&str, String)> = vec![
-        ("TAILNET_BASE", env_config._tailnet_base.clone()),
-        ("TAILNET_TLD", tailnet_tld),
-        ("ACME_EMAIL", acme_email),
-        ("PIA_USERNAME", pia_username),
-        ("PIA_PASSWORD", pia_password),
-        ("DOWNLOADS_PATH", downloads_path),
-        ("MOVIES_PATH", movies_path),
-        ("TV_PATH", tv_path),
-        ("MOVIES_4K_PATH", movies_4k_path),
-        ("MUSIC_PATH", music_path),
-        ("NGINX_PROXY_MANAGER_URL", npm_url),
-        ("NGINX_PROXY_MANAGER_USERNAME", npm_user),
-        ("NGINX_PROXY_MANAGER_PASSWORD", npm_pass),
-    ];
-
-    let mut settings_added = 0;
-    let mut settings_updated = 0;
-    let mut settings_deleted = 0;
-
-    // Upsert env settings (skip empty values)
-    for (key, val) in &setting_keys {
-        if !val.is_empty() {
-            let existing = settings::get_setting(key).unwrap_or(None);
-            settings::set_setting(key, val)?;
-            if existing.is_some() {
-                settings_updated += 1;
-            } else {
-                settings_added += 1;
-            }
-        }
-    }
-
-    // Delete DB settings not present in env (only for keys we manage)
-    if let Ok(all) = settings::select_many("1=1", &[]) {
-        let managed: HashSet<&str> = setting_keys.iter().map(|(k, _)| *k).collect();
-        let env_present: HashSet<&str> = setting_keys
-            .iter()
-            .filter(|(_, v)| !v.is_empty())
-            .map(|(k, _)| *k)
-            .collect();
-        for row in all {
-            if let Some(k) = row.key.as_deref() {
-                if managed.contains(k) && !env_present.contains(k) {
-                    settings::delete_by_key(k)?;
-                    settings_deleted += 1;
-                }
-            }
-        }
-    }
-
-    println!("Settings synced:");
-    println!("  Added: {}", settings_added);
-    println!("  Updated: {}", settings_updated);
-    println!("  Deleted: {}", settings_deleted);
+    // Configuration is only in .env (loaded from 1Password via .envrc)
+    println!("✓ Configuration is stored in .env file (loaded from 1Password via .envrc)");
+    println!("  No database sync needed - all configuration comes from .env");
     println!();
 
     Ok(())
@@ -1775,9 +1324,9 @@ pub fn restore_database() -> Result<()> {
         }
     }
 
-    // Also check homelab directory
-    if let Ok(homelab_dir) = find_homelab_dir() {
-        let backup_pattern = homelab_dir.join("halvor_backup_*.db");
+    // Also check halvor directory
+    if let Ok(halvor_dir) = find_halvor_dir() {
+        let backup_pattern = halvor_dir.join("halvor_backup_*.db");
         if let Ok(entries) = glob(backup_pattern.to_str().unwrap()) {
             for entry in entries.flatten() {
                 if !backups.contains(&entry) {

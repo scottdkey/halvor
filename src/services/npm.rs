@@ -59,8 +59,8 @@ pub async fn setup_proxy_hosts(
 
     let target_host = if let Some(ip) = &host_config.ip {
         ip.clone()
-    } else if let Some(tailscale) = &host_config.tailscale {
-        tailscale.clone()
+    } else if let Some(hostname) = &host_config.hostname {
+        hostname.clone()
     } else {
         anyhow::bail!("No IP or Tailscale hostname configured for {}", hostname);
     };
@@ -72,8 +72,8 @@ pub async fn setup_proxy_hosts(
     println!();
 
     // Read compose file
-    let homelab_dir = crate::config::find_homelab_dir()?;
-    let compose_path = homelab_dir.join("compose").join(compose_file);
+    let halvor_dir = crate::config::find_halvor_dir()?;
+    let compose_path = halvor_dir.join("compose").join(compose_file);
 
     if !compose_path.exists() {
         anyhow::bail!("Compose file not found: {}", compose_path.display());
@@ -300,10 +300,7 @@ async fn create_proxy_host(
     Ok(id)
 }
 
-pub async fn setup_single_proxy_host(
-    hostname: &str,
-    service_spec: &str
-) -> Result<()> {
+pub async fn setup_single_proxy_host(hostname: &str, service_spec: &str) -> Result<()> {
     // Parse service spec: "servicename:port" or "servicename" (defaults to port from common services)
     let (service_name, port) = if let Some((name, port_str)) = service_spec.split_once(':') {
         let port = port_str
@@ -327,8 +324,8 @@ pub async fn setup_single_proxy_host(
 
     let target_host = if let Some(ip) = &host_config.ip {
         ip.clone()
-    } else if let Some(tailscale) = &host_config.tailscale {
-        tailscale.clone()
+    } else if let Some(hostname) = &host_config.hostname {
+        hostname.clone()
     } else {
         anyhow::bail!("No IP or Tailscale hostname configured for {}", hostname);
     };

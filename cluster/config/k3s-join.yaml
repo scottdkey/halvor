@@ -1,0 +1,30 @@
+# K3s HA Cluster Join Configuration
+# Use this config for additional control plane nodes joining the cluster
+#
+# Usage:
+#   curl -sfL https://get.k3s.io | sh -s - server --config=/etc/rancher/k3s/config.yaml
+#
+# Or pass options directly:
+#   curl -sfL https://get.k3s.io | sh -s - server --server=https://FIRST_NODE:6443 --token=$K3S_TOKEN ...
+
+# First control plane node address
+server: https://${FIRST_NODE}:6443
+
+# Cluster token - must match the init node
+token: ${K3S_TOKEN}
+
+# TLS SANs - add this node's IPs/hostnames
+tls-san:
+  - ${NODE_IP}
+  - ${TAILSCALE_IP}
+  - ${HOSTNAME}
+
+# Disable Traefik (using nginx-proxy-manager instead)
+disable:
+  - traefik
+
+# Data directory
+data-dir: /var/lib/rancher/k3s
+
+# Write kubeconfig with correct permissions
+write-kubeconfig-mode: "0644"

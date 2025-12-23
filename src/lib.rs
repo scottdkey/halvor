@@ -66,14 +66,20 @@ pub enum Commands {
         /// Service to uninstall: npm, portainer, smb. If not provided, guided uninstall of halvor
         service: Option<String>,
     },
-    /// Provision a host with guided setup (Docker, Tailscale, Portainer, services)
+    /// Provision a host for Kubernetes cluster membership
     Provision {
-        /// Skip interactive prompts and use defaults
+        /// Skip interactive prompts and use defaults (requires --cluster-role)
         #[arg(long, short = 'y')]
         yes: bool,
-        /// Install Portainer host instead of agent (non-interactive only)
+        /// Cluster role: 'init' (first control plane), 'control-plane' (join as CP), or 'agent' (join as worker)
         #[arg(long)]
-        portainer_host: bool,
+        cluster_role: Option<String>,
+        /// Control plane server to join (required for control-plane/agent roles)
+        #[arg(long)]
+        cluster_server: Option<String>,
+        /// Cluster join token (generated for init, required for join operations)
+        #[arg(long)]
+        cluster_token: Option<String>,
     },
     /// Setup and mount SMB shares
     Smb {
@@ -145,5 +151,20 @@ pub enum Commands {
     Generate {
         #[command(subcommand)]
         command: commands::generate::GenerateCommands,
+    },
+    /// Manage K3s cluster (init, join, status, snapshot)
+    K3s {
+        #[command(subcommand)]
+        command: commands::k3s::K3sCommands,
+    },
+    /// Deploy and manage Helm charts
+    Helm {
+        #[command(subcommand)]
+        command: commands::helm::HelmCommands,
+    },
+    /// Cluster backup and restore operations
+    Cluster {
+        #[command(subcommand)]
+        command: commands::cluster::ClusterCommands,
     },
 }

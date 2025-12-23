@@ -2,8 +2,6 @@ use crate::config::EnvConfig;
 use crate::db;
 use crate::utils::{bytes_to_string, ssh::SshConnection};
 use anyhow::{Context, Result};
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
 use std::path::PathBuf;
 
 /// Sync data to/from a remote halvor installation
@@ -16,8 +14,8 @@ pub fn sync_data(hostname: &str, pull: bool, config: &EnvConfig) -> Result<()> {
         .get(&actual_hostname)
         .with_context(|| format!("Host '{}' not found in configuration", hostname))?;
 
-    let target_host = if let Some(ref tailscale) = host_config.tailscale {
-        format!("{}.{}", tailscale, config._tailnet_base)
+    let target_host = if let Some(ref hostname) = host_config.hostname {
+        format!("{}.{}", hostname, config._tailnet_base)
     } else if let Some(ref ip) = host_config.ip {
         ip.clone()
     } else {
@@ -68,9 +66,11 @@ fn push_to_remote(ssh: &SshConnection, _hostname: &str) -> Result<()> {
     copy_file_to_remote(ssh, &temp_file, &remote_temp)?;
     println!("  Copied encrypted data to remote");
 
-    // Import on remote - we'll need to add db import command or use a different approach
-    // For now, let's use a base64 encoded approach via stdin
-    let data_base64 = STANDARD.encode(&encrypted_data);
+    // Import on remote - write encrypted data directly (no base64 CLI needed)
+    // Write the encrypted data directly to the remote file
+    ssh.write_file(&remote_temp, &encrypted_data)
+        .context("Failed to write encrypted data to remote host")?;
+
     let import_script = format!(
         r#"
         if ! command -v hal >/dev/null 2>&1; then
@@ -78,13 +78,13 @@ fn push_to_remote(ssh: &SshConnection, _hostname: &str) -> Result<()> {
             exit 1
         fi
         
-        # Decode and import encrypted data
-        echo '{}' | base64 -d > {} && halvor db import {} && rm -f {} || {{
+        # Import encrypted data
+        halvor db import {} && rm -f {} || {{
             echo "Failed to import encrypted data"
             exit 1
         }}
         "#,
-        data_base64, remote_temp, remote_temp, remote_temp
+        remote_temp, remote_temp
     );
 
     ssh.execute_shell(&import_script)

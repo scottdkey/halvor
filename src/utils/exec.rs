@@ -1,4 +1,7 @@
 use anyhow::{Context, Result};
+use std::fs;
+use std::io::Write;
+use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
 // Import SshConnection from ssh module
@@ -307,6 +310,97 @@ impl PackageManager {
     }
 }
 
+/// Get username from SSH config file for a given host
+/// Returns None if not found (SSH will use defaults)
+fn get_ssh_config_username(host: &str) -> Option<String> {
+    let home = std::env::var("HOME").ok()?;
+    let ssh_config_path = PathBuf::from(home).join(".ssh").join("config");
+
+    if !ssh_config_path.exists() {
+        return None;
+    }
+
+    let content = fs::read_to_string(&ssh_config_path).ok()?;
+    let mut in_matching_host = false;
+    let mut matched_user: Option<String> = None;
+
+    for line in content.lines() {
+        let line = line.trim();
+
+        // Skip comments and empty lines
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        // Parse Host directive
+        if line.starts_with("Host ") || line.starts_with("Host\t") {
+            if let Some(host_pattern) = line.split_whitespace().nth(1) {
+                // Check if this host pattern matches our target host
+                in_matching_host = host_pattern == host
+                    || host_pattern == "*"
+                    || (host_pattern.contains('*') && simple_wildcard_match(host_pattern, host));
+                if in_matching_host {
+                    matched_user = None; // Reset user for new host block
+                }
+            }
+        }
+
+        // Parse User directive (only if we're in a matching Host block)
+        if in_matching_host {
+            if line.starts_with("User ") || line.starts_with("User\t") {
+                if let Some(user) = line.split_whitespace().nth(1) {
+                    matched_user = Some(user.to_string());
+                }
+            }
+        }
+    }
+
+    matched_user
+}
+
+/// Simple wildcard matching (supports * at start, end, or both)
+fn simple_wildcard_match(pattern: &str, text: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+
+    if pattern.starts_with('*') && pattern.ends_with('*') {
+        // *pattern*
+        let inner = &pattern[1..pattern.len() - 1];
+        text.contains(inner)
+    } else if pattern.starts_with('*') {
+        // *pattern
+        let suffix = &pattern[1..];
+        text.ends_with(suffix)
+    } else if pattern.ends_with('*') {
+        // pattern*
+        let prefix = &pattern[..pattern.len() - 1];
+        text.starts_with(prefix)
+    } else {
+        pattern == text
+    }
+}
+
+/// Prompt user for SSH username if not found in SSH config
+fn prompt_ssh_username(host: &str) -> Result<String> {
+    let default_user = crate::config::get_default_username();
+    print!(
+        "SSH username for {} (press Enter for '{}'): ",
+        host, default_user
+    );
+    std::io::stdout().flush()?;
+
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+
+    let username = input.trim();
+    if username.is_empty() {
+        Ok(default_user)
+    } else {
+        Ok(username.to_string())
+    }
+}
+
 /// Executor that can be either local or remote (SSH)
 /// Automatically determines execution context based on hostname and config
 pub enum Executor {
@@ -337,11 +431,19 @@ impl Executor {
         } else {
             // If no IP configured, assume remote
             return Ok(Executor::Remote({
-                let target_host = host_config.tailscale.as_ref().ok_or_else(|| {
+                let target_host = host_config.hostname.as_ref().ok_or_else(|| {
                     anyhow::anyhow!("No IP or Tailscale hostname configured for {}", hostname)
                 })?;
-                let default_user = crate::config::get_default_username();
-                let host_with_user = format!("{}@{}", default_user, target_host);
+                // Get username from SSH config, or prompt user
+                let username = get_ssh_config_username(target_host)
+                    .or_else(|| get_ssh_config_username(hostname))
+                    .or_else(|| get_ssh_config_username(&actual_hostname))
+                    .unwrap_or_else(|| {
+                        // No username in SSH config - prompt user
+                        prompt_ssh_username(target_host)
+                            .unwrap_or_else(|_| crate::config::get_default_username())
+                    });
+                let host_with_user = format!("{}@{}", username, target_host);
                 SshConnection::new(&host_with_user)?
             }));
         };
@@ -360,7 +462,7 @@ impl Executor {
                 .ok_or_else(|| anyhow::anyhow!("Host '{}' not found in config", hostname))?;
             let host_config = config.hosts.get(&actual_hostname).with_context(|| {
                 format!(
-                    "Host '{}' not found in .env\n\nAdd configuration to .env:\n  HOST_{}_IP=\"<ip-address>\"\n  HOST_{}_TAILSCALE=\"<tailscale-hostname>\"",
+                    "Host '{}' not found in .env\n\nAdd configuration to .env:\n  HOST_{}_IP=\"<ip-address>\"\n  HOST_{}_HOSTNAME=\"<hostname>\"",
                     hostname,
                     hostname.to_uppercase(),
                     hostname.to_uppercase()
@@ -370,15 +472,22 @@ impl Executor {
             // Determine which host to connect to (prefer IP, fallback to Tailscale)
             let target_host = if let Some(ip) = &host_config.ip {
                 ip.clone()
-            } else if let Some(tailscale) = &host_config.tailscale {
-                tailscale.clone()
+            } else if let Some(hostname) = &host_config.hostname {
+                hostname.clone()
             } else {
                 anyhow::bail!("No IP or Tailscale hostname configured for {}", hostname);
             };
 
-            // Create SSH connection
-            let default_user = crate::config::get_default_username();
-            let host_with_user = format!("{}@{}", default_user, target_host);
+            // Get username from SSH config, or prompt user
+            let username = get_ssh_config_username(&target_host)
+                .or_else(|| get_ssh_config_username(hostname))
+                .or_else(|| get_ssh_config_username(&actual_hostname))
+                .unwrap_or_else(|| {
+                    // No username in SSH config - prompt user
+                    prompt_ssh_username(&target_host)
+                        .unwrap_or_else(|_| crate::config::get_default_username())
+                });
+            let host_with_user = format!("{}@{}", username, target_host);
             let ssh_conn = SshConnection::new(&host_with_user)?;
 
             Ok(Executor::Remote(ssh_conn))
@@ -396,10 +505,10 @@ impl Executor {
                     .with_context(|| format!("Host '{}' not found in config", hostname))?;
                 let target_host = if let Some(ip) = &host_config.ip {
                     ip.clone()
-                } else if let Some(tailscale) = &host_config.tailscale {
-                    tailscale.clone()
+                } else if let Some(hostname_val) = &host_config.hostname {
+                    hostname_val.clone()
                 } else {
-                    anyhow::bail!("No IP or Tailscale hostname configured for {}", hostname);
+                    anyhow::bail!("No IP or hostname configured for {}", hostname);
                 };
                 Ok(target_host)
             }

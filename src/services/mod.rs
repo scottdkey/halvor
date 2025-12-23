@@ -3,10 +3,13 @@
 
 pub mod backup;
 pub mod build;
+pub mod cluster;
 pub mod compose_deployer;
 pub mod dev;
 pub mod docker;
+pub mod helm;
 pub mod host;
+pub mod k3s;
 pub mod npm;
 pub mod pia_vpn;
 pub mod portainer;

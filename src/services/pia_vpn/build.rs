@@ -25,14 +25,14 @@ pub fn build_and_push_vpn_image(
 
     // For local builds, use local filesystem
     // For remote builds, we'd need to handle file paths differently (not implemented yet)
-    let homelab_dir = if is_local {
-        crate::config::find_homelab_dir()?
+    let halvor_dir = if is_local {
+        crate::config::find_halvor_dir()?
     } else {
         anyhow::bail!(
             "Remote builds require the VPN container directory to be available on the remote host. This is not yet implemented."
         );
     };
-    let vpn_container_dir = homelab_dir.join("openvpn-container");
+    let vpn_container_dir = halvor_dir.join("openvpn-container");
 
     if is_local && !vpn_container_dir.exists() {
         anyhow::bail!(

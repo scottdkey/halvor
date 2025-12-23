@@ -115,7 +115,6 @@ impl AgentServer {
     }
 
     fn get_host_info(&self) -> Result<AgentResponse> {
-        use crate::db;
         use crate::services::tailscale;
         use crate::utils::networking;
         use std::env;
@@ -148,13 +147,12 @@ impl AgentServer {
                 }
             });
 
-        // Get provisioning info from DB
-        let (tailscale_installed, portainer_installed) =
-            if let Ok(Some(info)) = db::get_host_info(&hostname) {
-                (info.2, info.3)
-            } else {
-                (false, false)
-            };
+        // Check provisioning info dynamically (no database)
+        use crate::utils::exec::Executor;
+        let local_exec = Executor::Local;
+        let tailscale_installed = tailscale::is_tailscale_installed(&local_exec);
+        // Portainer check would require checking if portainer is running, default to false
+        let portainer_installed = false;
 
         Ok(AgentResponse::HostInfo {
             info: HostInfo {
@@ -208,7 +206,7 @@ impl AgentServer {
     }
 
     fn sync_database(&self, from_hostname: &str, _last_sync: Option<i64>) -> Result<AgentResponse> {
-        use crate::db;
+        use crate::services::host;
 
         // Export host configs and settings for this host
         let local_hostname = std::env::var("HOSTNAME")
@@ -217,25 +215,19 @@ impl AgentServer {
             .trim()
             .to_string();
 
-        // Get all hosts from DB
-        let hosts = db::list_hosts().unwrap_or_default();
+        // Get all hosts from .env config
+        let hosts = host::list_hosts().unwrap_or_default();
         let mut host_configs = std::collections::HashMap::new();
         for hostname in &hosts {
-            if let Ok(Some(config)) = db::get_host_config(hostname) {
+            if let Ok(Some(config)) = host::get_host_config(hostname) {
                 host_configs.insert(hostname.clone(), config);
             }
         }
 
-        // Get settings
-        use crate::db::generated::settings;
-        let mut db_settings = std::collections::HashMap::new();
-        if let Ok(all_settings) = settings::select_many("1=1", &[]) {
-            for row in all_settings {
-                if let Some(key) = row.key {
-                    db_settings.insert(key, row.value);
-                }
-            }
-        }
+        // Get settings (from environment variables)
+        let db_settings: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        // Settings are now in environment variables loaded from 1Password via .envrc
 
         // Serialize sync data
         let sync_data = serde_json::json!({

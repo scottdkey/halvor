@@ -1,0 +1,34 @@
+# K3s HA Cluster Init Configuration
+# Use this config for the first control plane node
+#
+# Usage:
+#   curl -sfL https://get.k3s.io | sh -s - server --config=/etc/rancher/k3s/config.yaml
+#
+# Or pass options directly:
+#   curl -sfL https://get.k3s.io | sh -s - server --cluster-init --token=$K3S_TOKEN ...
+
+# Initialize embedded etcd cluster (first node only)
+cluster-init: true
+
+# Cluster token - all nodes must use the same token
+# Generate with: openssl rand -hex 32
+token: ${K3S_TOKEN}
+
+# TLS SANs - add all IPs/hostnames that will access the API
+tls-san:
+  - ${NODE_IP}
+  - ${TAILSCALE_IP}
+  - ${HOSTNAME}
+
+# Disable Traefik (using nginx-proxy-manager instead)
+disable:
+  - traefik
+
+# Expose etcd metrics for monitoring
+etcd-expose-metrics: true
+
+# Data directory
+data-dir: /var/lib/rancher/k3s
+
+# Write kubeconfig with correct permissions
+write-kubeconfig-mode: "0644"

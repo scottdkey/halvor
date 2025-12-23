@@ -1,0 +1,22 @@
+# Storage Classes for Halvor
+# K3s comes with local-path provisioner by default
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-media
+  labels:
+    app.kubernetes.io/managed-by: halvor
+provisioner: rancher.io/local-path
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-config
+  labels:
+    app.kubernetes.io/managed-by: halvor
+provisioner: rancher.io/local-path
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
