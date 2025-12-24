@@ -88,63 +88,15 @@ pub fn check_and_install_halvor<E: CommandExecutor>(exec: &E) -> Result<()> {
         format!("{}-{}", remote_os, remote_arch)
     };
 
-    // Detect local platform
-    let local_arch = std::env::consts::ARCH;
-    let local_os = std::env::consts::OS;
-    let local_platform = match (local_os, local_arch) {
-        ("macos", "aarch64") => "darwin-arm64",
-        ("macos", "x86_64") => "darwin-amd64",
-        ("linux", "x86_64") => "linux-amd64",
-        ("linux", "aarch64") => "linux-arm64",
-        _ => "unknown",
-    };
-
+    // Always download from GitHub releases
+    // In development mode, use "experimental" release
+    // In production mode, use "latest" release
     if is_dev {
-        // Development mode: check if platforms match
-        let platforms_match = remote_platform == local_platform
-            || (remote_os == "linux" && local_os == "linux" && remote_arch == local_arch);
-
-        if platforms_match {
-            // Platforms match - copy local binary
-            println!("  Development mode: copying local halvor binary (platforms match)...");
-
-            // Get current executable path
-            let current_exe =
-                std::env::current_exe().context("Failed to get current executable path")?;
-
-            // Read local binary
-            let binary_content =
-                std::fs::read(&current_exe).context("Failed to read local halvor binary")?;
-
-            // Write to remote temp location using scp
-            let remote_temp_path = "/tmp/halvor";
-
-            // Use write_file which uses scp internally
-            exec.write_file(remote_temp_path, &binary_content)
-                .context("Failed to write halvor binary to remote host")?;
-
-            // Make executable (no sudo needed)
-            exec.execute_simple("chmod", &["+x", remote_temp_path])
-                .context("Failed to make halvor binary executable")?;
-
-            // Move to /usr/local/bin (requires sudo)
-            exec.execute_interactive("sudo", &["mv", remote_temp_path, "/usr/local/bin/halvor"])
-                .context("Failed to move halvor binary to /usr/local/bin")?;
-        } else {
-            // Platforms don't match - download from GitHub releases
-            println!(
-                "  Development mode: platforms don't match (local: {}, remote: {})",
-                local_platform, remote_platform
-            );
-            println!("  Downloading halvor binary for remote platform from GitHub releases...");
-
-            // Fall through to production mode download logic
-            download_halvor_from_github(exec, &remote_platform)?;
-        }
+        println!("  Development mode: downloading halvor from GitHub 'experimental' release...");
+        download_halvor_from_github(exec, &remote_platform, "experimental")?;
     } else {
-        // Production mode: download from GitHub releases
-        println!("  Production mode: downloading halvor from GitHub releases...");
-        download_halvor_from_github(exec, &remote_platform)?;
+        println!("  Production mode: downloading halvor from GitHub 'latest' release...");
+        download_halvor_from_github(exec, &remote_platform, "latest")?;
     }
 
     // Verify installation
@@ -157,24 +109,42 @@ pub fn check_and_install_halvor<E: CommandExecutor>(exec: &E) -> Result<()> {
 }
 
 /// Download and install halvor from GitHub releases for a specific platform
-fn download_halvor_from_github<E: CommandExecutor>(exec: &E, platform: &str) -> Result<()> {
-    // Get latest release from GitHub
-    let github_api = "https://api.github.com/repos/scottdkey/halvor/releases/latest";
+/// release_tag: "latest" for production, "experimental" for development
+fn download_halvor_from_github<E: CommandExecutor>(
+    exec: &E,
+    platform: &str,
+    release_tag: &str,
+) -> Result<()> {
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .context("Failed to create HTTP client")?;
 
+    // Get release from GitHub API
+    let github_api = if release_tag == "latest" {
+        "https://api.github.com/repos/scottdkey/halvor/releases/latest".to_string()
+    } else {
+        format!(
+            "https://api.github.com/repos/scottdkey/halvor/releases/tags/{}",
+            release_tag
+        )
+    };
+
     let release_json: serde_json::Value = client
-        .get(github_api)
+        .get(&github_api)
         .send()
-        .context("Failed to fetch latest release from GitHub")?
+        .context(format!(
+            "Failed to fetch {} release from GitHub",
+            release_tag
+        ))?
         .error_for_status()
-        .context("HTTP error fetching latest release")?
+        .context(format!("HTTP error fetching {} release", release_tag))?
         .json()
         .context("Failed to parse release JSON")?;
 
     // Find the asset for this platform
+    // Asset names are like: halvor-{version}-{platform}.tar.gz
+    // For experimental, we need to match any version
     let assets = release_json
         .get("assets")
         .and_then(|a| a.as_array())
@@ -183,14 +153,20 @@ fn download_halvor_from_github<E: CommandExecutor>(exec: &E, platform: &str) -> 
     let asset_url = assets
         .iter()
         .find_map(|asset| {
-            let name = asset.get("browser_download_url")?.as_str()?;
-            if name.contains(&format!("halvor-{}.tar.gz", platform)) {
-                Some(name)
+            let name = asset.get("name")?.as_str()?;
+            let download_url = asset.get("browser_download_url")?.as_str()?;
+
+            // Match platform in asset name (e.g., halvor-*-linux-amd64.tar.gz or halvor-*-darwin-arm64.tar.gz)
+            if name.contains(platform) && (name.ends_with(".tar.gz") || name.ends_with(".zip")) {
+                Some(download_url)
             } else {
                 None
             }
         })
-        .context(format!("No release found for platform: {}", platform))?;
+        .context(format!(
+            "No release asset found for platform: {} in {} release",
+            platform, release_tag
+        ))?;
 
     // Download the tarball
     println!("  Downloading from: {}", asset_url);
