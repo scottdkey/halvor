@@ -17,12 +17,6 @@ GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}"
 GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}"
 
 echo "Installing halvor (Homelab Automation Layer)..."
-echo ""
-echo "Usage: $0 [--experimental|-e] [--version|-v VERSION] [VERSION]"
-echo "  --experimental, -e    Install experimental version"
-echo "  --version, -v VERSION Install specific version"
-echo "  VERSION               Install specific version (positional)"
-echo ""
 
 # Detect OS and architecture
 detect_platform() {
@@ -155,15 +149,25 @@ echo -e "${GREEN}Platform: ${PLATFORM}${NC}"
 echo -e "${GREEN}Version: ${VERSION}${NC}"
 
 # Determine installation directory
-if [ -w /usr/local/bin ]; then
+# Check if we're running as root or with sudo
+if [ "$EUID" -eq 0 ] || [ -n "$SUDO_USER" ]; then
+    # Running as root or with sudo - use /usr/local/bin
+    INSTALL_DIR="/usr/local/bin"
+    echo "Installing to $INSTALL_DIR (requires sudo)"
+elif [ -w /usr/local/bin ]; then
     INSTALL_DIR="/usr/local/bin"
 elif [ -w "$HOME/.local/bin" ]; then
     INSTALL_DIR="$HOME/.local/bin"
     mkdir -p "$INSTALL_DIR"
 else
-    echo -e "${RED}Error: Cannot write to /usr/local/bin or ~/.local/bin${NC}"
-    echo "Please run with sudo or create ~/.local/bin directory"
-    exit 1
+    echo -e "${YELLOW}Warning: Cannot write to /usr/local/bin or ~/.local/bin${NC}"
+    echo "Attempting to create ~/.local/bin..."
+    mkdir -p "$HOME/.local/bin" 2>/dev/null || {
+        echo -e "${RED}Error: Cannot create ~/.local/bin directory${NC}"
+        echo "Please run with sudo or create ~/.local/bin directory manually"
+        exit 1
+    }
+    INSTALL_DIR="$HOME/.local/bin"
 fi
 
 INSTALL_PATH="$INSTALL_DIR/halvor"
@@ -185,8 +189,20 @@ echo "Downloading halvor binary..."
 BINARY_PATH=$(download_binary "$VERSION" "$PLATFORM")
 
 # Move binary to install location
-mv "$BINARY_PATH" "$INSTALL_PATH"
-chmod +x "$INSTALL_PATH"
+# Use sudo if we need to write to /usr/local/bin and we're not already root
+if [ "$INSTALL_DIR" = "/usr/local/bin" ] && [ "$EUID" -ne 0 ] && [ -z "$SUDO_USER" ]; then
+    # Not running as root, but need to write to /usr/local/bin
+    # Try to use sudo (will prompt if needed)
+    sudo mv "$BINARY_PATH" "$INSTALL_PATH" || {
+        echo -e "${RED}Error: Failed to install to $INSTALL_PATH${NC}"
+        echo "You may need to run: sudo $0 $*"
+        exit 1
+    }
+    sudo chmod +x "$INSTALL_PATH"
+else
+    mv "$BINARY_PATH" "$INSTALL_PATH"
+    chmod +x "$INSTALL_PATH"
+fi
 
 # Cleanup
 rm -rf "$(dirname "$BINARY_PATH")"
