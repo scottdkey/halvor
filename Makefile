@@ -1,6 +1,6 @@
 
 # Installation and setup
-.PHONY: install install-rust install-rust-targets install-rust-deps install-swift install-swift-deps install-android install-android-deps install-web install-web-deps install-tools help
+.PHONY: install install-rust install-rust-targets install-rust-deps install-swift install-swift-deps install-android install-android-deps install-web install-web-deps install-tools help docs
 
 # Default target
 help:
@@ -29,6 +29,9 @@ help:
 	@echo "  halvor dev web --bare-metal - Web development (Rust server + Svelte dev)"
 	@echo "  halvor dev web --prod     - Web production mode (Docker)"
 	@echo "  halvor dev cli            - CLI development mode with watch (auto-rebuild on changes)"
+	@echo ""
+	@echo "Documentation:"
+	@echo "  make docs                 - Generate documentation (CLI commands, Docker containers, Helm charts)"
 
 
 # Main install target - installs all dependencies
@@ -413,3 +416,9 @@ install-tools:
 		echo "ℹ️  Ruby/Fastlane only needed on macOS for iOS/macOS builds (skipping)"; \
 	fi; \
 	echo "✓ Development tools installation complete"
+
+# Generate documentation
+docs:
+	@echo "Generating documentation..."
+	@./scripts/generate-docs.sh
+	@echo "✓ Documentation generated in docs/generated/"

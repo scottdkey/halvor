@@ -857,7 +857,7 @@ struct ContainerDef {
 /// Registry of buildable containers
 const CONTAINERS: &[ContainerDef] = &[ContainerDef {
     name: "pia-vpn",
-    build_dir: "compose/pia-vpn",
+    build_dir: "openvpn-container",
     image_name: "ghcr.io/scottdkey/pia-vpn",
 }];
 
@@ -881,15 +881,95 @@ pub fn build_container(name: &str, no_cache: bool, push: bool, release: bool) ->
     let tag = if release { "latest" } else { "experimental" };
     let full_image = format!("{}:{}", container.image_name, tag);
 
-    // Build the container
-    let mut build_args = vec!["build", "-t", &full_image];
+    // Use buildx for multi-platform builds
+    let platforms = "linux/amd64,linux/arm64";
+
+    println!("Building multi-platform image for: {}", platforms);
+    println!("  Image: {}", full_image);
+
+    // Check if buildx is available
+    let buildx_check = std::process::Command::new("docker")
+        .args(&["buildx", "version"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    if buildx_check.is_err() || !buildx_check.unwrap().success() {
+        anyhow::bail!(
+            "Docker buildx is required for multi-platform builds. Install it with: docker buildx install"
+        );
+    }
+
+    // Create buildx builder if it doesn't exist
+    let builder_name = "halvor-builder";
+    let builder_check = std::process::Command::new("docker")
+        .args(&["buildx", "inspect", builder_name])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    if builder_check.is_err() || !builder_check.unwrap().success() {
+        println!("  Creating buildx builder: {}", builder_name);
+        std::process::Command::new("docker")
+            .args(&["buildx", "create", "--name", builder_name, "--use"])
+            .status()
+            .context("Failed to create buildx builder")?;
+    } else {
+        // Use the existing builder
+        std::process::Command::new("docker")
+            .args(&["buildx", "use", builder_name])
+            .status()
+            .context("Failed to use buildx builder")?;
+    }
+
+    // Build with buildx
+    let build_path_str = build_path.to_string_lossy();
+    let mut build_args = vec![
+        "buildx",
+        "build",
+        "--platform",
+        platforms,
+        "-t",
+        &full_image,
+    ];
 
     if no_cache {
         build_args.push("--no-cache");
     }
 
-    // Add build path
-    let build_path_str = build_path.to_string_lossy();
+    if push {
+        build_args.push("--push");
+    } else {
+        // For multi-platform builds, we need to push or use a single platform
+        // Since user wants universal build, we'll build for both but only load the native one
+        // Actually, --load doesn't work with multi-platform, so we'll build for current platform only when not pushing
+        println!(
+            "  Note: Multi-platform builds require --push. Building for current platform only for local testing."
+        );
+        // Remove platform arg and use regular build for local
+        build_args = vec!["build", "-t", &full_image];
+        if no_cache {
+            build_args.push("--no-cache");
+        }
+        build_args.push(&build_path_str);
+
+        println!("  Running: docker {}", build_args.join(" "));
+
+        let output = std::process::Command::new("docker")
+            .args(&build_args)
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .status()
+            .with_context(|| "Failed to run docker build")?;
+
+        if !output.success() {
+            anyhow::bail!("Docker build failed");
+        }
+
+        println!("✓ Built {} (local platform only)", full_image);
+        return Ok(());
+    }
+
     build_args.push(&build_path_str);
 
     println!("  Running: docker {}", build_args.join(" "));
@@ -899,17 +979,16 @@ pub fn build_container(name: &str, no_cache: bool, push: bool, release: bool) ->
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
         .status()
-        .with_context(|| "Failed to run docker build")?;
+        .with_context(|| "Failed to run docker buildx build")?;
 
     if !output.success() {
-        anyhow::bail!("Docker build failed");
+        anyhow::bail!("Docker buildx build failed");
     }
 
     println!("✓ Built {}", full_image);
 
-    // Push if requested
     if push {
-        push_container(&full_image, container.image_name, release)?;
+        println!("✓ Pushed {} to registry", full_image);
     }
 
     Ok(())

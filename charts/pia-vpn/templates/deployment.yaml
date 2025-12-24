@@ -1,0 +1,117 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pia-vpn.fullname" . }}
+  labels:
+    {{- include "pia-vpn.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "pia-vpn.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "pia-vpn.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.serviceAccount }}
+      {{- if .create }}
+      serviceAccountName: {{ .name | default (include "pia-vpn.fullname" .) }}
+      {{- end }}
+      {{- end }}
+      securityContext:
+        capabilities:
+          add:
+            - NET_ADMIN
+            - NET_RAW
+      containers:
+      - name: pia-vpn
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+        env:
+        - name: PIA_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "pia-vpn.fullname" . }}-credentials
+              key: pia-username
+        - name: PIA_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "pia-vpn.fullname" . }}-credentials
+              key: pia-password
+        - name: REGION
+          value: {{ .Values.vpn.region | quote }}
+        - name: UPDATE_CONFIGS
+          value: {{ .Values.vpn.updateConfigs | toString | quote }}
+        - name: PROXY_PORT
+          value: {{ .Values.vpn.proxyPort | toString | quote }}
+        - name: DEBUG
+          value: {{ .Values.vpn.debug | toString | quote }}
+        - name: TZ
+          value: "Etc/UTC"
+        {{- with .Values.env }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        ports:
+        - name: proxy
+          containerPort: {{ .Values.vpn.proxyPort }}
+          protocol: TCP
+        - name: openvpn
+          containerPort: 1194
+          protocol: UDP
+        volumeMounts:
+        - name: config
+          mountPath: /config
+        - name: logs
+          mountPath: /var/log/openvpn
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - "pgrep -f openvpn && pgrep privoxy"
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - "curl -s --max-time 2 http://127.0.0.1:{{ .Values.vpn.proxyPort }} > /dev/null"
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 2
+          failureThreshold: 3
+      volumes:
+      - name: config
+        {{- if .Values.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ include "pia-vpn.fullname" . }}-config
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
+      - name: logs
+        emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+

@@ -103,21 +103,51 @@ This will:
 
 ## Documentation
 
-- **[Configuration Guide](docs/configuration.md)** - Setting up your environment file and managing
-  configuration
+### Auto-Generated Documentation
+
+These documents are automatically generated and kept up-to-date:
+
+- **[CLI Commands Reference](docs/generated/cli-commands.md)** - Complete reference of all `halvor` CLI commands and options
+- **[Docker Containers](docs/generated/docker-containers.md)** - Available Docker containers and how to use them
+- **[Helm Charts](docs/generated/helm-charts.md)** - Available Helm charts and installation instructions
+
+To regenerate these docs locally:
+```bash
+make docs
+# or
+./scripts/generate-docs.sh
+```
+
+### Manual Documentation
+
+- **[Configuration Guide](docs/configuration.md)** - Setting up your environment file and managing configuration
 - **[Setup Guide](docs/setup.md)** - SSH host configuration and key setup
 - **[Usage Guide](docs/usage.md)** - Common commands and operations
 - **[Development Guide](docs/development.md)** - Building, testing, and contributing
 - **[Workflows](docs/workflows.md)** - GitHub Actions CI/CD documentation
+- **[VPN Setup](docs/vpn-setup.md)** - PIA VPN container setup and configuration
+- **[VPN Troubleshooting](docs/vpn-troubleshooting.md)** - Common VPN issues and solutions
 - **[IPv6 Setup](docs/ipv6-setup.md)** - Enabling IPv6 support in VPN container
 
 ## Quick Start
 
 After installation:
 
-1. **Configure HAL**: `hal config init`
+1. **Configure HAL**: `halvor config init`
 2. **Setup SSH hosts**: `./scripts/setup-ssh-hosts.sh`
 3. **Setup SSH keys**: `./scripts/setup-ssh-keys.sh <hostname>`
 4. **Connect**: `ssh <hostname>`
 
 See the [Configuration Guide](docs/configuration.md) for detailed setup instructions.
+
+## Key Features
+
+- **K3s Cluster Management**: Initialize, join, and manage Kubernetes clusters
+- **Docker Container Building**: Build and push containers to GitHub Container Registry
+- **Helm Chart Deployment**: Deploy and manage Helm charts on your cluster
+- **SMB Share Management**: Mount and manage SMB shares across your infrastructure
+- **VPN Integration**: Deploy and manage PIA VPN containers with Rust-based entrypoint
+- **Agent Daemon**: Remote command execution and service discovery
+- **Multi-Platform Support**: Build for macOS, iOS, Android, Web (WASM), and CLI
+
+For detailed command reference, see the [CLI Commands Reference](docs/generated/cli-commands.md).

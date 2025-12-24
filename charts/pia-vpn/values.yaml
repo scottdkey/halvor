@@ -1,0 +1,82 @@
+# Default values for pia-vpn
+# Values are loaded from environment variables via halvor CLI
+
+image:
+  repository: ghcr.io/scottdkey/pia-vpn
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# PIA credentials (from 1Password)
+# Note: Credentials are created as a Kubernetes Secret separately via halvor CLI
+# The secret is created from PIA_USERNAME and PIA_PASSWORD environment variables
+credentials:
+  createSecret: false # Set to true if you want Helm to create the secret (not recommended)
+  username: "" # Only used if createSecret is true
+  password: "" # Only used if createSecret is true
+
+# VPN configuration
+vpn:
+  region: "" # Set via REGION env var (e.g., us-california, uk-london)
+  updateConfigs: true # Set via UPDATE_CONFIGS env var
+  proxyPort: 8888 # Set via PROXY_PORT env var
+  debug: false # Set via DEBUG env var
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 8888
+  annotations: {}
+
+# Persistent volume for VPN configs
+persistence:
+  enabled: true
+  storageClass: "" # Use default storage class
+  size: 1Gi
+  accessMode: ReadWriteOnce
+
+# Resources
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Security context (required for VPN)
+securityContext:
+  capabilities:
+    add:
+      - NET_ADMIN
+      - NET_RAW
+
+# Node selector (optional)
+nodeSelector: {}
+
+# Tolerations (optional)
+tolerations: []
+
+# Affinity (optional)
+affinity: {}
+
+# Network policy - allows other pods to route through VPN
+networkPolicy:
+  enabled: true
+  # Allow traffic from all pods in the cluster
+  allowFromAll: true
+  # Specific namespaces that can use the VPN
+  allowedNamespaces: []
+
+# Service account (optional)
+serviceAccount:
+  create: true
+  name: ""
+
+# Pod annotations
+podAnnotations: {}
+
+# Environment variables
+env: []
+  # Additional environment variables can be added here
+  # - name: TZ
+  #   value: "Etc/UTC"

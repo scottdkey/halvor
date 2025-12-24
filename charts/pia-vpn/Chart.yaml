@@ -1,0 +1,12 @@
+apiVersion: v2
+appVersion: latest
+description: Private Internet Access VPN with OpenVPN and Privoxy HTTP proxy
+keywords:
+- vpn
+- openvpn
+- proxy
+- pia
+- privacy
+name: pia-vpn
+type: application
+version: 0.1.0

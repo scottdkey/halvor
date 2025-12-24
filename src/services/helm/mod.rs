@@ -5,6 +5,8 @@
 use crate::config::EnvConfig;
 use crate::utils::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
+use base64::{Engine as _, engine::general_purpose};
+use reqwest;
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::Path;
@@ -74,6 +76,25 @@ fn generate_values_from_env(chart: &str) -> Result<HashMap<String, String>> {
                 "Note: SMB mounts should be set up on cluster nodes (frigg and baulder) using 'halvor smb' before deploying this chart"
             );
         }
+        "pia-vpn" => {
+            // Note: PIA credentials are created as a Kubernetes Secret separately
+            // They are not passed as Helm values for security
+            let region = std::env::var("REGION").unwrap_or_default();
+            let update_configs = std::env::var("UPDATE_CONFIGS")
+                .unwrap_or_else(|_| "true".to_string())
+                .parse::<bool>()
+                .unwrap_or(true);
+            let proxy_port = std::env::var("PROXY_PORT").unwrap_or_else(|_| "8888".to_string());
+            let debug = std::env::var("DEBUG")
+                .unwrap_or_else(|_| "false".to_string())
+                .parse::<bool>()
+                .unwrap_or(false);
+
+            values.insert("vpn.region".to_string(), region);
+            values.insert("vpn.updateConfigs".to_string(), update_configs.to_string());
+            values.insert("vpn.proxyPort".to_string(), proxy_port);
+            values.insert("vpn.debug".to_string(), debug.to_string());
+        }
         _ => {
             // For other charts, try to load common env vars
             if let Ok(domain) = std::env::var("PUBLIC_DOMAIN") {
@@ -119,16 +140,53 @@ pub fn install_chart(
     println!("Namespace: {}", ns);
     println!();
 
-    // Find the chart in the halvor charts directory
-    let halvor_dir = crate::config::find_halvor_dir()?;
-    let chart_path = halvor_dir.join("charts").join(chart);
+    // Try to find chart locally first, then fall back to GitHub
+    let (chart_path, is_temp_file) = {
+        let halvor_dir = crate::config::find_halvor_dir()?;
+        let local_path = halvor_dir.join("charts").join(chart);
 
-    if !chart_path.exists() {
-        anyhow::bail!(
-            "Chart '{}' not found at {}. Use 'halvor helm charts' to list available charts.",
-            chart,
-            chart_path.display()
-        );
+        if local_path.exists() {
+            (local_path.to_string_lossy().to_string(), false)
+        } else {
+            // Try to install from GitHub releases
+            println!("  Chart not found locally, attempting to install from GitHub...");
+            let chart_url = format!(
+                "https://github.com/scottdkey/halvor/releases/download/charts-latest/{}-0.1.0.tgz",
+                chart
+            );
+
+            // Download and use the chart from GitHub
+            let temp_dir = std::env::temp_dir();
+            let chart_tgz = temp_dir.join(format!("{}-0.1.0.tgz", chart));
+
+            // Download the chart
+            let client = reqwest::blocking::Client::new();
+            let response = client.get(&chart_url).send();
+
+            match response {
+                Ok(resp) if resp.status().is_success() => {
+                    let mut file = std::fs::File::create(&chart_tgz)
+                        .context("Failed to create temporary chart file")?;
+                    let mut content = std::io::Cursor::new(resp.bytes()?);
+                    std::io::copy(&mut content, &mut file)?;
+                    println!("  ✓ Downloaded chart from GitHub");
+                    (chart_tgz.to_string_lossy().to_string(), true)
+                }
+                _ => {
+                    anyhow::bail!(
+                        "Chart '{}' not found locally at {} and could not be downloaded from {}. Use 'halvor helm charts' to list available charts.",
+                        chart,
+                        local_path.display(),
+                        chart_url
+                    );
+                }
+            }
+        }
+    };
+
+    // Create Kubernetes Secret for charts that need it (e.g., pia-vpn)
+    if chart == "pia-vpn" {
+        create_pia_vpn_secret(hostname, &release_name, &ns, config)?;
     }
 
     // Generate values from environment variables if no values file provided
@@ -143,13 +201,12 @@ pub fn install_chart(
     // Build helm install command
     let mut cmd = format!(
         "helm install {} {} --namespace {} --create-namespace",
-        release_name,
-        chart_path.display(),
-        ns
+        release_name, chart_path, ns
     );
 
     // Add values file if provided
     if let Some(v) = values {
+        let halvor_dir = crate::config::find_halvor_dir()?;
         let values_path = if Path::new(v).is_absolute() {
             v.to_string()
         } else {
@@ -173,6 +230,16 @@ pub fn install_chart(
 
     exec.execute_shell_interactive(&cmd)
         .context("Helm install failed")?;
+
+    // Clean up temporary chart file if we downloaded it
+    if is_temp_file {
+        if let Err(e) = std::fs::remove_file(&chart_path) {
+            eprintln!(
+                "  ⚠ Warning: Failed to clean up temporary chart file: {}",
+                e
+            );
+        }
+    }
 
     println!();
     println!(
@@ -302,6 +369,84 @@ pub fn list_releases(
 
     let result = exec.execute_shell(&cmd)?;
     println!("{}", String::from_utf8_lossy(&result.stdout));
+
+    Ok(())
+}
+
+/// Create Kubernetes Secret for PIA VPN credentials from environment variables
+fn create_pia_vpn_secret(
+    hostname: &str,
+    release_name: &str,
+    namespace: &str,
+    config: &EnvConfig,
+) -> Result<()> {
+    let exec = Executor::new(hostname, config)?;
+    let secret_name = format!("{}-credentials", release_name);
+
+    println!("Creating Kubernetes Secret for PIA VPN credentials...");
+
+    // Load credentials from environment variables
+    let pia_username = std::env::var("PIA_USERNAME")
+        .context("PIA_USERNAME environment variable not set (should be in 1Password)")?;
+    let pia_password = std::env::var("PIA_PASSWORD")
+        .context("PIA_PASSWORD environment variable not set (should be in 1Password)")?;
+
+    // Base64 encode the credentials
+    let username_b64 = general_purpose::STANDARD.encode(pia_username);
+    let password_b64 = general_purpose::STANDARD.encode(pia_password);
+
+    // Create secret YAML
+    let secret_yaml = format!(
+        r#"apiVersion: v1
+kind: Secret
+metadata:
+  name: {}
+  namespace: {}
+type: Opaque
+data:
+  pia-username: {}
+  pia-password: {}
+"#,
+        secret_name, namespace, username_b64, password_b64
+    );
+
+    // Check if secret already exists
+    let check_cmd = format!(
+        "kubectl get secret {} -n {} --ignore-not-found -o name 2>/dev/null",
+        secret_name, namespace
+    );
+    let check_result = exec.execute_shell(&check_cmd)?;
+    let secret_exists = !String::from_utf8_lossy(&check_result.stdout)
+        .trim()
+        .is_empty();
+
+    if secret_exists {
+        println!("  Secret '{}' already exists, updating...", secret_name);
+        // Delete existing secret first
+        let delete_cmd = format!(
+            "kubectl delete secret {} -n {} --ignore-not-found",
+            secret_name, namespace
+        );
+        exec.execute_shell(&delete_cmd)?;
+    }
+
+    // Create secret using kubectl apply
+    let temp_file = format!("/tmp/pia-vpn-secret-{}.yaml", release_name);
+    exec.write_file(&temp_file, secret_yaml.as_bytes())
+        .context("Failed to write secret YAML to temporary file")?;
+
+    let apply_cmd = format!("kubectl apply -f {}", temp_file);
+    exec.execute_shell_interactive(&apply_cmd)
+        .context("Failed to create Kubernetes Secret")?;
+
+    // Clean up temp file
+    let _ = exec.execute_shell(&format!("rm -f {}", temp_file));
+
+    println!(
+        "  ✓ Secret '{}' created in namespace '{}'",
+        secret_name, namespace
+    );
+    println!();
 
     Ok(())
 }
