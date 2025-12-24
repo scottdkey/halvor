@@ -106,9 +106,38 @@ download_binary() {
 }
 
 PLATFORM=$(detect_platform)
-VERSION="${1:-latest}"
 
-if [ "$VERSION" != "latest" ]; then
+# Parse arguments
+VERSION="latest"
+EXPERIMENTAL=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --experimental|-e)
+            EXPERIMENTAL=true
+            VERSION="experimental"
+            shift
+            ;;
+        --version|-v)
+            VERSION="$2"
+            shift 2
+            ;;
+        *)
+            # Treat as version if not a flag
+            if [ "$VERSION" = "latest" ] && [ "$1" != "--experimental" ] && [ "$1" != "-e" ]; then
+                VERSION="$1"
+            fi
+            shift
+            ;;
+    esac
+done
+
+# If experimental flag was set, use it
+if [ "$EXPERIMENTAL" = "true" ]; then
+    VERSION="experimental"
+fi
+
+if [ "$VERSION" != "latest" ] && [ "$VERSION" != "experimental" ]; then
     VERSION="v${VERSION#v}"  # Ensure 'v' prefix
 fi
 
