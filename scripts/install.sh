@@ -17,6 +17,12 @@ GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}"
 GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}"
 
 echo "Installing halvor (Homelab Automation Layer)..."
+echo ""
+echo "Usage: $0 [--experimental|-e] [--version|-v VERSION] [VERSION]"
+echo "  --experimental, -e    Install experimental version"
+echo "  --version, -v VERSION Install specific version"
+echo "  VERSION               Install specific version (positional)"
+echo ""
 
 # Detect OS and architecture
 detect_platform() {
