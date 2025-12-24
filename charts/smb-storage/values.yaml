@@ -8,41 +8,50 @@
 # Shares to create PVs for
 # These should match the shares configured in SMB_<SERVER>_SHARES
 # The paths should match where halvor smb mounts them: /mnt/smb/<server>/<share>
-# Note: backups and domains use subdirectories to avoid conflicts with existing data
-#       data mounts directly to the share root
+# Maple is primary, Willow is fallback for both backups and data
+#
+# IMPORTANT: Data shares (maple-data, willow-data) are SHARED and contain existing data.
+# These directories MUST exist on the SMB server - they will NEVER be created automatically
+# to prevent accidental data loss. The PV template uses type: Directory (not DirectoryOrCreate)
+# to enforce this safety check.
 shares:
-  # Maple server shares
+  # Maple server shares (PRIMARY)
   - name: maple-backups
     server: maple
     share: backups
     path: "/mnt/smb/maple/backups/k8s"
     size: 100Gi
-  - name: maple-domains
-    server: maple
-    share: domains
-    path: "/mnt/smb/maple/domains/k8s"
-    size: 200Gi
   - name: maple-data
     server: maple
     share: data
     path: "/mnt/smb/maple/data"
     size: 500Gi
-  # Willow server shares
+    # WARNING: Data share is shared and must exist - never create to avoid data loss
+  # Halvor share for container runtime data (PRIMARY - synced across instances for failover)
+  # All container PVs will be stored under this share for centralized sync
+  - name: halvor-data-primary
+    server: maple
+    share: halvor
+    path: "/mnt/smb/maple/halvor"
+    size: 100Gi
+  # Willow server shares (FALLBACK)
   - name: willow-backups
     server: willow
     share: backups
     path: "/mnt/smb/willow/backups/k8s"
     size: 100Gi
-  - name: willow-domains
-    server: willow
-    share: domains
-    path: "/mnt/smb/willow/domains/k8s"
-    size: 200Gi
   - name: willow-data
     server: willow
     share: data
     path: "/mnt/smb/willow/data"
     size: 500Gi
+    # WARNING: Data share is shared and must exist - never create to avoid data loss
+  # Halvor share fallback (FALLBACK - synced from primary)
+  - name: halvor-data-fallback
+    server: willow
+    share: halvor
+    path: "/mnt/smb/willow/halvor"
+    size: 100Gi
 
 # Storage class configuration
 storageClass:

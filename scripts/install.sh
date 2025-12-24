@@ -12,7 +12,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # GitHub repository (update if forked)
-GITHUB_REPO="${GITHUB_REPO:-scottdkey/homelab}"
+GITHUB_REPO="${GITHUB_REPO:-scottdkey/halvor}"
 GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}"
 GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}"
 
@@ -170,8 +170,7 @@ echo ""
 echo -e "${GREEN}Installation complete!${NC}"
 echo ""
 echo "Next steps:"
-echo "  1. Configure HAL: halvor config init"
+echo "  1. Configure halvor: halvor config init"
 echo "     (This sets up the path to your .env file)"
-echo "  2. Setup SSH hosts: ./scripts/setup-ssh-hosts.sh"
-echo "  3. Setup SSH keys: ./scripts/setup-ssh-keys.sh <hostname>"
-echo "  4. Connect: ssh <hostname>"
+echo "  2. Setup cluster: halvor k3s setup --primary <node> --nodes <node1>,<node2>"
+echo "  3. See all commands: halvor --help"

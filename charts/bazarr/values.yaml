@@ -1,0 +1,35 @@
+image:
+  repository: lscr.io/linuxserver/bazarr
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 6767
+
+persistence:
+  enabled: true
+  storageClass: ""
+  size: 1Gi
+  accessMode: ReadWriteOnce
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+
+vpn:
+  serviceName: pia-vpn
+  serviceNamespace: default
+  proxyPort: 8888
+
+networkPolicy:
+  enabled: true

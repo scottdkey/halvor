@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "portainer.fullname" . }}
+  labels:
+    {{- include "portainer.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "portainer.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "portainer.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      containers:
+      - name: {{ include "portainer.containerName" . }}
+        image: "{{ include "portainer.imageRepository" . }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        {{- if ne .Values.deploymentType "agent" }}
+        - name: web
+          containerPort: {{ .Values.service.ports.web }}
+          protocol: TCP
+        - name: ssl
+          containerPort: {{ .Values.service.ports.ssl }}
+          protocol: TCP
+        - name: edge
+          containerPort: {{ .Values.service.ports.edge }}
+          protocol: TCP
+        {{- else }}
+        - name: agent
+          containerPort: {{ .Values.service.ports.agent }}
+          protocol: TCP
+        {{- end }}
+        volumeMounts:
+        {{- if ne .Values.deploymentType "agent" }}
+        - name: data
+          mountPath: /data
+        {{- end }}
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+        {{- if eq .Values.deploymentType "agent" }}
+        - name: docker-volumes
+          mountPath: /var/lib/docker/volumes
+        {{- end }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        {{- if ne .Values.deploymentType "agent" }}
+        livenessProbe:
+          httpGet:
+            path: /api/status
+            port: web
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /api/status
+            port: web
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        {{- end }}
+      volumes:
+      {{- if ne .Values.deploymentType "agent" }}
+      - name: data
+        {{- if .Values.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ include "portainer.fullname" . }}-data
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
+      {{- end }}
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock
+          type: Socket
+      {{- if eq .Values.deploymentType "agent" }}
+      - name: docker-volumes
+        hostPath:
+          path: /var/lib/docker/volumes
+          type: Directory
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+

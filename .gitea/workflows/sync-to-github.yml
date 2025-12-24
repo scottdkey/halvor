@@ -1,0 +1,58 @@
+name: Sync to GitHub
+
+on:
+  push:
+    branches:
+      - experimental
+      - main
+  workflow_dispatch:
+
+jobs:
+  sync-experimental:
+    if: github.ref == 'refs/heads/experimental'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "Gitea Bot"
+          git config user.email "bot@gitea.local"
+
+      - name: Add GitHub Remote
+        run: |
+          git remote remove github || true
+          git remote add github https://${{ secrets.GITHUB_TOKEN }}@github.com/scottdkey/halvor.git
+
+      - name: Push to GitHub (experimental)
+        run: |
+          git push github experimental:experimental --force
+          # Also update experimental release tag
+          git tag -f experimental || true
+          git push github experimental --force || true
+
+  sync-main:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "Gitea Bot"
+          git config user.email "bot@gitea.local"
+
+      - name: Add GitHub Remote
+        run: |
+          git remote remove github || true
+          git remote add github https://${{ secrets.GITHUB_TOKEN }}@github.com/scottdkey/halvor.git
+
+      - name: Push to GitHub (main)
+        run: |
+          git push github main:main --force

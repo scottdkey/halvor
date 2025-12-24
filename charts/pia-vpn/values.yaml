@@ -28,11 +28,17 @@ service:
   annotations: {}
 
 # Persistent volume for VPN configs
+# Uses SMB storage for failover support across cluster instances
 persistence:
   enabled: true
-  storageClass: "" # Use default storage class
+  # Use shared halvor-data PVC with subPath for this app
+  useSharedPVC: true
+  sharedPVCName: "halvor-shared-data"
+  subPath: "pia-vpn"
+  # Alternative: create dedicated PVC
+  storageClass: "smb-storage"
   size: 1Gi
-  accessMode: ReadWriteOnce
+  accessMode: ReadWriteMany
 
 # Resources
 resources:
@@ -74,6 +80,10 @@ serviceAccount:
 
 # Pod annotations
 podAnnotations: {}
+
+# Name override (optional)
+nameOverride: ""
+fullnameOverride: ""
 
 # Environment variables
 env: []

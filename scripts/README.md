@@ -1,104 +1,69 @@
-# Scripts
+# Installation Scripts
 
-This directory contains utility scripts for setting up and managing your homelab.
+This directory contains installation scripts for installing `halvor` from GitHub or Gitea releases.
 
 ## Installation Scripts
 
-### `install.sh` / `install.ps1`
+### `install.sh` (Linux/macOS)
 
-Downloads and installs the `hal` CLI tool from GitHub releases.
-
-**Usage:**
-
-```bash
-# Linux/macOS
-curl -fsSL https://raw.githubusercontent.com/scottdkey/homelab/main/scripts/install.sh | bash
-
-# Windows
-irm https://raw.githubusercontent.com/scottdkey/homelab/main/scripts/install.ps1 | iex
-```
-
-The scripts automatically:
-
-- Detect your platform (OS and architecture)
-- Download the correct pre-built binary from GitHub releases
-- Install to `/usr/local/bin` (Linux/macOS) or `~/.local/bin` (Windows)
-- Set up PATH if needed
-
-## SSH Setup Scripts
-
-### `setup-ssh-hosts.sh`
-
-Configures SSH hosts in `~/.ssh/config` from your `.env` file.
+Downloads and installs the `halvor` CLI tool from GitHub releases.
 
 **Usage:**
 
 ```bash
-./scripts/setup-ssh-hosts.sh
+# Install from GitHub
+curl -fsSL https://raw.githubusercontent.com/scottdkey/halvor/main/scripts/install.sh | bash
+
+# Or install from Gitea (if hosted)
+curl -fsSL https://gitea.scottkey.me/scottkey/halvor/raw/branch/main/scripts/install.sh | bash
 ```
 
-**Configuration in `.env`:**
+The script automatically:
 
-```bash
-SSH_MAPLE_HOST="10.10.10.130"
-SSH_MAPLE_USER="test-user"
-SSH_MAPLE_PORT="22"
+- Detects your platform (OS and architecture)
+- Downloads the correct pre-built binary from GitHub/Gitea releases
+- Installs to `/usr/local/bin` (Linux/macOS)
+- Sets up PATH if needed
 
-SSH_BELLEROPHON_HOST="10.10.10.14"
-SSH_BELLEROPHON_USER="username"
-```
+### `install.ps1` (Windows)
 
-This creates SSH config entries that allow you to connect with:
-
-```bash
-ssh maple
-ssh bellerophon
-```
-
-### `setup-ssh-keys.sh`
-
-Sets up SSH key authentication on remote hosts. Uses password authentication initially, then enables
-key-based auth.
+Downloads and installs the `halvor` CLI tool from GitHub releases.
 
 **Usage:**
 
-```bash
-./scripts/setup-ssh-keys.sh <hostname> [username]
+```powershell
+# Install from GitHub
+irm https://raw.githubusercontent.com/scottdkey/halvor/main/scripts/install.ps1 | iex
+
+# Or install from Gitea (if hosted)
+irm https://gitea.scottkey.me/scottkey/halvor/raw/branch/main/scripts/install.ps1 | iex
 ```
 
-**Example:**
+The script automatically:
+
+- Detects your platform (OS and architecture)
+- Downloads the correct pre-built binary from GitHub/Gitea releases
+- Installs to `~/.local/bin` (Windows)
+- Sets up PATH if needed
+
+## Installation Options
+
+Both scripts support environment variables to customize installation:
 
 ```bash
-./scripts/setup-ssh-keys.sh maple
+# Use experimental channel
+GITHUB_REPO=scottdkey/halvor EXPERIMENTAL=true curl -fsSL https://raw.githubusercontent.com/scottdkey/halvor/main/scripts/install.sh | bash
+
+# Install from Gitea instead of GitHub
+GITEA_URL=https://gitea.scottkey.me/scottkey/halvor curl -fsSL https://gitea.scottkey.me/scottkey/halvor/raw/branch/main/scripts/install.sh | bash
 ```
 
-This will:
+## Note
 
-1. Check if SSH key is already installed
-2. If not, prompt for password once
-3. Copy your SSH public key to the remote host
-4. Enable passwordless SSH connections
+All other setup and management tasks should be done using the `halvor` CLI itself. The CLI provides commands for:
+- Cluster setup: `halvor k3s setup`
+- SMB mounts: `halvor smb`
+- Service provisioning: `halvor provision`
+- And much more
 
-After running this, you can connect without a password:
-
-```bash
-ssh maple
-```
-
-## VPN Scripts
-
-### `setup-vpn-firewall.sh`
-
-Sets up firewall rules for VPN containers. See the script for details.
-
-## Running Scripts Remotely
-
-You can also run scripts directly from GitHub:
-
-```bash
-# Setup SSH hosts
-curl -fsSL https://raw.githubusercontent.com/scottdkey/homelab/main/scripts/setup-ssh-hosts.sh | bash
-
-# Setup SSH keys
-curl -fsSL https://raw.githubusercontent.com/scottdkey/homelab/main/scripts/setup-ssh-keys.sh | bash -s <hostname>
-```
+See `halvor --help` for all available commands.

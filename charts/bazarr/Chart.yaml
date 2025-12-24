@@ -1,0 +1,6 @@
+apiVersion: v2
+appVersion: latest
+description: bazarr Helm chart
+name: bazarr
+type: application
+version: 0.1.0

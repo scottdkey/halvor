@@ -60,26 +60,14 @@ pub enum Commands {
         /// List all available apps
         #[arg(long)]
         list: bool,
+        /// Install as Helm chart (for Kubernetes)
+        #[arg(long)]
+        helm: bool,
     },
     /// Uninstall a service from a host or halvor itself
     Uninstall {
         /// Service to uninstall: npm, portainer, smb. If not provided, guided uninstall of halvor
         service: Option<String>,
-    },
-    /// Provision a host for Kubernetes cluster membership
-    Provision {
-        /// Skip interactive prompts and use defaults (requires --cluster-role)
-        #[arg(long, short = 'y')]
-        yes: bool,
-        /// Cluster role: 'init' (first control plane), 'control-plane' (join as CP), or 'agent' (join as worker)
-        #[arg(long)]
-        cluster_role: Option<String>,
-        /// Control plane server to join (required for control-plane/agent roles)
-        #[arg(long)]
-        cluster_server: Option<String>,
-        /// Cluster join token (generated for init, required for join operations)
-        #[arg(long)]
-        cluster_token: Option<String>,
     },
     /// Setup and mount SMB shares
     Smb {
@@ -161,10 +149,5 @@ pub enum Commands {
     Helm {
         #[command(subcommand)]
         command: commands::helm::HelmCommands,
-    },
-    /// Cluster backup and restore operations
-    Cluster {
-        #[command(subcommand)]
-        command: commands::cluster::ClusterCommands,
     },
 }

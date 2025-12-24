@@ -6,6 +6,37 @@ use std::process::{Command, Output, Stdio};
 
 // Import SshConnection from ssh module
 use crate::utils::ssh::SshConnection;
+// Import AgentClient for agent-based execution
+use crate::agent::api::AgentClient;
+
+// Helper function to escape shell arguments
+// Uses the same logic as ssh module but we need it here
+fn shell_escape(s: &str) -> String {
+    if s.is_empty() {
+        return "''".to_string();
+    }
+
+    // If string contains no special characters, return as-is
+    if s.chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '/' || c == '.' || c == '$')
+    {
+        return s.to_string();
+    }
+
+    // Escape single quotes by ending quote, adding escaped quote, starting new quote
+    let escaped: String = s
+        .chars()
+        .flat_map(|c| {
+            if c == '\'' {
+                vec!['\'', '\\', '\'', '\'']
+            } else {
+                vec![c]
+            }
+        })
+        .collect();
+
+    format!("'{}'", escaped)
+}
 
 /// Local command execution helpers
 pub mod local {
@@ -243,17 +274,18 @@ impl PackageManager {
     pub fn install_package<E: CommandExecutor>(&self, exec: &E, package: &str) -> Result<()> {
         match self {
             PackageManager::Apt => {
-                exec.execute_interactive("sudo", &["apt-get", "update"])?;
-                exec.execute_interactive("sudo", &["apt-get", "install", "-y", package])?;
+                // Use execute_shell_interactive which handles sudo password injection better
+                exec.execute_shell_interactive("sudo apt-get update")?;
+                exec.execute_shell_interactive(&format!("sudo apt-get install -y {}", package))?;
             }
             PackageManager::Yum => {
-                exec.execute_interactive("sudo", &["yum", "install", "-y", package])?;
+                exec.execute_shell_interactive(&format!("sudo yum install -y {}", package))?;
             }
             PackageManager::Dnf => {
-                exec.execute_interactive("sudo", &["dnf", "install", "-y", package])?;
+                exec.execute_shell_interactive(&format!("sudo dnf install -y {}", package))?;
             }
             PackageManager::Brew => {
-                exec.execute_interactive("brew", &["install", package])?;
+                exec.execute_shell_interactive(&format!("brew install {}", package))?;
             }
             PackageManager::Unknown => {
                 anyhow::bail!(
@@ -401,10 +433,17 @@ fn prompt_ssh_username(host: &str) -> Result<String> {
     }
 }
 
-/// Executor that can be either local or remote (SSH)
+/// Executor that can be either local, remote via agent, or remote via SSH
 /// Automatically determines execution context based on hostname and config
+/// Prefers agent over SSH for remote execution
 pub enum Executor {
     Local,
+    Agent {
+        client: AgentClient,
+        host: String,
+        sudo_password: Option<String>,
+        sudo_user: Option<String>,
+    },
     Remote(SshConnection),
 }
 
@@ -431,16 +470,29 @@ impl Executor {
         } else {
             // If no IP configured, assume remote
             return Ok(Executor::Remote({
-                let target_host = host_config.hostname.as_ref().ok_or_else(|| {
+                let hostname_val = host_config.hostname.as_ref().ok_or_else(|| {
                     anyhow::anyhow!("No IP or Tailscale hostname configured for {}", hostname)
                 })?;
+                // First, try to get actual Tailscale hostname from local Tailscale status
+                use crate::services::tailscale::get_peer_tailscale_hostname;
+                let target_host =
+                    if let Ok(Some(ts_hostname)) = get_peer_tailscale_hostname(hostname_val) {
+                        // Found actual Tailscale hostname - use it
+                        ts_hostname
+                    } else if hostname_val.contains('.') {
+                        // Hostname already includes domain - use as-is
+                        hostname_val.clone()
+                    } else {
+                        // Construct from tailnet base
+                        format!("{}.{}", hostname_val, config._tailnet_base)
+                    };
                 // Get username from SSH config, or prompt user
-                let username = get_ssh_config_username(target_host)
+                let username = get_ssh_config_username(&target_host)
                     .or_else(|| get_ssh_config_username(hostname))
                     .or_else(|| get_ssh_config_username(&actual_hostname))
                     .unwrap_or_else(|| {
                         // No username in SSH config - prompt user
-                        prompt_ssh_username(target_host)
+                        prompt_ssh_username(&target_host)
                             .unwrap_or_else(|_| crate::config::get_default_username())
                     });
                 let host_with_user = format!("{}@{}", username, target_host);
@@ -472,31 +524,60 @@ impl Executor {
                 )
             })?;
 
-            // Determine which host to connect to (prefer IP, fallback to Tailscale)
-            let target_host = if let Some(ip) = &host_config.ip {
+            // Determine which host to connect to (prefer Tailscale hostname, fallback to IP)
+            let target_host = if let Some(hostname_val) = &host_config.hostname {
+                // First, try to get actual Tailscale hostname from local Tailscale status
+                use crate::services::tailscale::get_peer_tailscale_hostname;
+                if let Ok(Some(ts_hostname)) = get_peer_tailscale_hostname(hostname_val) {
+                    // Found actual Tailscale hostname - use it
+                    ts_hostname
+                } else if hostname_val.contains('.') {
+                    // Hostname already includes domain - use as-is
+                    hostname_val.clone()
+                } else {
+                    // Construct from tailnet base
+                    format!("{}.{}", hostname_val, config._tailnet_base)
+                }
+            } else if let Some(ip) = &host_config.ip {
                 ip.clone()
-            } else if let Some(hostname) = &host_config.hostname {
-                hostname.clone()
             } else {
                 anyhow::bail!("No IP or Tailscale hostname configured for {}", hostname);
             };
 
-            // Get username from SSH config, or prompt user
-            let username = get_ssh_config_username(&target_host)
-                .or_else(|| get_ssh_config_username(hostname))
-                .or_else(|| get_ssh_config_username(&actual_hostname))
-                .unwrap_or_else(|| {
-                    // No username in SSH config - prompt user
-                    prompt_ssh_username(&target_host)
-                        .unwrap_or_else(|_| crate::config::get_default_username())
-                });
-            let host_with_user = format!("{}@{}", username, target_host);
+            // Get sudo password and user from host config
             let sudo_password = host_config.sudo_password.clone();
             let sudo_user = host_config.sudo_user.clone();
-            let ssh_conn =
-                SshConnection::new_with_sudo_password(&host_with_user, sudo_password, sudo_user)?;
 
-            Ok(Executor::Remote(ssh_conn))
+            // Try to connect via agent first (port 23500)
+            // If agent is available, use it; otherwise fallback to SSH
+            let agent_client = AgentClient::new(&target_host, 23500);
+            if agent_client.ping().is_ok() {
+                // Agent is available - use it
+                Ok(Executor::Agent {
+                    client: agent_client,
+                    host: target_host,
+                    sudo_password,
+                    sudo_user,
+                })
+            } else {
+                // Agent not available - fallback to SSH
+                let username = get_ssh_config_username(&target_host)
+                    .or_else(|| get_ssh_config_username(hostname))
+                    .or_else(|| get_ssh_config_username(&actual_hostname))
+                    .unwrap_or_else(|| {
+                        // No username in SSH config - prompt user
+                        prompt_ssh_username(&target_host)
+                            .unwrap_or_else(|_| crate::config::get_default_username())
+                    });
+                let host_with_user = format!("{}@{}", username, target_host);
+                let ssh_conn = SshConnection::new_with_sudo_password(
+                    &host_with_user,
+                    sudo_password,
+                    sudo_user,
+                )?;
+
+                Ok(Executor::Remote(ssh_conn))
+            }
         }
     }
 
@@ -504,6 +585,7 @@ impl Executor {
     pub fn target_host(&self, hostname: &str, config: &crate::config::EnvConfig) -> Result<String> {
         match self {
             Executor::Local => Ok(hostname.to_string()),
+            Executor::Agent { host, .. } => Ok(host.clone()),
             Executor::Remote(_) => {
                 let host_config = config
                     .hosts
@@ -531,6 +613,21 @@ impl CommandExecutor for Executor {
     fn execute_simple(&self, program: &str, args: &[&str]) -> Result<Output> {
         match self {
             Executor::Local => local::execute(program, args),
+            Executor::Agent { client, .. } => {
+                // Convert args to Vec<String> for agent
+                let args_vec: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+                let output = client.execute_command(
+                    program,
+                    &args_vec.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                )?;
+                // Convert agent output to Output format
+                use std::os::unix::process::ExitStatusExt;
+                Ok(Output {
+                    status: std::process::ExitStatus::from_raw(0),
+                    stdout: output.into_bytes(),
+                    stderr: Vec::new(),
+                })
+            }
             Executor::Remote(exec) => exec.execute_simple(program, args),
         }
     }
@@ -538,6 +635,38 @@ impl CommandExecutor for Executor {
     fn execute_shell(&self, command: &str) -> Result<Output> {
         match self {
             Executor::Local => local::execute_shell(command),
+            Executor::Agent {
+                client,
+                sudo_password,
+                sudo_user,
+                ..
+            } => {
+                // Handle sudo commands with password injection
+                let final_command = if command.contains("sudo ") && sudo_password.is_some() {
+                    let password = sudo_password.as_ref().unwrap();
+                    let escaped_password = shell_escape(password);
+                    let sudo_prefix = if let Some(sudo_user) = sudo_user {
+                        format!(
+                            "echo {} | sudo -S -u {} ",
+                            escaped_password,
+                            shell_escape(sudo_user)
+                        )
+                    } else {
+                        format!("echo {} | sudo -S ", escaped_password)
+                    };
+                    command.replace("sudo ", &sudo_prefix)
+                } else {
+                    command.to_string()
+                };
+                // Execute via agent using sh -c
+                let output = client.execute_command("sh", &["-c", &final_command])?;
+                use std::os::unix::process::ExitStatusExt;
+                Ok(Output {
+                    status: std::process::ExitStatus::from_raw(0),
+                    stdout: output.into_bytes(),
+                    stderr: Vec::new(),
+                })
+            }
             Executor::Remote(exec) => exec.execute_shell(command),
         }
     }
@@ -556,6 +685,44 @@ impl CommandExecutor for Executor {
                 }
                 Ok(())
             }
+            Executor::Agent {
+                client,
+                sudo_password,
+                sudo_user,
+                ..
+            } => {
+                // For interactive commands, we need to handle sudo password injection
+                let args_vec: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+                // Check if this is a sudo command
+                if program == "sudo" && sudo_password.is_some() {
+                    // Build command with password injection
+                    let password = sudo_password.as_ref().unwrap();
+                    let escaped_password = shell_escape(password);
+                    let sudo_cmd = if let Some(sudo_user) = sudo_user {
+                        format!(
+                            "echo {} | sudo -S -u {} {}",
+                            escaped_password,
+                            shell_escape(sudo_user),
+                            args_vec.join(" ")
+                        )
+                    } else {
+                        format!("echo {} | sudo -S {}", escaped_password, args_vec.join(" "))
+                    };
+                    let output = client.execute_command("sh", &["-c", &sudo_cmd])?;
+                    if !output.is_empty() {
+                        print!("{}", output);
+                    }
+                } else {
+                    let output = client.execute_command(
+                        program,
+                        &args_vec.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                    )?;
+                    if !output.is_empty() {
+                        print!("{}", output);
+                    }
+                }
+                Ok(())
+            }
             Executor::Remote(exec) => exec.execute_interactive(program, args),
         }
     }
@@ -563,6 +730,13 @@ impl CommandExecutor for Executor {
     fn check_command_exists(&self, command: &str) -> Result<bool> {
         match self {
             Executor::Local => Ok(local::check_command_exists(command)),
+            Executor::Agent { client, .. } => {
+                // Use which command via agent
+                match client.execute_command("which", &[command]) {
+                    Ok(output) => Ok(!output.trim().is_empty()),
+                    Err(_) => Ok(false),
+                }
+            }
             Executor::Remote(exec) => exec.check_command_exists(command),
         }
     }
@@ -570,6 +744,11 @@ impl CommandExecutor for Executor {
     fn is_linux(&self) -> Result<bool> {
         match self {
             Executor::Local => Ok(local::is_linux()),
+            Executor::Agent { client, .. } => {
+                // Check OS via uname
+                let output = client.execute_command("uname", &["-s"])?;
+                Ok(output.trim() == "Linux")
+            }
             Executor::Remote(exec) => exec.is_linux(),
         }
     }
@@ -577,6 +756,10 @@ impl CommandExecutor for Executor {
     fn read_file(&self, path: &str) -> Result<String> {
         match self {
             Executor::Local => local::read_file(path),
+            Executor::Agent { client, .. } => {
+                // Read file via cat command
+                client.execute_command("cat", &[path])
+            }
             Executor::Remote(exec) => exec.read_file(path),
         }
     }
@@ -586,6 +769,14 @@ impl CommandExecutor for Executor {
             Executor::Local => {
                 std::fs::write(path, content)
                     .with_context(|| format!("Failed to write file: {}", path))?;
+                Ok(())
+            }
+            Executor::Agent { client, .. } => {
+                // Write file via echo/tee command
+                let content_str = String::from_utf8_lossy(content);
+                let escaped_content = shell_escape(&content_str);
+                let cmd = format!("echo -e {} > {}", escaped_content, shell_escape(path));
+                client.execute_command("sh", &["-c", &cmd])?;
                 Ok(())
             }
             Executor::Remote(exec) => exec.write_file(path, content),
@@ -599,6 +790,10 @@ impl CommandExecutor for Executor {
                     .with_context(|| format!("Failed to create directory: {}", path))?;
                 Ok(())
             }
+            Executor::Agent { client, .. } => {
+                client.execute_command("mkdir", &["-p", path])?;
+                Ok(())
+            }
             Executor::Remote(exec) => exec.mkdir_p(path),
         }
     }
@@ -606,6 +801,13 @@ impl CommandExecutor for Executor {
     fn file_exists(&self, path: &str) -> Result<bool> {
         match self {
             Executor::Local => Ok(local::is_file(path)),
+            Executor::Agent { client, .. } => {
+                // Use test -f command
+                match client.execute_command("test", &["-f", path]) {
+                    Ok(_) => Ok(true),
+                    Err(_) => Ok(false),
+                }
+            }
             Executor::Remote(exec) => exec.file_exists(path),
         }
     }
@@ -625,6 +827,35 @@ impl CommandExecutor for Executor {
                 }
                 Ok(())
             }
+            Executor::Agent {
+                client,
+                sudo_password,
+                sudo_user,
+                ..
+            } => {
+                // Handle sudo commands with password injection
+                let final_command = if command.contains("sudo ") && sudo_password.is_some() {
+                    let password = sudo_password.as_ref().unwrap();
+                    let escaped_password = shell_escape(password);
+                    let sudo_prefix = if let Some(sudo_user) = sudo_user {
+                        format!(
+                            "echo {} | sudo -S -u {} ",
+                            escaped_password,
+                            shell_escape(sudo_user)
+                        )
+                    } else {
+                        format!("echo {} | sudo -S ", escaped_password)
+                    };
+                    command.replace("sudo ", &sudo_prefix)
+                } else {
+                    command.to_string()
+                };
+                let output = client.execute_command("sh", &["-c", &final_command])?;
+                if !output.is_empty() {
+                    print!("{}", output);
+                }
+                Ok(())
+            }
             Executor::Remote(exec) => exec.execute_shell_interactive(command),
         }
     }
@@ -632,6 +863,10 @@ impl CommandExecutor for Executor {
     fn get_username(&self) -> Result<String> {
         match self {
             Executor::Local => Ok(whoami::username()),
+            Executor::Agent { client, .. } => {
+                let output = client.execute_command("whoami", &[])?;
+                Ok(output.trim().to_string())
+            }
             Executor::Remote(exec) => exec.get_username(),
         }
     }
@@ -639,6 +874,10 @@ impl CommandExecutor for Executor {
     fn list_directory(&self, path: &str) -> Result<Vec<String>> {
         match self {
             Executor::Local => local::list_directory(path),
+            Executor::Agent { client, .. } => {
+                let output = client.execute_command("ls", &["-1", path])?;
+                Ok(output.lines().map(|s| s.to_string()).collect())
+            }
             Executor::Remote(exec) => exec.list_directory(path),
         }
     }
@@ -646,6 +885,13 @@ impl CommandExecutor for Executor {
     fn is_directory(&self, path: &str) -> Result<bool> {
         match self {
             Executor::Local => Ok(local::is_directory(path)),
+            Executor::Agent { client, .. } => {
+                // Use test -d command
+                match client.execute_command("test", &["-d", path]) {
+                    Ok(_) => Ok(true),
+                    Err(_) => Ok(false),
+                }
+            }
             Executor::Remote(exec) => exec.is_directory(path),
         }
     }
@@ -654,6 +900,10 @@ impl CommandExecutor for Executor {
     fn get_uid(&self) -> Result<u32> {
         match self {
             Executor::Local => local::get_uid(),
+            Executor::Agent { client, .. } => {
+                let output = client.execute_command("id", &["-u"])?;
+                output.trim().parse().with_context(|| "Failed to parse UID")
+            }
             Executor::Remote(exec) => exec.get_uid(),
         }
     }
@@ -662,6 +912,10 @@ impl CommandExecutor for Executor {
     fn get_gid(&self) -> Result<u32> {
         match self {
             Executor::Local => local::get_gid(),
+            Executor::Agent { client, .. } => {
+                let output = client.execute_command("id", &["-g"])?;
+                output.trim().parse().with_context(|| "Failed to parse GID")
+            }
             Executor::Remote(exec) => exec.get_gid(),
         }
     }
@@ -669,6 +923,10 @@ impl CommandExecutor for Executor {
     fn get_home_dir(&self) -> Result<String> {
         match self {
             Executor::Local => local::get_home_dir(),
+            Executor::Agent { client, .. } => {
+                let output = client.execute_command("echo", &["$HOME"])?;
+                Ok(output.trim().to_string())
+            }
             Executor::Remote(exec) => exec.get_home_dir(),
         }
     }

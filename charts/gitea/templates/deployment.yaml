@@ -52,6 +52,9 @@ spec:
         volumeMounts:
         - name: data
           mountPath: /data
+          {{- if and .Values.persistence.enabled .Values.persistence.useSharedPVC }}
+          subPath: {{ .Values.persistence.subPath }}
+          {{- end }}
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
         livenessProbe:
@@ -69,8 +72,13 @@ spec:
       volumes:
       - name: data
         {{- if .Values.persistence.enabled }}
+        {{- if .Values.persistence.useSharedPVC }}
+        persistentVolumeClaim:
+          claimName: {{ .Values.persistence.sharedPVCName }}
+        {{- else }}
         persistentVolumeClaim:
           claimName: {{ include "gitea.fullname" . }}-data
+        {{- end }}
         {{- else }}
         emptyDir: {}
         {{- end }}

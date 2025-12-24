@@ -1,0 +1,6 @@
+apiVersion: v2
+appVersion: latest
+description: radarr-4k Helm chart
+name: radarr-4k
+type: application
+version: 0.1.0

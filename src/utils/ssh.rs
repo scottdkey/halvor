@@ -14,11 +14,11 @@ pub struct SshConnection {
 
 impl SshConnection {
     pub fn new(host: &str) -> Result<Self> {
-        // Test if key-based auth works
+        // Test if key-based auth works (with longer timeout for initial connection)
         let test_output = Command::new("ssh")
             .args([
                 "-o",
-                "ConnectTimeout=1",
+                "ConnectTimeout=10", // Increased from 1 to 10 seconds
                 "-o",
                 "BatchMode=yes",
                 "-o",
@@ -51,11 +51,11 @@ impl SshConnection {
         sudo_password: Option<String>,
         sudo_user: Option<String>,
     ) -> Result<Self> {
-        // Test if key-based auth works
+        // Test if key-based auth works (with longer timeout for initial connection)
         let test_output = Command::new("ssh")
             .args([
                 "-o",
-                "ConnectTimeout=1",
+                "ConnectTimeout=10", // Increased from 1 to 10 seconds
                 "-o",
                 "BatchMode=yes",
                 "-o",
@@ -87,7 +87,7 @@ impl SshConnection {
             "-o".to_string(),
             "StrictHostKeyChecking=no".to_string(),
             "-o".to_string(),
-            "ConnectTimeout=10".to_string(), // 10 second timeout to prevent hanging
+            "ConnectTimeout=30".to_string(), // 30 second timeout for initial connections
         ];
 
         if self.use_key_auth {
@@ -132,8 +132,10 @@ impl SshConnection {
         // If command contains sudo and we have a password, inject it
         let final_command = if command.contains("sudo ") && self.sudo_password.is_some() {
             let password = self.sudo_password.as_ref().unwrap();
+            // Use echo with password and newline piped to sudo for reliable password passing
+            // Structure: echo 'password' | sudo -S command
+            // Simple and reliable - echo automatically adds newline which sudo needs
             let escaped_password = shell_escape(password);
-            // Replace "sudo " with "echo 'password' | sudo -S [-u user] "
             let sudo_prefix = if let Some(ref sudo_user) = self.sudo_user {
                 format!(
                     "echo {} | sudo -S -u {} ",
@@ -251,10 +253,12 @@ impl SshConnection {
 
     pub fn execute_shell_interactive(&self, command: &str) -> Result<()> {
         // If command contains sudo and we have a password, inject it
-        let final_command = if command.contains("sudo") && self.sudo_password.is_some() {
+        let final_command = if command.contains("sudo ") && self.sudo_password.is_some() {
             let password = self.sudo_password.as_ref().unwrap();
+            // Use echo with password and newline piped to sudo for reliable password passing
+            // Structure: echo 'password' | sudo -S command
+            // Simple and reliable - echo automatically adds newline which sudo needs
             let escaped_password = shell_escape(password);
-            // Replace "sudo " with "echo 'password' | sudo -S [-u user] "
             let sudo_prefix = if let Some(ref sudo_user) = self.sudo_user {
                 format!(
                     "echo {} | sudo -S -u {} ",
@@ -264,7 +268,18 @@ impl SshConnection {
             } else {
                 format!("echo {} | sudo -S ", escaped_password)
             };
-            command.replace("sudo ", &sudo_prefix)
+            let replaced = command.replace("sudo ", &sudo_prefix);
+            // Debug: verify command was replaced (but don't print password)
+            if replaced != command {
+                println!("  [DEBUG] Sudo password injection: command modified");
+            }
+            replaced
+        } else if command.contains("sudo ") {
+            // Sudo command but no password - warn user and run as-is (will prompt)
+            eprintln!("⚠️  Warning: Sudo command detected but no password available in config.");
+            eprintln!("   Command will prompt for password interactively.");
+            eprintln!("   To avoid prompts, set HOST_<name>_SUDO_PASS in your 1Password vault.");
+            command.to_string()
         } else {
             command.to_string()
         };
@@ -778,13 +793,39 @@ pub fn copy_ssh_key(
         // Read authorized_keys file and check if key exists using native Rust
         let ssh_conn = SshConnection::new(&host_str)?;
 
-        // Ensure .ssh directory exists
-        ssh_conn.execute_shell("mkdir -p \"$HOME/.ssh\" && chmod 700 \"$HOME/.ssh\"")?;
+        // Get the target user's home directory using getent (more reliable than $HOME)
+        let get_home_cmd = format!(
+            r#"getent passwd {} | cut -d: -f6"#,
+            shell_escape(&target_username)
+        );
+        let home_dir_output = ssh_conn.execute_shell(&get_home_cmd).with_context(|| {
+            format!("Failed to get home directory for user {}", target_username)
+        })?;
 
-        // Read authorized_keys file if it exists
-        let authorized_keys_path = "$HOME/.ssh/authorized_keys";
+        if !home_dir_output.status.success() {
+            anyhow::bail!(
+                "Failed to get home directory for user {}. User may not exist.",
+                target_username
+            );
+        }
+
+        let home_dir = String::from_utf8_lossy(&home_dir_output.stdout)
+            .trim()
+            .to_string();
+
+        if home_dir.is_empty() {
+            anyhow::bail!(
+                "Home directory for user {} is empty or could not be determined",
+                target_username
+            );
+        }
+
+        let ssh_dir = format!("{}/.ssh", home_dir);
+        let authorized_keys_path = format!("{}/authorized_keys", ssh_dir);
+
+        // Check if key is already installed
         let key_status =
-            if let Ok(authorized_keys_content) = ssh_conn.read_file(authorized_keys_path) {
+            if let Ok(authorized_keys_content) = ssh_conn.read_file(&authorized_keys_path) {
                 // Check if the public key line is already in the file
                 if authorized_keys_content
                     .lines()
@@ -804,15 +845,23 @@ pub fn copy_ssh_key(
         }
 
         // Install the key using interactive SSH (will prompt for password)
-        // Break into separate commands to avoid shell parsing issues with complex && chains
         println!("Installing SSH key...");
 
         // First, ensure .ssh directory exists and has correct permissions
-        let setup_dir_cmd =
-            r#"test -d "$HOME/.ssh" || mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh""#;
+        // Use the actual home directory path we got from getent
+        let setup_dir_cmd = format!(
+            r#"mkdir -p {} && chmod 700 {}"#,
+            shell_escape(&ssh_dir),
+            shell_escape(&ssh_dir)
+        );
         ssh_conn
-            .execute_shell_interactive(setup_dir_cmd)
-            .with_context(|| format!("Failed to create .ssh directory on {}", host))?;
+            .execute_shell_interactive(&setup_dir_cmd)
+            .with_context(|| {
+                format!(
+                    "Failed to create .ssh directory for user {} on {}",
+                    target_username, host
+                )
+            })?;
 
         // Then append the key and set permissions
         // Use write_file pattern - write key content through stdin to avoid all quoting issues
@@ -821,10 +870,11 @@ pub fn copy_ssh_key(
         ssh_args.push("-t".to_string()); // Single TTY for password prompts but allow stdin
         ssh_args.push("sh".to_string());
         ssh_args.push("-c".to_string());
-        ssh_args.push(
-            r#"cat >> "$HOME/.ssh/authorized_keys" && chmod 600 "$HOME/.ssh/authorized_keys""#
-                .to_string(),
-        );
+        ssh_args.push(format!(
+            r#"cat >> {} && chmod 600 {}"#,
+            shell_escape(&authorized_keys_path),
+            shell_escape(&authorized_keys_path)
+        ));
 
         let mut cmd = Command::new("ssh");
         cmd.args(&ssh_args);

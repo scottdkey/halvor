@@ -861,6 +861,50 @@ const CONTAINERS: &[ContainerDef] = &[ContainerDef {
     image_name: "ghcr.io/scottdkey/pia-vpn",
 }];
 
+/// Build container using its own build script
+fn build_container_with_script(
+    build_script: &std::path::Path,
+    build_dir: &std::path::Path,
+    push: bool,
+    release: bool,
+    no_cache: bool,
+) -> Result<()> {
+    println!("Using container's build script: {}", build_script.display());
+    println!();
+
+    let mut cmd = std::process::Command::new("bash");
+    cmd.arg(build_script);
+
+    if push {
+        cmd.arg("--push");
+    }
+
+    if release {
+        cmd.arg("--release");
+    }
+
+    if no_cache {
+        cmd.arg("--no-cache");
+    }
+
+    // Set GITHUB_USER from environment or use default
+    if let Ok(user) = std::env::var("GITHUB_USER") {
+        cmd.arg("--github-user").arg(&user);
+    }
+
+    cmd.current_dir(build_dir);
+    cmd.stdout(std::process::Stdio::inherit());
+    cmd.stderr(std::process::Stdio::inherit());
+
+    let status = cmd.status().context("Failed to execute build script")?;
+
+    if !status.success() {
+        anyhow::bail!("Container build script failed");
+    }
+
+    Ok(())
+}
+
 /// Build a Docker container
 pub fn build_container(name: &str, no_cache: bool, push: bool, release: bool) -> Result<()> {
     // Find container definition
@@ -871,6 +915,13 @@ pub fn build_container(name: &str, no_cache: bool, push: bool, release: bool) ->
 
     // Find the build directory
     let build_path = find_container_build_path(container.build_dir)?;
+
+    // Check if container has its own build script
+    let build_script = build_path.join("build.sh");
+    if build_script.exists() {
+        return build_container_with_script(&build_script, &build_path, push, release, no_cache);
+    }
+
     println!(
         "Building {} from {}...",
         container.name,
@@ -994,78 +1045,6 @@ pub fn build_container(name: &str, no_cache: bool, push: bool, release: bool) ->
     Ok(())
 }
 
-/// Push a container to GitHub Container Registry
-fn push_container(full_image: &str, base_image: &str, release: bool) -> Result<()> {
-    println!();
-    println!("Pushing {} to GitHub Container Registry...", full_image);
-
-    // Check if gh is available for authentication
-    let gh_check = std::process::Command::new("gh")
-        .args(["auth", "status"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-
-    if gh_check.is_err() || !gh_check.unwrap().success() {
-        println!("  Logging in to ghcr.io using GitHub CLI...");
-        let login_output = std::process::Command::new("sh")
-            .args([
-                "-c",
-                "gh auth token | docker login ghcr.io -u USERNAME --password-stdin",
-            ])
-            .status()
-            .with_context(|| "Failed to login to ghcr.io")?;
-
-        if !login_output.success() {
-            anyhow::bail!("Failed to authenticate with ghcr.io. Run 'gh auth login' first.");
-        }
-    }
-
-    // Push the image
-    let push_output = std::process::Command::new("docker")
-        .args(["push", full_image])
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .status()
-        .with_context(|| "Failed to push image")?;
-
-    if !push_output.success() {
-        anyhow::bail!("Docker push failed");
-    }
-
-    println!("✓ Pushed {}", full_image);
-
-    // If release, also tag and push as 'latest'
-    if release {
-        let latest_image = format!("{}:latest", base_image);
-
-        // Tag as latest
-        let tag_output = std::process::Command::new("docker")
-            .args(["tag", full_image, &latest_image])
-            .status()
-            .with_context(|| "Failed to tag image")?;
-
-        if !tag_output.success() {
-            anyhow::bail!("Failed to tag as latest");
-        }
-
-        // Push latest
-        let push_latest = std::process::Command::new("docker")
-            .args(["push", &latest_image])
-            .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::inherit())
-            .status()
-            .with_context(|| "Failed to push latest tag")?;
-
-        if !push_latest.success() {
-            anyhow::bail!("Docker push of latest tag failed");
-        }
-
-        println!("✓ Pushed {}", latest_image);
-    }
-
-    Ok(())
-}
 
 /// Find the container build directory path
 fn find_container_build_path(build_dir: &str) -> Result<std::path::PathBuf> {

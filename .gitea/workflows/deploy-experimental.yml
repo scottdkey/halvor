@@ -1,0 +1,76 @@
+name: Deploy to Cluster (Experimental)
+
+on:
+  push:
+    branches:
+      - experimental
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: "latest"
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: "latest"
+
+      - name: Configure kubectl
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config || echo "${{ secrets.KUBECONFIG }}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+          # Verify we're connected to the halvor cluster (not local)
+          kubectl cluster-info | grep -i "halvor\|frigg\|baulder" || kubectl get nodes
+
+      - name: Deploy SMB Storage
+        run: |
+          helm upgrade --install smb-storage ./charts/smb-storage \
+            --namespace default \
+            --create-namespace \
+            --wait \
+            --timeout 10m
+
+      - name: Deploy Gitea
+        run: |
+          helm upgrade --install gitea ./charts/gitea \
+            --namespace default \
+            --create-namespace \
+            --wait \
+            --timeout 10m \
+            --set domain=${{ secrets.GITEA_DOMAIN }} \
+            --set gitea.server.domain=${{ secrets.GITEA_DOMAIN }} \
+            --set gitea.server.rootUrl=${{ secrets.GITEA_ROOT_URL }} \
+            --set ingress.hosts[0].host=${{ secrets.GITEA_DOMAIN }}
+
+      - name: Deploy PIA VPN
+        run: |
+          helm upgrade --install pia-vpn ./charts/pia-vpn \
+            --namespace default \
+            --create-namespace \
+            --wait \
+            --timeout 10m \
+            --set image.tag=experimental
+
+      - name: Deploy Halvor Server
+        run: |
+          helm upgrade --install halvor-server ./charts/halvor-server \
+            --namespace default \
+            --create-namespace \
+            --wait \
+            --timeout 10m \
+            --set image.tag=experimental
+
+      - name: Wait for deployments
+        run: |
+          kubectl wait --for=condition=available --timeout=10m deployment/gitea -n default || true
+          kubectl wait --for=condition=available --timeout=10m deployment/pia-vpn -n default || true
+          kubectl wait --for=condition=available --timeout=10m deployment/halvor-server -n default || true

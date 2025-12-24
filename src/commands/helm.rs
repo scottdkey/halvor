@@ -67,7 +67,14 @@ pub enum HelmCommands {
 pub fn handle_helm(hostname: Option<&str>, command: HelmCommands) -> Result<()> {
     let halvor_dir = config::find_halvor_dir()?;
     let config = config::load_env_config(&halvor_dir)?;
-    let target_host = hostname.unwrap_or("localhost");
+    // Default to frigg (primary cluster node) for helm commands
+    // This ensures we deploy to the cluster, not local machine
+    let target_host = hostname.unwrap_or_else(|| {
+        println!("⚠️  No hostname specified for Helm command.");
+        println!("   Defaulting to 'frigg' (primary cluster node).");
+        println!("   Use '-H <hostname>' to specify a different node.\n");
+        "frigg"
+    });
 
     match command {
         HelmCommands::Install {
@@ -87,7 +94,11 @@ pub fn handle_helm(hostname: Option<&str>, command: HelmCommands) -> Result<()> 
                 &config,
             )?;
         }
-        HelmCommands::Upgrade { release, values, set } => {
+        HelmCommands::Upgrade {
+            release,
+            values,
+            set,
+        } => {
             helm::upgrade_release(target_host, &release, values.as_deref(), &set, &config)?;
         }
         HelmCommands::Uninstall { release, yes } => {

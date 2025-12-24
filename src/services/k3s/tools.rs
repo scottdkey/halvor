@@ -55,22 +55,60 @@ pub fn check_and_install_halvor<E: CommandExecutor>(exec: &E) -> Result<()> {
     }
 
     // Detect remote platform first (needed for both dev and production)
+    // Get architecture using uname -m (machine hardware name)
     let arch_output = exec.execute_shell("uname -m")?;
-    let arch_bytes = arch_output.stdout;
-    let arch_str = String::from_utf8_lossy(&arch_bytes).trim().to_string();
+    if !arch_output.status.success() {
+        let stderr = String::from_utf8_lossy(&arch_output.stderr);
+        anyhow::bail!(
+            "Failed to detect architecture: 'uname -m' failed with stderr: {}",
+            stderr
+        );
+    }
+    let arch_str = String::from_utf8_lossy(&arch_output.stdout)
+        .trim()
+        .to_string();
+    if arch_str.is_empty() {
+        anyhow::bail!("Failed to detect architecture: 'uname -m' returned empty string");
+    }
+
+    // Debug output
+    println!("  Detected architecture: '{}' (from uname -m)", arch_str);
+
     let remote_arch = match arch_str.as_str() {
         "x86_64" | "amd64" => "amd64",
         "aarch64" | "arm64" => "arm64",
-        _ => anyhow::bail!("Unsupported architecture: {}", arch_str),
+        _ => anyhow::bail!(
+            "Unsupported architecture: '{}' (from 'uname -m'). Expected: x86_64, amd64, aarch64, or arm64",
+            arch_str
+        ),
     };
 
+    // Get OS using uname -s (operating system name)
     let os_output = exec.execute_shell("uname -s")?;
-    let os_bytes = os_output.stdout;
-    let os_str = String::from_utf8_lossy(&os_bytes).trim().to_string();
+    if !os_output.status.success() {
+        let stderr = String::from_utf8_lossy(&os_output.stderr);
+        anyhow::bail!(
+            "Failed to detect OS: 'uname -s' failed with stderr: {}",
+            stderr
+        );
+    }
+    let os_str = String::from_utf8_lossy(&os_output.stdout)
+        .trim()
+        .to_string();
+    if os_str.is_empty() {
+        anyhow::bail!("Failed to detect OS: 'uname -s' returned empty string");
+    }
+
+    // Debug output
+    println!("  Detected OS: '{}' (from uname -s)", os_str);
+
     let remote_os = match os_str.as_str() {
         "Linux" => "linux",
         "Darwin" => "darwin",
-        _ => anyhow::bail!("Unsupported OS: {}", os_str),
+        _ => anyhow::bail!(
+            "Unsupported OS: '{}' (from 'uname -s'). Expected: Linux or Darwin",
+            os_str
+        ),
     };
 
     // Check for musl (Alpine)

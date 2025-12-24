@@ -1,0 +1,46 @@
+# Default values for portainer
+# Deployment type: ce (Community Edition), be (Business Edition), or agent
+deploymentType: ce
+
+image:
+  # Repository is auto-selected based on deploymentType, but can be overridden
+  repository: "" # Auto-set based on deploymentType
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Service configuration
+service:
+  type: ClusterIP
+  ports:
+    web: 9000
+    ssl: 9443
+    edge: 8000
+    agent: 9001
+
+# Persistent volume for Portainer data
+persistence:
+  enabled: true
+  storageClass: "" # Use default storage class
+  size: 1Gi
+  accessMode: ReadWriteOnce
+
+# Resources
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Node selector (optional)
+nodeSelector: {}
+
+# Tolerations (optional)
+tolerations: []
+
+# Affinity (optional)
+affinity: {}
+
+# Pod annotations
+podAnnotations: {}

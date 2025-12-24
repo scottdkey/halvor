@@ -2,23 +2,22 @@
 Expand the name of the chart.
 */}}
 {{- define "pia-vpn.name" -}}
+{{- if .Chart }}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- default "pia-vpn" .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- end }}
 {{- end }}
 
 {{/*
 Create a default fully qualified app name.
 */}}
 {{- define "pia-vpn.fullname" -}}
-{{- if .Values.fullnameOverride }}
-{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
-{{- else }}
-{{- $name := default .Chart.Name .Values.nameOverride }}
-{{- if contains $name .Release.Name }}
+{{- if .Release -}}
 {{- .Release.Name | trunc 63 | trimSuffix "-" }}
-{{- else }}
-{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
-{{- end }}
-{{- end }}
+{{- else -}}
+pia-vpn
+{{- end -}}
 {{- end }}
 
 {{/*

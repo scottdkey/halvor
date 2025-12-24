@@ -8,6 +8,7 @@ mod init;
 mod join;
 mod kubeconfig;
 mod maintenance;
+mod setup;
 mod status;
 mod tools;
 mod utils;
@@ -23,6 +24,9 @@ pub use tools::{check_and_install_halvor, check_and_install_helm, check_and_inst
 pub use init::init_control_plane;
 pub use join::join_cluster;
 pub use kubeconfig::{fetch_kubeconfig_content, get_kubeconfig, setup_local_kubeconfig};
-pub use maintenance::{restore_snapshot, take_snapshot, uninstall};
+pub use maintenance::{
+    backup, list_backups, restore, restore_snapshot, take_snapshot, uninstall, validate_backup,
+};
+pub use setup::setup_cluster;
 pub use status::{get_cluster_join_info, show_status};
 pub use verify::verify_ha_cluster;

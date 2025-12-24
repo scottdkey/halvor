@@ -1,0 +1,111 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "halvor-server.fullname" . }}
+  labels:
+    {{- include "halvor-server.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "halvor-server.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "halvor-server.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.serviceAccount }}
+      {{- if .create }}
+      serviceAccountName: {{ .name | default (include "halvor-server.fullname" .) }}
+      {{- end }}
+      {{- end }}
+      containers:
+      - name: halvor-server
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command: ["halvor"]
+        args:
+          - "agent"
+          - "start"
+          - "--port"
+          - "{{ .Values.server.agentPort | toString }}"
+          - "--web-port"
+          - "{{ .Values.server.webPort | toString }}"
+        ports:
+        - name: web
+          containerPort: {{ .Values.server.webPort }}
+          protocol: TCP
+        - name: agent
+          containerPort: {{ .Values.server.agentPort }}
+          protocol: TCP
+        env:
+        - name: HALVOR_WEB_DIR
+          value: "/app/halvor-web"
+        - name: HALVOR_DB_DIR
+          value: "/app/data"
+        - name: KUBERNETES_SERVICE_HOST
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: KUBERNETES_SERVICE_PORT
+          value: "443"
+        {{- with .Values.env }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        volumeMounts:
+        - name: data
+          mountPath: /app/data
+          {{- if and .Values.persistence.enabled .Values.persistence.useSharedPVC }}
+          subPath: {{ .Values.persistence.subPath }}
+          {{- end }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: web
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: web
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 2
+          failureThreshold: 3
+      volumes:
+      - name: data
+        {{- if .Values.persistence.enabled }}
+        {{- if .Values.persistence.useSharedPVC }}
+        persistentVolumeClaim:
+          claimName: {{ .Values.persistence.sharedPVCName }}
+        {{- else if .Values.persistence.existingClaim }}
+        persistentVolumeClaim:
+          claimName: {{ .Values.persistence.existingClaim }}
+        {{- else }}
+        persistentVolumeClaim:
+          claimName: {{ include "halvor-server.fullname" . }}-data
+        {{- end }}
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+

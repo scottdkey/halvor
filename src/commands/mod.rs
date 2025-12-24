@@ -9,7 +9,6 @@
 pub mod agent;
 pub mod backup;
 pub mod build;
-pub mod cluster;
 pub mod config;
 pub mod dev;
 pub mod docker;
@@ -21,7 +20,6 @@ pub mod list;
 pub mod npm;
 pub mod pia_vpn;
 pub mod portainer;
-pub mod provision;
 pub mod smb;
 pub mod sync;
 pub mod tailscale;
@@ -71,8 +69,8 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
         List { verbose } => {
             list::handle_list(hostname.as_deref(), verbose)?;
         }
-        Install { app, list } => {
-            install::handle_install(hostname.as_deref(), app.as_deref(), list)?;
+        Install { app, list, helm } => {
+            install::handle_install(hostname.as_deref(), app.as_deref(), list, helm)?;
         }
         Uninstall { service } => {
             if let Some(service) = service {
@@ -80,20 +78,6 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
             } else {
                 uninstall::handle_guided_uninstall(hostname.as_deref())?;
             }
-        }
-        Provision {
-            yes,
-            cluster_role,
-            cluster_server,
-            cluster_token,
-        } => {
-            provision::handle_provision(
-                hostname.as_deref(),
-                yes,
-                cluster_role.as_deref(),
-                cluster_server.as_deref(),
-                cluster_token.as_deref(),
-            )?;
         }
         Smb { uninstall } => {
             smb::handle_smb(hostname.as_deref(), uninstall)?;
@@ -163,10 +147,6 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
         Helm { command } => {
             let local_command: helm::HelmCommands = unsafe { mem::transmute(command) };
             helm::handle_helm(hostname.as_deref(), local_command)?;
-        }
-        Cluster { command } => {
-            let local_command: cluster::ClusterCommands = unsafe { mem::transmute(command) };
-            cluster::handle_cluster(hostname.as_deref(), local_command)?;
         }
     }
     Ok(())

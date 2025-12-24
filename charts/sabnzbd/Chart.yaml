@@ -1,0 +1,6 @@
+apiVersion: v2
+appVersion: latest
+description: sabnzbd Helm chart
+name: sabnzbd
+type: application
+version: 0.1.0

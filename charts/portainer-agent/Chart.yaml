@@ -1,0 +1,10 @@
+apiVersion: v2
+appVersion: latest
+description: Portainer Agent - For remote host management
+keywords:
+  - portainer
+  - agent
+  - docker
+name: portainer-agent
+type: application
+version: 0.1.0

@@ -9,12 +9,17 @@
 
 use crate::config;
 use crate::services;
-use crate::services::compose_deployer::{AppCategory, find_app, list_apps};
+use crate::services::apps::{AppCategory, find_app, list_apps};
 use crate::services::helm;
 use anyhow::Result;
 
 /// Handle install command
-pub fn handle_install(hostname: Option<&str>, app: Option<&str>, list: bool) -> Result<()> {
+pub fn handle_install(
+    hostname: Option<&str>,
+    app: Option<&str>,
+    list: bool,
+    helm: bool,
+) -> Result<()> {
     // Handle --list flag
     if list {
         list_apps();
@@ -31,7 +36,48 @@ pub fn handle_install(hostname: Option<&str>, app: Option<&str>, list: bool) -> 
         }
     };
 
-    // Look up the app
+    let config = config::load_config()?;
+    // For Helm charts, default to primary cluster node (frigg) instead of localhost
+    // This ensures we deploy to the cluster, not local machine
+    let target_host = if let Some(host) = hostname {
+        host
+    } else {
+        // Check if this is a Helm chart deployment
+        let is_helm_chart = helm
+            || find_app(app_name)
+                .map(|app| matches!(app.category, AppCategory::HelmChart))
+                .unwrap_or(false);
+
+        if is_helm_chart {
+            // Default to frigg (primary control plane) for cluster deployments
+            println!("⚠️  No hostname specified for Helm chart deployment.");
+            println!("   Defaulting to 'frigg' (primary cluster node).");
+            println!("   Use '-H <hostname>' to specify a different node.\n");
+            "frigg"
+        } else {
+            // Platform tools default to localhost
+            "localhost"
+        }
+    };
+
+    // If --helm flag is set, install as Helm chart directly
+    if helm {
+        // Look up the app to get its namespace
+        let namespace = find_app(app_name)
+            .and_then(|app| app.namespace)
+            .or(Some("default"));
+        return helm::install_chart(
+            target_host,
+            app_name,
+            None, // Use chart name as release name
+            namespace,
+            None, // No values file - will generate from env vars
+            &[],  // No --set flags - will generate from env vars
+            &config,
+        );
+    }
+
+    // Otherwise, look up the app and use its category
     let app_def = match find_app(app_name) {
         Some(def) => def,
         None => {
@@ -41,29 +87,18 @@ pub fn handle_install(hostname: Option<&str>, app: Option<&str>, list: bool) -> 
         }
     };
 
-    let config = config::load_config()?;
-    let target_host = hostname.unwrap_or("localhost");
-
     match app_def.category {
         AppCategory::Platform => {
             install_platform_tool(target_host, app_def.name, &config)?;
         }
-        AppCategory::DockerService => {
-            services::compose_deployer::deploy_compose_service(target_host, app_def, &config)?;
-        }
         AppCategory::HelmChart => {
-            // Determine namespace based on chart
-            let namespace = match app_def.name {
-                "traefik-public" | "traefik-private" => Some("traefik"),
-                "gitea" => Some("gitea"),
-                "smb-storage" => Some("kube-system"), // SMB storage needs to be in kube-system for node access
-                _ => Some("default"),
-            };
+            // Get namespace from app definition (defaults to "default" if not specified)
+            let namespace = app_def.namespace.unwrap_or("default");
             helm::install_chart(
                 target_host,
                 app_def.name,
                 None, // Use chart name as release name
-                namespace.as_deref(),
+                Some(namespace),
                 None, // No values file - will generate from env vars
                 &[],  // No --set flags - will generate from env vars
                 &config,

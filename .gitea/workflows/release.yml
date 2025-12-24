@@ -1,0 +1,58 @@
+name: Release to GitHub
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v1.0.0)'
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      
+      - name: Get tag name
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Configure Git
+        run: |
+          git config user.name "Gitea Bot"
+          git config user.email "bot@gitea.local"
+      
+      - name: Add GitHub Remote
+        run: |
+          git remote remove github || true
+          git remote add github https://${{ secrets.GITHUB_TOKEN }}@github.com/scottdkey/halvor.git
+      
+      - name: Push tag to GitHub
+        run: |
+          git push github ${{ steps.tag.outputs.tag }} --force
+      
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          release_name: Release ${{ steps.tag.outputs.tag }}
+          body: |
+            Release ${{ steps.tag.outputs.tag }}
+            
+            See commit history for changes.
+          draft: false
+          prerelease: false
+

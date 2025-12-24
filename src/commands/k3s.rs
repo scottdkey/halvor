@@ -45,6 +45,27 @@ pub enum K3sCommands {
         #[arg(long)]
         nodes: String,
     },
+    /// Complete cluster setup: SMB mounts, provisioning, and verification
+    Setup {
+        /// Primary control plane node (e.g., frigg)
+        #[arg(long)]
+        primary: String,
+        /// Additional control plane nodes (comma-separated, e.g., "baulder,oak")
+        #[arg(long)]
+        nodes: String,
+        /// Nodes that need SMB mounts (comma-separated, defaults to all deployment nodes)
+        #[arg(long)]
+        smb_nodes: Option<String>,
+        /// Skip SMB mount setup
+        #[arg(long)]
+        skip_smb: bool,
+        /// Skip SSH key setup (use if SSH is already configured)
+        #[arg(long)]
+        skip_ssh: bool,
+        /// Skip cluster verification after setup
+        #[arg(long)]
+        skip_verify: bool,
+    },
     /// Get kubeconfig for cluster access
     Kubeconfig {
         /// Merge into existing kubeconfig (~/.kube/config)
@@ -73,6 +94,37 @@ pub enum K3sCommands {
         /// Skip confirmation prompts
         #[arg(long, short = 'y')]
         yes: bool,
+    },
+    /// Full cluster backup (etcd + Helm releases + secrets)
+    Backup {
+        /// Output directory for backup
+        #[arg(long, short = 'o')]
+        output: Option<String>,
+        /// Include PersistentVolume data (slow, requires node access)
+        #[arg(long)]
+        include_pvs: bool,
+    },
+    /// Restore cluster from backup
+    Restore {
+        /// Backup directory or archive path
+        backup: String,
+        /// Skip confirmation prompts
+        #[arg(long, short = 'y')]
+        yes: bool,
+        /// Only restore etcd (skip Helm releases)
+        #[arg(long)]
+        etcd_only: bool,
+    },
+    /// List available backups
+    ListBackups {
+        /// Directory to search for backups
+        #[arg(long)]
+        path: Option<String>,
+    },
+    /// Validate backup integrity
+    ValidateBackup {
+        /// Backup directory or archive path
+        backup: String,
     },
 }
 
@@ -118,9 +170,42 @@ pub fn handle_k3s(hostname: Option<&str>, command: K3sCommands) -> Result<()> {
             k3s::verify_ha_cluster(primary_host, &node_list, &config)?;
         }
         K3sCommands::SetupCluster { primary, nodes } => {
-            use crate::services::provision;
+            // SetupCluster is deprecated - use Setup instead
+            println!("⚠️  WARNING: 'k3s setup-cluster' is deprecated.");
+            println!(
+                "   Use 'halvor k3s setup --primary {} --nodes {}' instead.\n",
+                primary, nodes
+            );
             let node_list: Vec<&str> = nodes.split(',').map(|s| s.trim()).collect();
-            provision::provision_cluster_nodes(&primary, &node_list, &config)?;
+            k3s::setup_cluster(
+                &primary, &node_list, None,  // smb_nodes
+                false, // skip_smb
+                false, // skip_ssh
+                false, // skip_verify
+                &config,
+            )?;
+        }
+        K3sCommands::Setup {
+            primary,
+            nodes,
+            smb_nodes,
+            skip_smb,
+            skip_ssh,
+            skip_verify,
+        } => {
+            let node_list: Vec<&str> = nodes.split(',').map(|s| s.trim()).collect();
+            let smb_node_list: Option<Vec<&str>> = smb_nodes
+                .as_ref()
+                .map(|s| s.split(',').map(|s| s.trim()).collect());
+            k3s::setup_cluster(
+                &primary,
+                &node_list,
+                smb_node_list.as_deref(),
+                skip_smb,
+                skip_ssh,
+                skip_verify,
+                &config,
+            )?;
         }
         K3sCommands::Kubeconfig { merge, output } => {
             k3s::get_kubeconfig(target_host, merge, output.as_deref(), &config)?;
@@ -133,6 +218,25 @@ pub fn handle_k3s(hostname: Option<&str>, command: K3sCommands) -> Result<()> {
         }
         K3sCommands::RestoreSnapshot { snapshot, yes } => {
             k3s::restore_snapshot(target_host, &snapshot, yes, &config)?;
+        }
+        K3sCommands::Backup {
+            output,
+            include_pvs,
+        } => {
+            k3s::backup(target_host, output.as_deref(), include_pvs, &config)?;
+        }
+        K3sCommands::Restore {
+            backup,
+            yes,
+            etcd_only,
+        } => {
+            k3s::restore(target_host, &backup, yes, etcd_only, &config)?;
+        }
+        K3sCommands::ListBackups { path } => {
+            k3s::list_backups(path.as_deref())?;
+        }
+        K3sCommands::ValidateBackup { backup } => {
+            k3s::validate_backup(&backup)?;
         }
     }
 

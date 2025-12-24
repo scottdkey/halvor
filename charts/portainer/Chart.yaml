@@ -1,0 +1,10 @@
+apiVersion: v2
+appVersion: latest
+description: Portainer CE - Container Management UI
+keywords:
+  - portainer
+  - docker
+  - container-management
+name: portainer
+type: application
+version: 0.1.0

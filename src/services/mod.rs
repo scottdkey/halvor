@@ -1,10 +1,9 @@
 // Services module - auto-detects and exports all services
 // Add new services by creating a file in this directory
 
+pub mod apps;
 pub mod backup;
 pub mod build;
-pub mod cluster;
-pub mod compose_deployer;
 pub mod dev;
 pub mod docker;
 pub mod helm;
@@ -13,7 +12,6 @@ pub mod k3s;
 pub mod npm;
 pub mod pia_vpn;
 pub mod portainer;
-pub mod provision;
 pub mod smb;
 pub mod sync;
 pub mod tailscale;
@@ -29,9 +27,8 @@ pub use host::{
     create_executor, delete_host_config, get_host_config, get_host_config_or_error, get_host_info,
     list_hosts, store_host_config, store_host_info,
 };
-pub use pia_vpn::{build_and_push_vpn_image, deploy_vpn, verify_vpn};
+pub use pia_vpn::{deploy_vpn, verify_vpn};
 pub use portainer::{install_agent, install_host};
-pub use provision::{provision_defaults, provision_guided};
 pub use smb::{setup_smb_mounts, uninstall_smb_mounts};
 pub use sync::sync_data;
 pub use tailscale::{

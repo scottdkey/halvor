@@ -90,10 +90,25 @@ fn generate_values_from_env(chart: &str) -> Result<HashMap<String, String>> {
                 .parse::<bool>()
                 .unwrap_or(false);
 
+            // Set image tag based on development mode
+            let is_dev = std::env::var("HALVOR_ENV")
+                .map(|v| v.to_lowercase() == "development")
+                .unwrap_or(false);
+            let image_tag = if is_dev { "experimental" } else { "latest" };
+            values.insert("image.tag".to_string(), image_tag.to_string());
+
             values.insert("vpn.region".to_string(), region);
             values.insert("vpn.updateConfigs".to_string(), update_configs.to_string());
             values.insert("vpn.proxyPort".to_string(), proxy_port);
             values.insert("vpn.debug".to_string(), debug.to_string());
+        }
+        "halvor-server" => {
+            // Set image tag based on development mode
+            let is_dev = std::env::var("HALVOR_ENV")
+                .map(|v| v.to_lowercase() == "development")
+                .unwrap_or(false);
+            let image_tag = if is_dev { "experimental" } else { "latest" };
+            values.insert("image.tag".to_string(), image_tag.to_string());
         }
         _ => {
             // For other charts, try to load common env vars
@@ -159,25 +174,42 @@ pub fn install_chart(
             let temp_dir = std::env::temp_dir();
             let chart_tgz = temp_dir.join(format!("{}-0.1.0.tgz", chart));
 
-            // Download the chart
-            let client = reqwest::blocking::Client::new();
+            // Download the chart (follow redirects - GitHub releases use redirects)
+            let client = reqwest::blocking::Client::builder()
+                .redirect(reqwest::redirect::Policy::limited(10))
+                .build()
+                .context("Failed to create HTTP client")?;
             let response = client.get(&chart_url).send();
 
             match response {
                 Ok(resp) if resp.status().is_success() => {
+                    let bytes = resp
+                        .bytes()
+                        .context("Failed to read chart content from GitHub")?;
                     let mut file = std::fs::File::create(&chart_tgz)
                         .context("Failed to create temporary chart file")?;
-                    let mut content = std::io::Cursor::new(resp.bytes()?);
-                    std::io::copy(&mut content, &mut file)?;
+                    std::io::copy(&mut bytes.as_ref(), &mut file)
+                        .context("Failed to write chart file")?;
                     println!("  ✓ Downloaded chart from GitHub");
                     (chart_tgz.to_string_lossy().to_string(), true)
                 }
-                _ => {
+                Ok(resp) => {
+                    let status = resp.status();
                     anyhow::bail!(
-                        "Chart '{}' not found locally at {} and could not be downloaded from {}. Use 'halvor helm charts' to list available charts.",
+                        "Chart '{}' not found locally at {} and could not be downloaded from {} (HTTP {}). Use 'halvor helm charts' to list available charts.",
                         chart,
                         local_path.display(),
-                        chart_url
+                        chart_url,
+                        status
+                    );
+                }
+                Err(e) => {
+                    anyhow::bail!(
+                        "Chart '{}' not found locally at {} and could not be downloaded from {} (Error: {}). Use 'halvor helm charts' to list available charts.",
+                        chart,
+                        local_path.display(),
+                        chart_url,
+                        e
                     );
                 }
             }
@@ -200,7 +232,7 @@ pub fn install_chart(
 
     // Build helm install command
     let mut cmd = format!(
-        "helm install {} {} --namespace {} --create-namespace",
+        "helm install {} {} --namespace {} --create-namespace --wait --timeout 10m",
         release_name, chart_path, ns
     );
 
@@ -247,6 +279,67 @@ pub fn install_chart(
         chart, release_name
     );
 
+    // Wait for deployment/pods to be ready
+    println!();
+    println!("Waiting for pods to be ready...");
+
+    // Try to wait for deployment first (most common case)
+    let deployment_wait_cmd = format!(
+        "kubectl wait --for=condition=available --timeout=10m deployment/{} -n {}",
+        release_name, ns
+    );
+
+    let deployment_wait_result = exec.execute_shell(&deployment_wait_cmd);
+
+    if let Ok(output) = deployment_wait_result {
+        if output.status.success() {
+            println!("✓ Deployment is available and all pods are ready");
+        } else {
+            // Fallback: wait for pods by label selector
+            println!("  Waiting for pods by label selector...");
+            let pod_wait_cmd = format!(
+                "kubectl wait --for=condition=ready --timeout=10m pod -l app.kubernetes.io/instance={} -n {}",
+                release_name, ns
+            );
+
+            if let Ok(pod_output) = exec.execute_shell(&pod_wait_cmd) {
+                if pod_output.status.success() {
+                    println!("✓ All pods are ready");
+                } else {
+                    // Show pod status for debugging
+                    let status_cmd = format!(
+                        "kubectl get pods -n {} -l app.kubernetes.io/instance={}",
+                        ns, release_name
+                    );
+                    if let Ok(status_output) = exec.execute_shell(&status_cmd) {
+                        let status = String::from_utf8_lossy(&status_output.stdout);
+                        if !status.trim().is_empty() {
+                            println!("  Current pod status:");
+                            println!("{}", status);
+                        }
+                    }
+                    println!(
+                        "  ⚠ Some pods may still be initializing. Check status with: kubectl get pods -n {}",
+                        ns
+                    );
+                }
+            }
+        }
+    } else {
+        // If kubectl wait fails, at least show pod status
+        let status_cmd = format!(
+            "kubectl get pods -n {} -l app.kubernetes.io/instance={}",
+            ns, release_name
+        );
+        if let Ok(status_output) = exec.execute_shell(&status_cmd) {
+            let status = String::from_utf8_lossy(&status_output.stdout);
+            if !status.trim().is_empty() {
+                println!("  Current pod status:");
+                println!("{}", status);
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -279,9 +372,30 @@ pub fn upgrade_release(
     }
 
     // Find the chart in halvor charts directory
+    // chart_ref format is typically "chart-name" or "chart-name-version" (e.g., "pia-vpn" or "pia-vpn-0.1.0")
+    // We need to extract just the chart name by removing the version part if present
     let halvor_dir = crate::config::find_halvor_dir()?;
-    let chart_name = chart_ref.split('-').next().unwrap_or(&chart_ref);
-    let chart_path = halvor_dir.join("charts").join(chart_name);
+    let chart_name = {
+        // Check if the last segment looks like a version (e.g., "0.1.0")
+        let parts: Vec<&str> = chart_ref.split('-').collect();
+        if parts.len() > 1 {
+            let last_part = parts.last().unwrap();
+            // Check if last part looks like a version (contains digits and dots)
+            if last_part.chars().any(|c| c.is_ascii_digit())
+                && last_part.chars().all(|c| c.is_ascii_digit() || c == '.')
+            {
+                // Last part is a version, join all but last
+                parts[..parts.len() - 1].join("-")
+            } else {
+                // Not a version, use the full chart_ref
+                chart_ref.clone()
+            }
+        } else {
+            // Single part, use as-is
+            chart_ref.clone()
+        }
+    };
+    let chart_path = halvor_dir.join("charts").join(&chart_name);
 
     let mut cmd = format!("helm upgrade {} {}", release, chart_path.display());
 

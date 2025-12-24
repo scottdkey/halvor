@@ -4,10 +4,10 @@
 $ErrorActionPreference = "Stop"
 
 # GitHub repository (update if forked)
-$GithubRepo = if ($env:GITHUB_REPO) { $env:GITHUB_REPO } else { "scottdkey/homelab" }
+$GithubRepo = if ($env:GITHUB_REPO) { $env:GITHUB_REPO } else { "scottdkey/halvor" }
 $GithubApi = "https://api.github.com/repos/$GithubRepo"
 
-Write-Host "Installing hal (Homelab Automation Layer)..." -ForegroundColor Cyan
+Write-Host "Installing halvor (Homelab Automation Layer)..." -ForegroundColor Cyan
 
 # Detect OS and architecture
 function Detect-Platform {
@@ -53,7 +53,7 @@ function Download-Binary {
     if ($Version -eq "latest") {
         try {
             $release = Invoke-RestMethod -Uri "$GithubApi/releases/latest"
-            $downloadUrl = ($release.assets | Where-Object { $_.name -like "hal-*-$Platform.tar.gz" }).browser_download_url | Select-Object -First 1
+            $downloadUrl = ($release.assets | Where-Object { $_.name -like "halvor-*-$Platform.tar.gz" }).browser_download_url | Select-Object -First 1
         } catch {
             Write-Host "Error: Could not fetch latest release" -ForegroundColor Red
             exit 1
@@ -61,7 +61,7 @@ function Download-Binary {
     } else {
         try {
             $release = Invoke-RestMethod -Uri "$GithubApi/releases/tags/$Version"
-            $downloadUrl = ($release.assets | Where-Object { $_.name -like "hal-*-$Platform.tar.gz" }).browser_download_url | Select-Object -First 1
+            $downloadUrl = ($release.assets | Where-Object { $_.name -like "halvor-*-$Platform.tar.gz" }).browser_download_url | Select-Object -First 1
         } catch {
             Write-Host "Error: Could not fetch release $Version" -ForegroundColor Red
             exit 1
@@ -92,9 +92,9 @@ function Download-Binary {
     tar -xzf $archivePath
     Pop-Location
     
-    $binaryPath = Join-Path $tempDir "hal.exe"
+    $binaryPath = Join-Path $tempDir "halvor.exe"
     if (-not (Test-Path $binaryPath)) {
-        $binaryPath = Join-Path $tempDir "hal"
+        $binaryPath = Join-Path $tempDir "halvor"
     }
     
     $binaryPath
@@ -120,11 +120,11 @@ if (-not (Test-Path $InstallDir)) {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 }
 
-$InstallPath = Join-Path $InstallDir "hal.exe"
+$InstallPath = Join-Path $InstallDir "halvor.exe"
 
-# Check if hal already exists
+# Check if halvor already exists
 if (Test-Path $InstallPath) {
-    $response = Read-Host "hal already exists at $InstallPath. Overwrite? (y/N)"
+    $response = Read-Host "halvor already exists at $InstallPath. Overwrite? (y/N)"
     if ($response -ne "y" -and $response -ne "Y") {
         Write-Host "Installation cancelled." -ForegroundColor Yellow
         exit 0
@@ -133,7 +133,7 @@ if (Test-Path $InstallPath) {
 }
 
 # Download and install
-Write-Host "Downloading hal binary..." -ForegroundColor Cyan
+Write-Host "Downloading halvor binary..." -ForegroundColor Cyan
 $BinaryPath = Download-Binary -Version $Version -Platform $Platform
 
 # Move binary to install location
@@ -142,7 +142,7 @@ Move-Item -Path $BinaryPath -Destination $InstallPath -Force
 # Cleanup
 Remove-Item -Recurse -Force (Split-Path $BinaryPath)
 
-Write-Host "✓ hal installed to $InstallPath" -ForegroundColor Green
+Write-Host "✓ halvor installed to $InstallPath" -ForegroundColor Green
 
 # Check if install directory is in PATH
 $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -157,8 +157,7 @@ Write-Host ""
 Write-Host "Installation complete!" -ForegroundColor Green
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Cyan
-Write-Host "  1. Configure HAL: hal config init" -ForegroundColor Yellow
+Write-Host "  1. Configure halvor: halvor config init" -ForegroundColor Yellow
 Write-Host "     (This sets up the path to your .env file)" -ForegroundColor Gray
-Write-Host "  2. Setup SSH hosts: .\scripts\setup-ssh-hosts.sh" -ForegroundColor Yellow
-Write-Host "  3. Setup SSH keys: .\scripts\setup-ssh-keys.sh <hostname>" -ForegroundColor Yellow
-Write-Host "  4. Connect: ssh <hostname>" -ForegroundColor Yellow
+Write-Host "  2. Setup cluster: halvor k3s setup --primary <node> --nodes <node1>,<node2>" -ForegroundColor Yellow
+Write-Host "  3. See all commands: halvor --help" -ForegroundColor Yellow

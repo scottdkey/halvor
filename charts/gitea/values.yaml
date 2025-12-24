@@ -49,11 +49,17 @@ ingress:
           pathType: Prefix
 
 # Persistence
+# Uses SMB storage for failover support across cluster instances
 persistence:
   enabled: true
+  # Use shared halvor-data PVC with subPath for this app
+  useSharedPVC: true
+  sharedPVCName: "halvor-shared-data"
+  subPath: "gitea"
+  # Alternative: create dedicated PVC
+  storageClass: "smb-storage"
   size: 10Gi
-  storageClass: ""
-  accessMode: ReadWriteOnce
+  accessMode: ReadWriteMany
 
 # Resources
 resources:

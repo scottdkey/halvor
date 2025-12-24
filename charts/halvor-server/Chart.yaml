@@ -1,0 +1,6 @@
+apiVersion: v2
+appVersion: latest
+description: Halvor server with web UI and agent API
+name: halvor-server
+type: application
+version: 0.1.0

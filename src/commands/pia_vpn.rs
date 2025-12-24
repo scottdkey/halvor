@@ -1,4 +1,5 @@
 use crate::config;
+use crate::services::docker;
 use crate::services::pia_vpn as vpn;
 use anyhow::Result;
 
@@ -6,12 +7,15 @@ use anyhow::Result;
 pub enum VpnCommands {
     /// Build and push VPN container image to GitHub Container Registry
     Build {
-        /// GitHub username or organization
+        /// Push image to registry after building
         #[arg(long)]
-        github_user: String,
-        /// Image tag (if not provided, pushes both 'latest' and git hash)
+        push: bool,
+        /// Use 'latest' tag instead of 'experimental'
         #[arg(long)]
-        tag: Option<String>,
+        release: bool,
+        /// Build without using cache
+        #[arg(long)]
+        no_cache: bool,
     },
     /// Deploy VPN to a remote host (injects PIA credentials from local .env)
     Deploy {
@@ -29,9 +33,13 @@ pub fn handle_vpn(command: VpnCommands) -> Result<()> {
     let config = config::load_config()?;
 
     match command {
-        VpnCommands::Build { github_user, tag } => {
-            let build_hostname = "localhost";
-            vpn::build_and_push_vpn_image(build_hostname, &github_user, tag.as_deref(), &config)?;
+        VpnCommands::Build {
+            push,
+            release,
+            no_cache,
+        } => {
+            // Use centralized docker build system
+            docker::build_container("pia-vpn", no_cache, push, release)?;
         }
         VpnCommands::Deploy { hostname } => {
             vpn::deploy_vpn(&hostname, &config)?;

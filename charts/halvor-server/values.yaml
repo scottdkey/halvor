@@ -1,0 +1,92 @@
+# Default values for halvor-server
+# Values are loaded from environment variables via halvor CLI
+
+image:
+  repository: ghcr.io/scottdkey/halvor
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Server configuration
+server:
+  agentPort: 13001
+  webPort: 13000
+
+# Service configuration
+service:
+  type: ClusterIP
+  webPort: 13000
+  agentPort: 13001
+  annotations: {}
+
+# Persistent volume for data (SQLite database, configs)
+# Uses SMB storage for failover support across cluster instances
+# Uses halvor share on maple (primary) - synced to willow (fallback)
+persistence:
+  enabled: true
+  # Use shared halvor-data PVC with subPath for this app
+  useSharedPVC: true
+  sharedPVCName: "halvor-shared-data"
+  subPath: "halvor-server"
+  # Alternative: create dedicated PVC (not recommended for sync)
+  storageClass: "smb-storage"
+  size: 1Gi
+  accessMode: ReadWriteMany
+
+# Resources
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Service account for Kubernetes API access
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  # RBAC rules for accessing Kubernetes APIs
+  rules:
+    - apiGroups: [""]
+      resources: ["pods", "services", "configmaps", "secrets", "nodes"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["apps"]
+      resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["networking.k8s.io"]
+      resources: ["ingresses", "networkpolicies"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["helm.cattle.io"]
+      resources: ["helmchartconfigs"]
+      verbs: ["get", "list", "watch"]
+
+# Node selector (optional)
+nodeSelector: {}
+
+# Tolerations (optional)
+tolerations: []
+
+# Affinity (optional)
+affinity: {}
+
+# Pod annotations
+podAnnotations: {}
+
+# Environment variables
+env: []
+  # Additional environment variables can be added here
+  # - name: HALVOR_ENV
+  #   value: "production"
+
+# Ingress configuration (optional)
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: halvor.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []

@@ -1,0 +1,22 @@
+{{- /*
+  Shared PVC for halvor data that all apps can use with subPaths
+  This ensures all container data is in one SMB share for easy sync
+  Uses maple (primary) halvor share
+*/ -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: halvor-shared-data
+  labels:
+    {{- include "smb-storage.labels" . | nindent 4 }}
+    app.kubernetes.io/component: shared-storage
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: {{ .Values.storageClass.name }}
+  # Bind to the primary halvor-data PV (maple)
+  volumeName: smb-halvor-data-primary
+

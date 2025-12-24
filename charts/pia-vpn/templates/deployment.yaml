@@ -68,8 +68,13 @@ spec:
         volumeMounts:
         - name: config
           mountPath: /config
+          {{- if and .Values.persistence.enabled .Values.persistence.useSharedPVC }}
+          subPath: {{ .Values.persistence.subPath }}
+          {{- end }}
         - name: logs
           mountPath: /var/log/openvpn
+        - name: dev-net-tun
+          mountPath: /dev/net/tun
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
         livenessProbe:
@@ -95,13 +100,22 @@ spec:
       volumes:
       - name: config
         {{- if .Values.persistence.enabled }}
+        {{- if .Values.persistence.useSharedPVC }}
+        persistentVolumeClaim:
+          claimName: {{ .Values.persistence.sharedPVCName }}
+        {{- else }}
         persistentVolumeClaim:
           claimName: {{ include "pia-vpn.fullname" . }}-config
+        {{- end }}
         {{- else }}
         emptyDir: {}
         {{- end }}
       - name: logs
         emptyDir: {}
+      - name: dev-net-tun
+        hostPath:
+          path: /dev/net/tun
+          type: CharDevice
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

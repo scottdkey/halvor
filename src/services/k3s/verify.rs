@@ -5,23 +5,6 @@ use anyhow::{Context, Result};
 
 /// Verify that a node successfully joined the cluster with retries using local kubectl
 /// kubeconfig_content: Optional pre-fetched kubeconfig content. If None, will fetch from primary_hostname
-pub fn verify_cluster_join_with_local_kubectl(
-    primary_hostname: &str,
-    hostname: &str,
-    control_plane: bool,
-    config: &EnvConfig,
-) -> Result<()> {
-    verify_cluster_join_with_local_kubectl_and_config(
-        primary_hostname,
-        hostname,
-        control_plane,
-        config,
-        None,
-    )
-}
-
-/// Verify that a node successfully joined the cluster with retries using local kubectl
-/// kubeconfig_content: Optional pre-fetched kubeconfig content. If None, will fetch from primary_hostname
 pub fn verify_cluster_join_with_local_kubectl_and_config(
     primary_hostname: &str,
     hostname: &str,

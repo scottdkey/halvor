@@ -19,10 +19,15 @@ spec:
   hostPath:
     path: {{ .path }}
     {{- if eq .share "data" }}
-    # Data mounts directly to share root - must exist, never create to avoid data loss
+    # Data share - CRITICAL: Must exist, never create to avoid data loss
+    # This is shared data that should not be overwritten
+    # The directory must already exist on the SMB server
     type: Directory
+    {{- else if eq .share "halvor" }}
+    # Halvor share - can create directory for new share (container runtime data only)
+    type: DirectoryOrCreate
     {{- else }}
-    # Backups/domains use subdirectories - can create k8s subdir if needed
+    # Backups use subdirectories - can create k8s subdir if needed
     type: DirectoryOrCreate
     {{- end }}
   {{- if $.Values.nodeSelector }}
