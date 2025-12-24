@@ -9,7 +9,8 @@
 
 use crate::config;
 use crate::services;
-use crate::services::compose_deployer::{find_app, list_apps, AppCategory};
+use crate::services::compose_deployer::{AppCategory, find_app, list_apps};
+use crate::services::helm;
 use anyhow::Result;
 
 /// Handle install command
@@ -49,6 +50,24 @@ pub fn handle_install(hostname: Option<&str>, app: Option<&str>, list: bool) -> 
         }
         AppCategory::DockerService => {
             services::compose_deployer::deploy_compose_service(target_host, app_def, &config)?;
+        }
+        AppCategory::HelmChart => {
+            // Determine namespace based on chart
+            let namespace = match app_def.name {
+                "traefik-public" | "traefik-private" => Some("traefik"),
+                "gitea" => Some("gitea"),
+                "smb-storage" => Some("kube-system"), // SMB storage needs to be in kube-system for node access
+                _ => Some("default"),
+            };
+            helm::install_chart(
+                target_host,
+                app_def.name,
+                None, // Use chart name as release name
+                namespace.as_deref(),
+                None, // No values file - will generate from env vars
+                &[],  // No --set flags - will generate from env vars
+                &config,
+            )?;
         }
     }
 

@@ -13,6 +13,8 @@ pub struct HostConfig {
     pub ip: Option<String>,
     pub hostname: Option<String>, // Hostname (typically Tailscale hostname)
     pub backup_path: Option<String>,
+    pub sudo_password: Option<String>, // Sudo password from 1Password (HOST_<name>_SUDO_PASS)
+    pub sudo_user: Option<String>,     // Sudo user from 1Password (HOST_<name>_SUDO_USER)
 }
 
 pub struct SmbServerConfig {
@@ -117,6 +119,8 @@ pub fn load_env_config(_halvor_dir: &Path) -> Result<EnvConfig> {
                     ip: None,
                     hostname: None,
                     backup_path: None,
+                    sudo_password: None,
+                    sudo_user: None,
                 });
                 // Only set IP if not already set by HOST_<name>_IP
                 if config.ip.is_none() {
@@ -128,6 +132,8 @@ pub fn load_env_config(_halvor_dir: &Path) -> Result<EnvConfig> {
                     ip: None,
                     hostname: None,
                     backup_path: None,
+                    sudo_password: None,
+                    sudo_user: None,
                 });
                 config.ip = Some(value);
             } else if let Some(rest) = hostname.strip_suffix("_HOSTNAME") {
@@ -136,6 +142,8 @@ pub fn load_env_config(_halvor_dir: &Path) -> Result<EnvConfig> {
                     ip: None,
                     hostname: None,
                     backup_path: None,
+                    sudo_password: None,
+                    sudo_user: None,
                 });
                 config.hostname = Some(value);
             } else if let Some(rest) = hostname.strip_suffix("_BACKUP_PATH") {
@@ -144,8 +152,30 @@ pub fn load_env_config(_halvor_dir: &Path) -> Result<EnvConfig> {
                     ip: None,
                     hostname: None,
                     backup_path: None,
+                    sudo_password: None,
+                    sudo_user: None,
                 });
                 config.backup_path = Some(value);
+            } else if let Some(rest) = hostname.strip_suffix("_SUDO_PASS") {
+                let hostname_lower = rest.to_lowercase();
+                let config = hosts.entry(hostname_lower).or_insert_with(|| HostConfig {
+                    ip: None,
+                    hostname: None,
+                    backup_path: None,
+                    sudo_password: None,
+                    sudo_user: None,
+                });
+                config.sudo_password = Some(value);
+            } else if let Some(rest) = hostname.strip_suffix("_SUDO_USER") {
+                let hostname_lower = rest.to_lowercase();
+                let config = hosts.entry(hostname_lower).or_insert_with(|| HostConfig {
+                    ip: None,
+                    hostname: None,
+                    backup_path: None,
+                    sudo_password: None,
+                    sudo_user: None,
+                });
+                config.sudo_user = Some(value);
             }
         } else if let Some(server_name) = key.strip_prefix("SMB_") {
             // Parse SMB server configuration

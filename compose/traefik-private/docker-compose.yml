@@ -1,0 +1,57 @@
+# Traefik Private - Private reverse proxy for private domain
+# Deploy: halvor install traefik-private
+# Manual: docker compose up -d
+#
+# Private Traefik instance for internal services
+# Uses domain from PRIVATE_DOMAIN environment variable (loaded from 1Password)
+# Restricted to local network and Tailnet only
+
+services:
+  traefik-private:
+    container_name: traefik-private
+    image: traefik:v3.0
+    command:
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.cloudflare.acme.dnschallenge=true
+      - --certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare
+      - --certificatesresolvers.cloudflare.acme.email=${ACME_EMAIL:-}
+      - --certificatesresolvers.cloudflare.acme.storage=/letsencrypt/acme.json
+      - --log.level=INFO
+      - --accesslog=true
+    environment:
+      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN:-}
+    ports:
+      - '8081:80' # HTTP on non-standard port
+      - '8443:443' # HTTPS on non-standard port
+      - '8082:8080' # Traefik dashboard on non-standard port
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_private_letsencrypt:/letsencrypt
+      - traefik_private_config:/etc/traefik
+    networks:
+      - traefik_private_network
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.traefik-private.rule=Host(`traefik.${PRIVATE_DOMAIN}`)'
+      - 'traefik.http.routers.traefik-private.entrypoints=websecure'
+      - 'traefik.http.routers.traefik-private.tls.certresolver=cloudflare'
+      - 'traefik.http.routers.traefik-private.service=api@internal'
+    restart: unless-stopped
+
+volumes:
+  traefik_private_letsencrypt:
+    name: traefik_private_letsencrypt
+  traefik_private_config:
+    name: traefik_private_config
+
+networks:
+  traefik_private_network:
+    name: traefik_private_network
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.22.0.0/16

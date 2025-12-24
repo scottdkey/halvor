@@ -17,6 +17,8 @@ pub fn set_host_field(hostname: &str, field: &str, value: &str) -> Result<()> {
         ip: None,
         hostname: None,
         backup_path: None,
+        sudo_password: None,
+        sudo_user: None,
     });
 
     match field {
@@ -38,6 +40,8 @@ pub fn update_host_config(hostname: &str, updates: &HostConfig) -> Result<()> {
         ip: None,
         hostname: None,
         backup_path: None,
+        sudo_password: None,
+        sudo_user: None,
     });
 
     // Update only fields that are Some()
@@ -1003,6 +1007,8 @@ pub fn ensure_host_in_config(hostname: Option<&str>, config: &EnvConfig) -> Resu
         ip: Some(final_ip),
         hostname: tailscale, // Use tailscale hostname as the hostname field
         backup_path: None,
+        sudo_password: None,
+        sudo_user: None,
     };
 
     // Store to .env file (loaded from 1Password)

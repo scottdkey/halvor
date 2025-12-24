@@ -258,6 +258,8 @@ impl From<HostInfoRow> for config::HostConfig {
             ip: row.ip,
             hostname: row.hostname_field.or(row.tailscale),
             backup_path: row.backup_path,
+            sudo_password: None,
+            sudo_user: None,
         }
     }
 }

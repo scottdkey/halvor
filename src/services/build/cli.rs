@@ -7,12 +7,11 @@ use std::path::PathBuf;
 use std::process::Command;
 
 /// Platform targets mapping
-/// Note: Only macOS targets build reliably on macOS without Docker
-/// Linux/Windows targets require 'cross' with Docker running
+/// All platforms support cross-compilation via 'cross' tool (requires Docker)
 const PLATFORM_TARGETS: &[(&str, &[&str])] = &[
-    // Native macOS builds (no Docker needed)
+    // Apple/macOS targets
     ("apple", &["aarch64-apple-darwin", "x86_64-apple-darwin"]),
-    // Cross-compilation targets (require Docker via 'cross')
+    // Linux targets (cross-compile from any platform using 'cross')
     (
         "linux",
         &[
@@ -64,15 +63,16 @@ pub fn build_cli(platforms: Option<&str>, targets: Option<&str>, push: bool) -> 
                 );
                 println!("  Known targets are:");
                 for platform_target in PLATFORM_TARGETS {
-                    println!("    {}: {}", platform_target.0, platform_target.1.join(", "));
+                    println!(
+                        "    {}: {}",
+                        platform_target.0,
+                        platform_target.1.join(", ")
+                    );
                 }
             }
         }
 
-        println!(
-            "Building CLI binaries for targets: {}",
-            parsed.join(", ")
-        );
+        println!("Building CLI binaries for targets: {}", parsed.join(", "));
 
         parsed
     } else if let Some(platforms_str) = platforms {
@@ -131,12 +131,21 @@ pub fn build_cli(platforms: Option<&str>, targets: Option<&str>, push: bool) -> 
             "linux" => "linux",
             "windows" => "windows",
             _ => {
-                anyhow::bail!("Unsupported platform: {}. Please specify --platforms explicitly", OS);
+                anyhow::bail!(
+                    "Unsupported platform: {}. Please specify --platforms explicitly",
+                    OS
+                );
             }
         };
 
-        println!("Building CLI binaries for {} (native targets)", current_platform);
-        println!("💡 Tip: For cross-platform builds, use --platforms apple,linux,windows or GitHub Actions");
+        println!(
+            "Building CLI binaries for {} (native targets)",
+            current_platform
+        );
+        println!(
+            "💡 Note: Cross-platform builds are handled via GitHub Actions workflows.\n\
+             For local development, only native targets are built."
+        );
 
         platform_targets
             .get(current_platform)
@@ -150,6 +159,14 @@ pub fn build_cli(platforms: Option<&str>, targets: Option<&str>, push: bool) -> 
         if !is_target_installed(target)? {
             println!("  Installing target: {}", target);
             install_target(target)?;
+            // Verify installation succeeded
+            if !is_target_installed(target)? {
+                anyhow::bail!(
+                    "Failed to install target {} - installation reported success but target is not available",
+                    target
+                );
+            }
+            println!("  ✓ Successfully installed target: {}", target);
         } else {
             println!("  ✓ Target already installed: {}", target);
         }
@@ -193,22 +210,45 @@ fn is_target_installed(target: &str) -> Result<bool> {
     let output = execute_command_output(cmd, "Failed to check installed targets")?;
 
     let installed_targets = String::from_utf8_lossy(&output.stdout);
-    Ok(installed_targets.contains(target))
+    // Check for exact match (target should be on its own line, trimmed)
+    let is_installed = installed_targets.lines().any(|line| line.trim() == target);
+    Ok(is_installed)
 }
 
 /// Install a Rust target
 fn install_target(target: &str) -> Result<()> {
+    // rustup target add doesn't support --force-non-host flag
+    // The target should install fine if the toolchain supports it
     let status = Command::new("rustup")
         .args(["target", "add", target])
         .status()
         .context(format!("Failed to install target: {}", target))?;
 
     if !status.success() {
-        eprintln!(
-            "  ⚠️  Warning: Failed to install target {}, skipping",
+        // Get the error output to provide better diagnostics
+        let output = Command::new("rustup")
+            .args(["target", "add", target])
+            .output()
+            .context(format!("Failed to run rustup target add for {}", target))?;
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "Failed to install target {}: {}\n\
+            Note: For cross-compilation, 'cross' uses Docker containers with pre-installed toolchains.\n\
+            Ensure Docker is running and the target is available for your Rust toolchain.",
+            target,
+            stderr
+        );
+    }
+
+    // Verify the target was actually installed
+    if !is_target_installed(target)? {
+        anyhow::bail!(
+            "Target {} was not installed successfully even though rustup reported success",
             target
         );
     }
+
     Ok(())
 }
 
@@ -233,31 +273,43 @@ pub fn build_target(target: &str) -> Result<Option<PathBuf>> {
 
     let is_cross = target != host_target;
 
-    // Cross-compilation detection: Only skip when cross-compiling FROM macOS TO linux/windows
-    // Same-OS cross-arch builds (e.g., x86_64 -> aarch64 on Linux) are OK
+    // Determine if we need to use 'cross' for cross-compilation
+    // Use 'cross' for cross-OS compilation (e.g., macOS -> Linux/Windows)
+    // Use 'cargo' for native builds or same-OS cross-arch builds
     use std::env::consts::OS;
-    let is_macos_to_other = OS == "macos" && (target.contains("linux") || target.contains("windows"));
-    let is_linux_to_windows = OS == "linux" && target.contains("windows");
-    let is_windows_to_linux = OS == "windows" && target.contains("linux");
+    let host_os = OS;
+    let target_os = if target.contains("linux") {
+        "linux"
+    } else if target.contains("windows") {
+        "windows"
+    } else if target.contains("darwin") || target.contains("apple") {
+        "macos"
+    } else {
+        "unknown"
+    };
 
-    if is_macos_to_other || is_linux_to_windows || is_windows_to_linux {
-        // Cross-OS compilation is not reliably supported
-        eprintln!("  ⚠️  Skipping {}: Cross-OS compilation not supported", target);
-        eprintln!("     Cross-compiling between different operating systems is unreliable");
-        eprintln!("     Use GitHub Actions for production builds (see .github/workflows/)");
-        eprintln!("     Each platform builds natively for best results");
+    let needs_cross = is_cross && host_os != target_os;
+
+    // Cross-compilation is handled via GitHub Actions, not locally
+    // Only build native targets locally
+    if needs_cross {
+        println!(
+            "  ⚠️  Skipping cross-compilation for target: {}\n\
+             Cross-platform builds are handled via GitHub Actions workflows.\n\
+             See .github/workflows/ for build configurations.",
+            target
+        );
         return Ok(None);
     }
 
-    // Native build (macOS only at this point)
+    // Use cargo for native builds only
     let cargo_cmd = "cargo";
     let cargo_args = vec!["build", "--release", "--bin", "halvor", "--target", target];
 
     let mut build_cmd = Command::new(cargo_cmd);
     build_cmd.args(&cargo_args);
 
-    // Clear any RUSTFLAGS that might interfere with cross-compilation
-    // (cross needs to control the build environment)
+    // Clear any RUSTFLAGS that might interfere with compilation
     build_cmd.env_remove("RUSTFLAGS");
 
     // Build for target

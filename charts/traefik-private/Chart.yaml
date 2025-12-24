@@ -1,0 +1,12 @@
+apiVersion: v2
+name: traefik-private
+description: Private Traefik reverse proxy for private domain (local/Tailnet only)
+type: application
+version: 0.1.0
+appVersion: "3.0"
+keywords:
+  - traefik
+  - reverse-proxy
+  - ingress
+  - private
+

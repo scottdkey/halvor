@@ -444,7 +444,10 @@ impl Executor {
                             .unwrap_or_else(|_| crate::config::get_default_username())
                     });
                 let host_with_user = format!("{}@{}", username, target_host);
-                SshConnection::new(&host_with_user)?
+                // Get sudo password and user from host config
+                let sudo_password = host_config.sudo_password.clone();
+                let sudo_user = host_config.sudo_user.clone();
+                SshConnection::new_with_sudo_password(&host_with_user, sudo_password, sudo_user)?
             }));
         };
 
@@ -488,7 +491,10 @@ impl Executor {
                         .unwrap_or_else(|_| crate::config::get_default_username())
                 });
             let host_with_user = format!("{}@{}", username, target_host);
-            let ssh_conn = SshConnection::new(&host_with_user)?;
+            let sudo_password = host_config.sudo_password.clone();
+            let sudo_user = host_config.sudo_user.clone();
+            let ssh_conn =
+                SshConnection::new_with_sudo_password(&host_with_user, sudo_password, sudo_user)?;
 
             Ok(Executor::Remote(ssh_conn))
         }

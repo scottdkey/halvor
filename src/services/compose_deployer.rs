@@ -61,6 +61,8 @@ pub enum AppCategory {
     Platform,
     /// Docker service deployed via compose file
     DockerService,
+    /// Kubernetes service deployed via Helm chart
+    HelmChart,
 }
 
 /// App definition with metadata
@@ -70,6 +72,7 @@ pub struct AppDefinition {
     pub category: AppCategory,
     pub description: &'static str,
     /// For DockerService: name of the compose directory
+    /// For HelmChart: name of the chart directory
     pub compose_dir: Option<&'static str>,
     /// For DockerService: directory containing Dockerfile for local builds (relative to repo root)
     pub build_dir: Option<&'static str>,
@@ -136,6 +139,42 @@ pub static APPS: &[AppDefinition] = &[
         build_dir: None, // Uses official image
         requires_vpn: false,
         aliases: &["npm", "proxy"],
+    },
+    AppDefinition {
+        name: "traefik-public",
+        category: AppCategory::HelmChart,
+        description: "Public Traefik reverse proxy (PUBLIC_DOMAIN from 1Password)",
+        compose_dir: None,
+        build_dir: None,
+        requires_vpn: false,
+        aliases: &["traefik-pub", "traefik-dev"],
+    },
+    AppDefinition {
+        name: "traefik-private",
+        category: AppCategory::HelmChart,
+        description: "Private Traefik reverse proxy (PRIVATE_DOMAIN from 1Password, local/Tailnet only)",
+        compose_dir: None,
+        build_dir: None,
+        requires_vpn: false,
+        aliases: &["traefik-priv", "traefik-me"],
+    },
+    AppDefinition {
+        name: "gitea",
+        category: AppCategory::HelmChart,
+        description: "Gitea Git hosting service",
+        compose_dir: None,
+        build_dir: None,
+        requires_vpn: false,
+        aliases: &["git"],
+    },
+    AppDefinition {
+        name: "smb-storage",
+        category: AppCategory::HelmChart,
+        description: "SMB storage setup for Kubernetes (backups, data, docker-appdata)",
+        compose_dir: None,
+        build_dir: None,
+        requires_vpn: false,
+        aliases: &["smb", "storage"],
     },
     AppDefinition {
         name: "sabnzbd",
@@ -226,6 +265,11 @@ pub fn list_apps() {
         print_app(app);
     }
 
+    println!("\nHelm Charts:");
+    for app in APPS.iter().filter(|a| a.category == AppCategory::HelmChart) {
+        print_app(app);
+    }
+
     println!("\nUsage:");
     println!("  halvor install <app>                  # Install on current system");
     println!("  halvor install <app> -H <hostname>    # Install on remote host");
@@ -290,6 +334,34 @@ pub fn deploy_compose_service(
     } else {
         // Production mode: copy files to target directory and run
         deploy_production_mode(&exec, app, compose_dir, &compose_cmd)?;
+    }
+
+    // Post-deployment setup for specific services
+    if app.name == "traefik-private" {
+        println!();
+        println!("Setting up firewall rules for private Traefik network...");
+        if is_dev {
+            // In dev mode, read from local file
+            let script_path = format!("compose/{}/setup-firewall.sh", compose_dir);
+            let script_content = std::fs::read_to_string(&script_path)
+                .context("Failed to read firewall setup script")?;
+            let remote_script = "/tmp/setup-traefik-private-firewall.sh";
+            exec.write_file(remote_script, script_content.as_bytes())
+                .context("Failed to write firewall script to remote host")?;
+            exec.execute_shell(&format!("chmod +x {}", remote_script))
+                .context("Failed to make firewall script executable")?;
+            exec.execute_shell_interactive(&format!("sudo {}", remote_script))
+                .context("Failed to execute firewall setup script")?;
+        } else {
+            // In prod mode, script was already copied with compose files
+            let base_path = get_deploy_base_path();
+            let script_path = format!("{}/{}/setup-firewall.sh", base_path, app.name);
+            exec.execute_shell(&format!("chmod +x {}", script_path))
+                .context("Failed to make firewall script executable")?;
+            exec.execute_shell_interactive(&format!("sudo {}", script_path))
+                .context("Failed to execute firewall setup script")?;
+        }
+        println!("✓ Firewall rules configured for private Traefik network");
     }
 
     println!("✓ {} deployed successfully", app.name);
@@ -426,6 +498,20 @@ fn deploy_production_mode<E: CommandExecutor>(
 
     exec.write_file(&target_compose, compose_content.as_bytes())
         .context("Failed to write docker-compose.yml")?;
+
+    // Fetch additional files if they exist (e.g., setup scripts)
+    let setup_script_url = get_github_raw_url(compose_dir, "setup-firewall.sh");
+    if let Ok(script_content) = client
+        .get(&setup_script_url)
+        .send()
+        .and_then(|r| r.error_for_status())
+        .and_then(|r| r.text())
+    {
+        let target_script = format!("{}/setup-firewall.sh", target_dir);
+        println!("  Fetching setup-firewall.sh from GitHub...");
+        exec.write_file(&target_script, script_content.as_bytes())
+            .context("Failed to write setup-firewall.sh")?;
+    }
 
     // Fetch .env.example from GitHub if .env doesn't exist
     let target_env = format!("{}/.env", target_dir);

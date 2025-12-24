@@ -166,8 +166,17 @@ pub fn provision_defaults(
     let tailscale_ip = tailscale::get_tailscale_ip_with_fallback(&exec, hostname, config)?;
     println!("✓ Tailscale is running with IP: {}", tailscale_ip);
 
-    // Step 4: Install and configure K3s based on role
-    println!("\n=== Step 4: Installing K3s ===");
+    // Step 4: Setup SMB mounts (for data persistence)
+    println!("\n=== Step 4: Setting up SMB mounts ===");
+    if !config.smb_servers.is_empty() {
+        println!("Setting up SMB mounts for persistent storage...");
+        crate::services::smb::setup_smb_mounts(hostname, config)?;
+    } else {
+        println!("No SMB servers configured - skipping SMB mount setup");
+    }
+
+    // Step 5: Install and configure K3s based on role
+    println!("\n=== Step 5: Installing K3s ===");
     match cluster_role {
         ClusterRole::InitControlPlane => {
             k3s::init_control_plane(hostname, cluster_token, true, config)?;
@@ -315,7 +324,7 @@ pub fn provision_guided(hostname: &str, config: &EnvConfig) -> Result<()> {
             // Generate token using k3s service function
             println!("Generating cluster token...");
             let token =
-                k3s::generate_cluster_token(&exec).context("Failed to generate cluster token")?;
+                k3s::generate_cluster_token().context("Failed to generate cluster token")?;
             println!();
             println!("Generated cluster token: {}", token);
             println!("Save this token to join additional nodes!");

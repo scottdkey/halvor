@@ -1,0 +1,6 @@
+{{- /*
+  Note: SMB mounts should be set up on cluster nodes (frigg and baulder) 
+  using 'halvor smb' command before deploying this chart.
+  This chart only creates PersistentVolumes pointing to those mount points.
+*/ -}}
+

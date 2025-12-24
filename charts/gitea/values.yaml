@@ -1,0 +1,80 @@
+# Default values for gitea
+# Values are loaded from environment variables via halvor CLI
+
+image:
+  repository: gitea/gitea
+  tag: "1.21"
+  pullPolicy: IfNotPresent
+
+# Domain configuration
+domain: "" # Set via GITEA_DOMAIN env var (e.g., gitea.scottkey.dev or gitea.scottkey.me)
+publicDomain: false # Set to true if using public domain, false for private
+
+# Gitea configuration
+gitea:
+  appName: "Gitea"
+  runMode: "prod"
+  database:
+    type: "sqlite3" # or postgres, mysql
+    path: "/data/gitea/gitea.db"
+  repository:
+    root: "/data/gitea/repositories"
+  server:
+    httpAddr: "0.0.0.0"
+    httpPort: 3000
+    domain: "" # Set via GITEA_DOMAIN env var
+    rootUrl: "" # Set via GITEA_ROOT_URL env var (e.g., https://gitea.scottkey.dev)
+  session:
+    provider: "memory"
+  log:
+    level: "Info"
+    rootPath: "/data/gitea/log"
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 3000
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: "traefik"
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls.certresolver: cloudflare
+  hosts:
+    - host: "" # Set via GITEA_DOMAIN env var
+      paths:
+        - path: /
+          pathType: Prefix
+
+# Persistence
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClass: ""
+  accessMode: ReadWriteOnce
+
+# Resources
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+
+# Node selector (optional)
+nodeSelector: {}
+
+# Tolerations (optional)
+tolerations: []
+
+# Affinity (optional)
+affinity: {}
+
+# Security context
+securityContext:
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000

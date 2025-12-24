@@ -420,3 +420,45 @@ pub fn get_tailscale_hostname() -> Result<Option<String>> {
 
     Ok(None)
 }
+
+/// Get Tailscale hostname for a specific peer by name
+/// Looks up the peer in the local Tailscale status and returns its DNSName
+pub fn get_peer_tailscale_hostname(peer_name: &str) -> Result<Option<String>> {
+    let output = Command::new("tailscale")
+        .args(&["status", "--json"])
+        .output()
+        .context("Failed to execute tailscale status")?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let status_json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).context("Failed to parse tailscale status JSON")?;
+
+    // Check Self first (in case we're looking up our own hostname)
+    if let Some(self_data) = status_json.get("Self") {
+        if let Some(dns_name) = self_data.get("DNSName").and_then(|v| v.as_str()) {
+            // Check if it matches (either full DNSName or short name)
+            if dns_name == peer_name || dns_name.starts_with(&format!("{}.", peer_name)) {
+                return Ok(Some(dns_name.to_string()));
+            }
+        }
+    }
+
+    // Search through peers
+    if let Some(peer_map) = status_json.get("Peer") {
+        if let Some(peers) = peer_map.as_object() {
+            for (_, peer_data) in peers {
+                if let Some(dns_name) = peer_data.get("DNSName").and_then(|v| v.as_str()) {
+                    // Match full DNSName or short name (before first dot)
+                    if dns_name == peer_name || dns_name.starts_with(&format!("{}.", peer_name)) {
+                        return Ok(Some(dns_name.to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}

@@ -1,0 +1,25 @@
+{{- if .Values.dashboard.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "traefik-public.fullname" . }}-dashboard
+  labels:
+    {{- include "traefik-public.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls.certresolver: cloudflare
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: {{ .Values.dashboard.domain | default (printf "traefik.%s" .Values.domain) }}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: {{ include "traefik-public.fullname" . }}
+            port:
+              number: {{ .Values.service.ports.dashboard }}
+{{- end }}
+

@@ -8,6 +8,8 @@ use std::process::{Command, Output, Stdio};
 pub struct SshConnection {
     pub(crate) host: String,
     pub(crate) use_key_auth: bool,
+    pub(crate) sudo_password: Option<String>,
+    pub(crate) sudo_user: Option<String>, // Sudo user from SUDO_USER env var
 }
 
 impl SshConnection {
@@ -38,11 +40,55 @@ impl SshConnection {
         Ok(Self {
             host: host.to_string(),
             use_key_auth,
+            sudo_password: None,
+            sudo_user: None,
+        })
+    }
+
+    /// Create SSH connection with sudo password and user
+    pub fn new_with_sudo_password(
+        host: &str,
+        sudo_password: Option<String>,
+        sudo_user: Option<String>,
+    ) -> Result<Self> {
+        // Test if key-based auth works
+        let test_output = Command::new("ssh")
+            .args([
+                "-o",
+                "ConnectTimeout=1",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "PreferredAuthentications=publickey",
+                "-o",
+                "PasswordAuthentication=no",
+                "-o",
+                "StrictHostKeyChecking=no",
+                host,
+                "echo",
+                "test",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .output();
+
+        let use_key_auth = test_output.is_ok() && test_output.unwrap().status.success();
+
+        Ok(Self {
+            host: host.to_string(),
+            use_key_auth,
+            sudo_password,
+            sudo_user,
         })
     }
 
     fn build_ssh_args(&self) -> Vec<String> {
-        let mut args = vec!["-o".to_string(), "StrictHostKeyChecking=no".to_string()];
+        let mut args = vec![
+            "-o".to_string(),
+            "StrictHostKeyChecking=no".to_string(),
+            "-o".to_string(),
+            "ConnectTimeout=10".to_string(), // 10 second timeout to prevent hanging
+        ];
 
         if self.use_key_auth {
             args.extend([
@@ -83,10 +129,36 @@ impl SshConnection {
     }
 
     pub fn execute_shell(&self, command: &str) -> Result<Output> {
+        // If command contains sudo and we have a password, inject it
+        let final_command = if command.contains("sudo ") && self.sudo_password.is_some() {
+            let password = self.sudo_password.as_ref().unwrap();
+            let escaped_password = shell_escape(password);
+            // Replace "sudo " with "echo 'password' | sudo -S [-u user] "
+            let sudo_prefix = if let Some(ref sudo_user) = self.sudo_user {
+                format!(
+                    "echo {} | sudo -S -u {} ",
+                    escaped_password,
+                    shell_escape(sudo_user)
+                )
+            } else {
+                format!("echo {} | sudo -S ", escaped_password)
+            };
+            command.replace("sudo ", &sudo_prefix)
+        } else {
+            command.to_string()
+        };
+
         let mut ssh_args = self.build_ssh_args();
+        // For non-interactive commands, add BatchMode=yes if key auth works to prevent hanging
+        // If key auth doesn't work, we can't use BatchMode (needs password), so it will hang
+        // In that case, the caller should use execute_shell_interactive instead
+        if self.use_key_auth {
+            ssh_args.insert(ssh_args.len() - 1, "-o".to_string());
+            ssh_args.insert(ssh_args.len() - 1, "BatchMode=yes".to_string());
+        }
         ssh_args.push("sh".to_string());
         ssh_args.push("-c".to_string());
-        ssh_args.push(command.to_string());
+        ssh_args.push(final_command);
 
         let output = Command::new("ssh")
             .args(&ssh_args)
@@ -100,6 +172,11 @@ impl SshConnection {
     }
 
     pub fn execute_interactive(&self, program: &str, args: &[&str]) -> Result<()> {
+        // If this is a sudo command and we have a password, use it
+        if program == "sudo" && self.sudo_password.is_some() {
+            return self.execute_sudo_with_password(args);
+        }
+
         let mut ssh_args = self.build_ssh_args();
         ssh_args.push("-tt".to_string()); // Force TTY for interactive
 
@@ -128,12 +205,75 @@ impl SshConnection {
         Ok(())
     }
 
+    /// Execute sudo command with password when available
+    fn execute_sudo_with_password(&self, args: &[&str]) -> Result<()> {
+        let password = self.sudo_password.as_ref().unwrap();
+        // Escape the password for shell
+        let escaped_password = shell_escape(password);
+
+        // Build the sudo command with password via stdin
+        // Format: echo 'password' | sudo -S [-u user] command args...
+        let mut sudo_cmd = format!("echo {} | sudo -S", escaped_password);
+
+        // Add -u user if SUDO_USER is set
+        if let Some(ref sudo_user) = self.sudo_user {
+            sudo_cmd.push_str(&format!(" -u {}", shell_escape(sudo_user)));
+        }
+
+        for arg in args {
+            sudo_cmd.push(' ');
+            sudo_cmd.push_str(&shell_escape(arg));
+        }
+
+        let mut ssh_args = self.build_ssh_args();
+        ssh_args.push("-tt".to_string()); // Force TTY for sudo
+        ssh_args.push("sh".to_string());
+        ssh_args.push("-c".to_string());
+        ssh_args.push(sudo_cmd);
+
+        let status = Command::new("ssh")
+            .args(&ssh_args)
+            .stdin(Stdio::null()) // Password is piped via echo, so no stdin needed
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()
+            .with_context(|| "Failed to execute sudo command with password")?;
+
+        if !status.success() {
+            anyhow::bail!(
+                "Sudo command failed with exit code: {}",
+                status.code().unwrap_or(1)
+            );
+        }
+
+        Ok(())
+    }
+
     pub fn execute_shell_interactive(&self, command: &str) -> Result<()> {
+        // If command contains sudo and we have a password, inject it
+        let final_command = if command.contains("sudo") && self.sudo_password.is_some() {
+            let password = self.sudo_password.as_ref().unwrap();
+            let escaped_password = shell_escape(password);
+            // Replace "sudo " with "echo 'password' | sudo -S [-u user] "
+            let sudo_prefix = if let Some(ref sudo_user) = self.sudo_user {
+                format!(
+                    "echo {} | sudo -S -u {} ",
+                    escaped_password,
+                    shell_escape(sudo_user)
+                )
+            } else {
+                format!("echo {} | sudo -S ", escaped_password)
+            };
+            command.replace("sudo ", &sudo_prefix)
+        } else {
+            command.to_string()
+        };
+
         let mut ssh_args = self.build_ssh_args();
         ssh_args.push("-tt".to_string()); // Force TTY for interactive
         ssh_args.push("sh".to_string());
         ssh_args.push("-c".to_string());
-        ssh_args.push(command.to_string());
+        ssh_args.push(final_command);
 
         let status = Command::new("ssh")
             .args(&ssh_args)

@@ -1,0 +1,51 @@
+# Default values for traefik-public
+# Values are loaded from environment variables via halvor CLI
+
+image:
+  repository: traefik
+  tag: v3.0
+  pullPolicy: IfNotPresent
+
+# Domain configuration (from 1Password)
+domain: "" # Set via PUBLIC_DOMAIN env var
+
+# ACME/Let's Encrypt configuration
+acme:
+  email: "" # Set via ACME_EMAIL env var
+  dnsProvider: cloudflare
+  dnsToken: "" # Set via CF_DNS_API_TOKEN env var
+
+# Service configuration
+service:
+  type: LoadBalancer
+  ports:
+    http: 80
+    https: 443
+    dashboard: 8080
+
+# Dashboard configuration
+dashboard:
+  enabled: true
+  domain: "" # Set to traefik.${PUBLIC_DOMAIN}
+
+# Resources
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Node selector (optional)
+nodeSelector: {}
+
+# Tolerations (optional)
+tolerations: []
+
+# Affinity (optional)
+affinity: {}
+
+# Network policy (optional)
+networkPolicy:
+  enabled: false

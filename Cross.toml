@@ -1,9 +1,13 @@
 # Cross-compilation configuration for halvor
 # Configures cross to use Docker containers for cross-compilation
+# This configuration forces cross to use Docker containers only,
+# skipping any host toolchain installation attempts
 
 # Build environment settings
 [build.env]
 volumes = ["CARGO_HOME"]
+# Force cross to use Docker containers, don't try to install toolchains on host
+passthrough = []
 
 # Target-specific configurations
 # Use cross's default images for Linux targets

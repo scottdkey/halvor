@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "traefik-private.fullname" . }}
+  labels:
+    {{- include "traefik-private.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "traefik-private.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "traefik-private.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+      - name: traefik
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        args:
+          - --api.insecure=true
+          - --providers.kubernetesingress=true
+          - --providers.kubernetesingress.allowExternalNameServices=true
+          - --entrypoints.web.address=:80
+          - --entrypoints.websecure.address=:443
+          - --certificatesresolvers.cloudflare.acme.dnschallenge=true
+          - --certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare
+          - --certificatesresolvers.cloudflare.acme.email={{ .Values.acme.email }}
+          - --certificatesresolvers.cloudflare.acme.storage=/data/acme.json
+          - --log.level=INFO
+          - --accesslog=true
+        ports:
+        - name: web
+          containerPort: 80
+          protocol: TCP
+        - name: websecure
+          containerPort: 443
+          protocol: TCP
+        - name: dashboard
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: CF_DNS_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "traefik-private.fullname" . }}-secrets
+              key: cf-dns-api-token
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /ping
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ping
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: {{ include "traefik-private.fullname" . }}-data
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+

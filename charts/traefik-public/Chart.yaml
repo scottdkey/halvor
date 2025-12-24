@@ -1,0 +1,11 @@
+apiVersion: v2
+name: traefik-public
+description: Public Traefik reverse proxy for public domain
+type: application
+version: 0.1.0
+appVersion: "3.0"
+keywords:
+  - traefik
+  - reverse-proxy
+  - ingress
+  - public

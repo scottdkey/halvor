@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gitea.fullname" . }}
+  labels:
+    {{- include "gitea.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "gitea.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "gitea.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      containers:
+      - name: gitea
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.gitea.server.httpPort }}
+          protocol: TCP
+        env:
+        - name: GITEA__database__DB_TYPE
+          value: {{ .Values.gitea.database.type | quote }}
+        - name: GITEA__database__PATH
+          value: {{ .Values.gitea.database.path | quote }}
+        - name: GITEA__repository__ROOT
+          value: {{ .Values.gitea.repository.root | quote }}
+        - name: GITEA__server__HTTP_ADDR
+          value: {{ .Values.gitea.server.httpAddr | quote }}
+        - name: GITEA__server__HTTP_PORT
+          value: {{ .Values.gitea.server.httpPort | quote }}
+        - name: GITEA__server__DOMAIN
+          value: {{ .Values.gitea.server.domain | default .Values.domain | quote }}
+        - name: GITEA__server__ROOT_URL
+          value: {{ .Values.gitea.server.rootUrl | default (printf "https://%s" .Values.domain) | quote }}
+        - name: GITEA__session__PROVIDER
+          value: {{ .Values.gitea.session.provider | quote }}
+        - name: GITEA__log__LEVEL
+          value: {{ .Values.gitea.log.level | quote }}
+        - name: GITEA__log__ROOT_PATH
+          value: {{ .Values.gitea.log.rootPath | quote }}
+        - name: GITEA__app_name
+          value: {{ .Values.gitea.appName | quote }}
+        - name: GITEA__run_mode
+          value: {{ .Values.gitea.runMode | quote }}
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: data
+        {{- if .Values.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ include "gitea.fullname" . }}-data
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+

@@ -21,11 +21,11 @@ pub enum K3sCommands {
         /// First control plane node address (e.g., oak or 192.168.1.10)
         #[arg(long)]
         server: String,
-        /// Cluster join token
+        /// Cluster join token (if not provided, will be loaded from K3S_TOKEN env var or fetched from server)
         #[arg(long)]
-        token: String,
-        /// Join as control plane node (default: true for HA)
-        #[arg(long, default_value = "true")]
+        token: Option<String>,
+        /// Join as control plane node (default: false, use --control-plane to join as control plane)
+        #[arg(long, action = clap::ArgAction::SetTrue)]
         control_plane: bool,
     },
     /// Show cluster status (nodes, etcd health)
@@ -90,14 +90,32 @@ pub fn handle_k3s(hostname: Option<&str>, command: K3sCommands) -> Result<()> {
             token,
             control_plane,
         } => {
-            k3s::join_cluster(target_host, &server, &token, control_plane, &config)?;
+            // If token not provided, get it from environment or server
+            let cluster_token = if let Some(t) = token {
+                t
+            } else {
+                // Try environment variable first (from 1Password)
+                if let Ok(env_token) = std::env::var("K3S_TOKEN") {
+                    println!("Using cluster token from K3S_TOKEN environment variable");
+                    env_token
+                } else {
+                    // Fallback to getting from server node
+                    println!("Fetching cluster token from {}...", server);
+                    let (_, fetched_token) = k3s::get_cluster_join_info(&server, &config)?;
+                    fetched_token
+                }
+            };
+            k3s::join_cluster(target_host, &server, &cluster_token, control_plane, &config)?;
         }
         K3sCommands::Status => {
             k3s::show_status(target_host, &config)?;
         }
         K3sCommands::Verify { nodes } => {
             let node_list: Vec<&str> = nodes.split(',').map(|s| s.trim()).collect();
-            k3s::verify_ha_cluster(target_host, &node_list, &config)?;
+            // For verify, if no hostname is provided, use the first node as the primary
+            let primary_host =
+                hostname.unwrap_or_else(|| node_list.first().copied().unwrap_or("localhost"));
+            k3s::verify_ha_cluster(primary_host, &node_list, &config)?;
         }
         K3sCommands::SetupCluster { primary, nodes } => {
             use crate::services::provision;

@@ -2,23 +2,6 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## ⚠️ IMPORTANT: BUILD POLICY
-
-**NEVER run build commands in the terminal.** The user will handle all builds manually. This includes:
-- `cargo build`
-- `cargo install`
-- `make install-cli`
-- `halvor build <platform>`
-- Any other build/compile commands
-
-Do NOT execute these commands even when:
-- Testing changes
-- Verifying fixes
-- After making code modifications
-- User asks to "test the build"
-
-Instead, inform the user that changes are complete and they should build manually.
-
 ## Project Overview
 
 **HAL (Homelab Automation Layer)** is a multi-platform Rust CLI tool for managing homelab infrastructure. The project compiles to native binaries (Linux/macOS/Windows), mobile apps (iOS/Android via FFI), and web applications (WASM). It provides automation for Docker, SSH, VPN, SMB, Tailscale, Portainer, and Nginx Proxy Manager.
@@ -236,16 +219,26 @@ Tables are defined in `src/db/generated/`. Modify these carefully as they're use
 
 ### Cross-Compilation
 
-**Simple Approach**: The build system uses plain `cargo` for native builds and optionally `cross` for cross-compilation:
+The build system supports full cross-compilation across all platforms:
 
-- **Native builds**: Standard `cargo build --target <target>`
-- **Cross-compilation**: Automatically uses `cross` if available (Docker-based)
-- **GitHub Actions**: Builds on native runners for each platform (recommended for releases)
+- **Native builds**: Uses `cargo build --target <target>` for same-OS builds
+- **Cross-OS compilation**: Automatically uses `cross` tool (Docker-based) for cross-OS builds (e.g., macOS -> Linux/Windows)
+- **Automatic detection**: The build system automatically detects when `cross` is needed and uses it
+
+**Prerequisites for cross-compilation:**
+- Install `cross`: `cargo install cross --git https://github.com/cross-rs/cross` or `brew install cross` (macOS)
+- Docker must be running (required by `cross`)
 
 Supported targets:
 - Linux: x86_64-gnu, x86_64-musl, aarch64-gnu, aarch64-musl
 - macOS: x86_64-darwin, aarch64-darwin
 - Windows: x86_64-windows-msvc, aarch64-windows-msvc
+
+**Example**: Building from macOS for Linux:
+```bash
+halvor build cli --platforms linux  # Automatically uses 'cross' for Linux targets
+halvor build cli --platforms apple,linux,windows  # Builds all platforms
+```
 
 ### CI/CD Workflows
 
