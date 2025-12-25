@@ -62,7 +62,7 @@ pub fn handle_join(
         // Validate server is in config or is a valid Tailscale hostname/IP
         if !s.ends_with(".ts.net") && !s.parse::<std::net::IpAddr>().is_ok() {
             // Not a Tailscale hostname or IP, check if it's in config
-            if crate::config::service::find_hostname_in_config(s, &config).is_none() {
+            if crate::config::service::find_hostname_in_config(&s, &config).is_none() {
                 println!("⚠ Warning: Server '{}' not found in config. Will attempt to resolve via Tailscale.", s);
             }
         }
