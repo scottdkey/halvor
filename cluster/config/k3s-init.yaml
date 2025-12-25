@@ -27,8 +27,9 @@ disable:
 # Expose etcd metrics for monitoring
 etcd-expose-metrics: true
 
-# Data directory
-data-dir: /var/lib/rancher/k3s
+# Data directory (on SMB share halvor with automatic failover: maple -> willow)
+# Uses unified path that automatically switches between maple (primary) and willow (fallback)
+data-dir: /mnt/smb/halvor/k3s/${HOSTNAME}
 
 # Write kubeconfig with correct permissions
 write-kubeconfig-mode: "0644"

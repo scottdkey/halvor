@@ -2,7 +2,7 @@
 
 use crate::config::EnvConfig;
 use crate::services::k3s::utils::{generate_cluster_token, parse_node_token};
-use crate::services::k3s::{agent_service, cleanup, tools};
+use crate::services::k3s::{agent_service, cleanup, smb_failover, tools};
 use crate::services::tailscale;
 use crate::utils::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
@@ -314,6 +314,13 @@ pub fn init_control_plane(
     println!("Checking for required tools...");
     tools::check_and_install_kubectl(&exec)?;
     tools::check_and_install_helm(&exec)?;
+
+    // Setup SMB failover for k3s data directory (maple -> willow)
+    println!();
+    if let Err(e) = smb_failover::setup_smb_failover(&exec, hostname) {
+        println!("⚠️  Warning: Failed to setup SMB failover: {}", e);
+        println!("   K3s will use default data directory. You may need to configure SMB failover manually.");
+    }
 
     println!();
     println!("Installing K3s with embedded etcd...");

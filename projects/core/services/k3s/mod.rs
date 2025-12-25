@@ -10,6 +10,7 @@ mod join;
 mod kubeconfig;
 mod maintenance;
 mod setup;
+mod smb_failover;
 mod status;
 mod tailscale_config;
 mod tools;
