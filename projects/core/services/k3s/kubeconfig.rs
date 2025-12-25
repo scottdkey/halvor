@@ -10,11 +10,8 @@ use anyhow::{Context, Result};
 pub fn fetch_kubeconfig_content(primary_hostname: &str, config: &EnvConfig) -> Result<String> {
     println!("  Fetching kubeconfig...");
     
-    // First, try to get kubeconfig from environment variable (from 1Password)
-    if let Ok(kubeconfig_content) = std::env::var("KUBE_CONFIG") {
-        println!("  ✓ Using kubeconfig from KUBE_CONFIG environment variable");
-        let mut kubeconfig = kubeconfig_content;
-        
+    // Helper function to process kubeconfig content
+    let process_kubeconfig = |mut kubeconfig: String| -> Result<String> {
         // Get Tailscale IP/hostname for the primary node to replace 127.0.0.1
         let primary_exec = Executor::new(primary_hostname, config)
             .with_context(|| format!("Failed to create executor for primary node: {}", primary_hostname))?;
@@ -29,7 +26,13 @@ pub fn fetch_kubeconfig_content(primary_hostname: &str, config: &EnvConfig) -> R
         kubeconfig = kubeconfig.replace("127.0.0.1", server_address);
         kubeconfig = kubeconfig.replace("localhost", server_address);
         
-        return Ok(kubeconfig);
+        Ok(kubeconfig)
+    };
+    
+    // Get kubeconfig from KUBE_CONFIG environment variable (from 1Password)
+    if let Ok(kubeconfig_content) = std::env::var("KUBE_CONFIG") {
+        println!("  ✓ Using kubeconfig from KUBE_CONFIG environment variable");
+        return process_kubeconfig(kubeconfig_content);
     }
     
     // If not in environment variable, provide helpful error message

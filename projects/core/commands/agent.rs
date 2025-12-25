@@ -1,6 +1,6 @@
 use crate::agent::{discovery::HostDiscovery, server::AgentServer, sync::ConfigSync};
 use crate::config::service::get_current_hostname;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Subcommand;
 use std::io::Write;
 use std::path::PathBuf;
