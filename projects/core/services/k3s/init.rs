@@ -626,6 +626,51 @@ Requires=network-online.target
         );
     }
 
+    // Get and print kubeconfig for 1Password
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("Kubeconfig (add to 1Password as KUBE_CONFIG environment variable):");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+    
+    // Read kubeconfig from the server
+    let kubeconfig_output = exec
+        .execute_shell("sudo cat /etc/rancher/k3s/k3s.yaml 2>/dev/null")
+        .ok();
+    
+    if let Some(output) = kubeconfig_output {
+        if output.status.success() {
+            let mut kubeconfig_content = String::from_utf8_lossy(&output.stdout).to_string();
+            
+            // Replace localhost/127.0.0.1 with Tailscale address
+            let server_addr = tailscale_hostname.as_ref().unwrap_or(&tailscale_ip);
+            kubeconfig_content = kubeconfig_content.replace("127.0.0.1", server_addr);
+            kubeconfig_content = kubeconfig_content.replace("localhost", server_addr);
+            
+            // Print the kubeconfig
+            println!("{}", kubeconfig_content);
+            println!();
+            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            println!("⚠️  IMPORTANT: Copy the kubeconfig above and add it to your 1Password vault");
+            println!("   as the KUBE_CONFIG environment variable.");
+            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            println!();
+        } else {
+            println!("⚠️  Warning: Could not read kubeconfig file. You may need to retrieve it manually:");
+            println!("   ssh {} 'sudo cat /etc/rancher/k3s/k3s.yaml' | sed 's|127.0.0.1|{}|g' | sed 's|localhost|{}|g'", 
+                hostname, 
+                tailscale_hostname.as_ref().unwrap_or(&tailscale_ip),
+                tailscale_hostname.as_ref().unwrap_or(&tailscale_ip));
+            println!();
+        }
+    } else {
+        println!("⚠️  Warning: Could not read kubeconfig file. You may need to retrieve it manually:");
+        println!("   ssh {} 'sudo cat /etc/rancher/k3s/k3s.yaml' | sed 's|127.0.0.1|{}|g' | sed 's|localhost|{}|g'", 
+            hostname, 
+            tailscale_hostname.as_ref().unwrap_or(&tailscale_ip),
+            tailscale_hostname.as_ref().unwrap_or(&tailscale_ip));
+        println!();
+    }
+
     println!("Save this token to join additional nodes:");
     println!("  K3S_TOKEN={}", cluster_token);
     println!();

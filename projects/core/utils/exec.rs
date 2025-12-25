@@ -666,9 +666,28 @@ impl CommandExecutor for Executor {
                     &args_vec.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
                 )?;
                 // Convert agent output to Output format
-                use std::os::unix::process::ExitStatusExt;
+                // Create a successful exit status in a cross-platform way
+                let exit_status = {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::process::ExitStatusExt;
+                        std::process::ExitStatus::from_raw(0)
+                    }
+                    #[cfg(windows)]
+                    {
+                        use std::os::windows::process::ExitStatusExt;
+                        std::process::ExitStatus::from_raw(0)
+                    }
+                    #[cfg(not(any(unix, windows)))]
+                    {
+                        // Fallback: use Command to get a successful exit status
+                        std::process::Command::new("true").status().unwrap_or_else(|_| {
+                            std::process::Command::new("cmd").args(["/C", "exit", "0"]).status().unwrap()
+                        })
+                    }
+                };
                 Ok(Output {
-                    status: std::process::ExitStatus::from_raw(0),
+                    status: exit_status,
                     stdout: output.into_bytes(),
                     stderr: Vec::new(),
                 })
@@ -705,9 +724,28 @@ impl CommandExecutor for Executor {
                 };
                 // Execute via agent using sh -c
                 let output = client.execute_command("sh", &["-c", &final_command])?;
-                use std::os::unix::process::ExitStatusExt;
+                // Create a successful exit status in a cross-platform way
+                let exit_status = {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::process::ExitStatusExt;
+                        std::process::ExitStatus::from_raw(0)
+                    }
+                    #[cfg(windows)]
+                    {
+                        use std::os::windows::process::ExitStatusExt;
+                        std::process::ExitStatus::from_raw(0)
+                    }
+                    #[cfg(not(any(unix, windows)))]
+                    {
+                        // Fallback: use Command to get a successful exit status
+                        std::process::Command::new("true").status().unwrap_or_else(|_| {
+                            std::process::Command::new("cmd").args(["/C", "exit", "0"]).status().unwrap()
+                        })
+                    }
+                };
                 Ok(Output {
-                    status: std::process::ExitStatus::from_raw(0),
+                    status: exit_status,
                     stdout: output.into_bytes(),
                     stderr: Vec::new(),
                 })

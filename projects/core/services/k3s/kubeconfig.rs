@@ -11,8 +11,8 @@ pub fn fetch_kubeconfig_content(primary_hostname: &str, config: &EnvConfig) -> R
     println!("  Fetching kubeconfig...");
     
     // First, try to get kubeconfig from environment variable (from 1Password)
-    if let Ok(kubeconfig_content) = std::env::var("KUBECONFIG_CONTENT") {
-        println!("  ✓ Using kubeconfig from KUBECONFIG_CONTENT environment variable");
+    if let Ok(kubeconfig_content) = std::env::var("KUBE_CONFIG") {
+        println!("  ✓ Using kubeconfig from KUBE_CONFIG environment variable");
         let mut kubeconfig = kubeconfig_content;
         
         // Get Tailscale IP/hostname for the primary node to replace 127.0.0.1
@@ -34,14 +34,12 @@ pub fn fetch_kubeconfig_content(primary_hostname: &str, config: &EnvConfig) -> R
     
     // If not in environment variable, provide helpful error message
     anyhow::bail!(
-        "Kubeconfig not found in KUBECONFIG_CONTENT environment variable.\n\
+        "Kubeconfig not found in KUBE_CONFIG environment variable.\n\
          Please add the kubeconfig to your 1Password vault and set it as:\n\
-         KUBECONFIG_CONTENT=\"<kubeconfig-content>\"\n\
+         KUBE_CONFIG=\"<kubeconfig-content>\"\n\
          \n\
-         To get the kubeconfig from {}:\n\
-         ssh {} 'sudo cat /etc/rancher/k3s/k3s.yaml'",
-        primary_hostname,
-        primary_hostname
+         The kubeconfig should have been printed during cluster initialization.\n\
+         Copy it from the init output and add it to your 1Password environment variables."
     )
 }
 
