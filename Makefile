@@ -106,6 +106,55 @@ install-rust-targets: install-rust
 install-rust-deps: install-rust
 	@echo "Installing Rust crate dependencies..."
 	@. $$HOME/.cargo/env 2>/dev/null || true; \
+	OS=$$(uname -s); \
+	echo "Checking for C compiler (cc/gcc)..."; \
+	if ! command -v cc >/dev/null 2>&1 && ! command -v gcc >/dev/null 2>&1; then \
+		echo "C compiler (cc) not found. Installing for platform..."; \
+		if [ "$$OS" = "Linux" ]; then \
+			if command -v apt-get >/dev/null 2>&1; then \
+				echo "Installing build-essential (includes gcc/cc) via apt..."; \
+				if [ -f /etc/apt/sources.list.d/1password.list ]; then \
+					if ! sudo apt-get update 2>&1 | grep -q "Malformed entry"; then \
+						:; \
+					else \
+						echo "⚠️  Detected malformed repository file. Cleaning up..."; \
+						sudo rm -f /etc/apt/sources.list.d/1password.list; \
+					fi; \
+				fi; \
+				sudo apt-get update && sudo apt-get install -y build-essential || echo "⚠️  Failed to install build-essential"; \
+			elif command -v yum >/dev/null 2>&1; then \
+				echo "Installing gcc via yum..."; \
+				sudo yum install -y gcc || echo "⚠️  Failed to install gcc via yum"; \
+			elif command -v dnf >/dev/null 2>&1; then \
+				echo "Installing gcc via dnf..."; \
+				sudo dnf install -y gcc || echo "⚠️  Failed to install gcc via dnf"; \
+			elif command -v pacman >/dev/null 2>&1; then \
+				echo "Installing base-devel (includes gcc) via pacman..."; \
+				sudo pacman -S --noconfirm base-devel || echo "⚠️  Failed to install base-devel"; \
+			elif command -v zypper >/dev/null 2>&1; then \
+				echo "Installing gcc via zypper..."; \
+				sudo zypper install -y gcc || echo "⚠️  Failed to install gcc via zypper"; \
+			else \
+				echo "⚠️  No supported package manager found. Please install gcc/cc manually"; \
+			fi; \
+		elif [ "$$OS" = "Darwin" ]; then \
+			if command -v brew >/dev/null 2>&1; then \
+				echo "Installing Xcode Command Line Tools (includes cc)..."; \
+				xcode-select --install 2>/dev/null || echo "⚠️  Xcode Command Line Tools may already be installed or installation requires manual approval"; \
+			else \
+				echo "⚠️  Please install Xcode Command Line Tools manually: xcode-select --install"; \
+			fi; \
+		else \
+			echo "⚠️  Unsupported OS: $$OS. Please install gcc/cc manually"; \
+		fi; \
+		if command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1; then \
+			echo "✓ C compiler installed: $$(cc --version 2>&1 | head -1 || gcc --version 2>&1 | head -1)"; \
+		else \
+			echo "⚠️  C compiler installation may have failed. Continuing anyway..."; \
+		fi; \
+	else \
+		echo "✓ C compiler found: $$(cc --version 2>&1 | head -1 || gcc --version 2>&1 | head -1)"; \
+	fi; \
 	echo "Installing cross for cross-compilation..."; \
 	if command -v cross >/dev/null 2>&1; then \
 		echo "Upgrading cross to latest version..."; \
@@ -300,8 +349,91 @@ install-tools:
 	@echo "Installing development tools..."
 	@# Detect OS
 	@OS=$$(uname -s); \
+	if ! command -v cc >/dev/null 2>&1 && ! command -v gcc >/dev/null 2>&1; then \
+		echo "Installing C compiler (build-essential)..."; \
+		if [ "$$OS" = "Linux" ]; then \
+			if command -v apt-get >/dev/null 2>&1; then \
+				if [ -f /etc/apt/sources.list.d/1password.list ]; then \
+					if ! sudo apt-get update 2>&1 | grep -q "Malformed entry"; then \
+						:; \
+					else \
+						echo "⚠️  Detected malformed repository file. Cleaning up..."; \
+						sudo rm -f /etc/apt/sources.list.d/1password.list; \
+					fi; \
+				fi; \
+				sudo apt-get update && sudo apt-get install -y build-essential || echo "⚠️  Failed to install build-essential"; \
+			elif command -v yum >/dev/null 2>&1; then \
+				sudo yum install -y gcc || echo "⚠️  Failed to install gcc via yum"; \
+			elif command -v dnf >/dev/null 2>&1; then \
+				sudo dnf install -y gcc || echo "⚠️  Failed to install gcc via dnf"; \
+			elif command -v pacman >/dev/null 2>&1; then \
+				sudo pacman -S --noconfirm base-devel || echo "⚠️  Failed to install base-devel"; \
+			elif command -v zypper >/dev/null 2>&1; then \
+				sudo zypper install -y gcc || echo "⚠️  Failed to install gcc via zypper"; \
+			else \
+				echo "⚠️  No supported package manager found. Please install gcc/cc manually"; \
+			fi; \
+		elif [ "$$OS" = "Darwin" ]; then \
+			if command -v brew >/dev/null 2>&1; then \
+				echo "Installing Xcode Command Line Tools (includes cc)..."; \
+				xcode-select --install 2>/dev/null || echo "⚠️  Xcode Command Line Tools may already be installed or installation requires manual approval"; \
+			else \
+				echo "⚠️  Please install Xcode Command Line Tools manually: xcode-select --install"; \
+			fi; \
+		fi; \
+		if command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1; then \
+			echo "✓ C compiler installed: $$(cc --version 2>&1 | head -1 || gcc --version 2>&1 | head -1)"; \
+		fi; \
+	else \
+		echo "✓ C compiler found: $$(cc --version 2>&1 | head -1 || gcc --version 2>&1 | head -1)"; \
+	fi; \
 	if ! command -v docker >/dev/null 2>&1; then \
-		echo "⚠️  Docker not found. Install from: https://www.docker.com/products/docker-desktop"; \
+		echo "Installing Docker..."; \
+		if [ "$$OS" = "Darwin" ]; then \
+			if command -v brew >/dev/null 2>&1; then \
+				brew install --cask docker || echo "⚠️  Failed to install Docker via Homebrew. Install from: https://www.docker.com/products/docker-desktop"; \
+			else \
+				echo "⚠️  Homebrew not found. Install Docker from: https://www.docker.com/products/docker-desktop"; \
+			fi; \
+		elif [ "$$OS" = "Linux" ]; then \
+			if command -v apt-get >/dev/null 2>&1; then \
+				echo "Installing Docker via apt..."; \
+				if ! command -v curl >/dev/null 2>&1; then \
+					echo "Installing curl first..."; \
+					sudo apt-get update && sudo apt-get install -y curl ca-certificates gnupg || echo "⚠️  Failed to install prerequisites"; \
+				fi; \
+				if command -v curl >/dev/null 2>&1; then \
+					sudo install -m 0755 -d /etc/apt/keyrings && \
+					curl -fsSL https://download.docker.com/linux/debian/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg && \
+					sudo chmod a+r /etc/apt/keyrings/docker.gpg && \
+					echo "deb [arch=$$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $$(. /etc/os-release && echo "$$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null && \
+					sudo apt-get update && sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || echo "⚠️  Failed to install Docker. See: https://docs.docker.com/engine/install/debian/"; \
+				else \
+					echo "⚠️  curl not available. Cannot install Docker automatically."; \
+				fi; \
+			elif command -v yum >/dev/null 2>&1; then \
+				echo "Installing Docker via yum..."; \
+				sudo yum install -y yum-utils && \
+				sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo && \
+				sudo yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || echo "⚠️  Failed to install Docker via yum"; \
+			elif command -v dnf >/dev/null 2>&1; then \
+				echo "Installing Docker via dnf..."; \
+				sudo dnf install -y dnf-plugins-core && \
+				sudo dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo && \
+				sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || echo "⚠️  Failed to install Docker via dnf"; \
+			else \
+				echo "⚠️  Unsupported package manager. Install Docker from: https://docs.docker.com/engine/install/"; \
+			fi; \
+			if command -v docker >/dev/null 2>&1; then \
+				echo "✓ Docker installed: $$(docker --version)"; \
+				if command -v systemctl >/dev/null 2>&1; then \
+					echo "Starting Docker service..."; \
+					sudo systemctl enable docker && sudo systemctl start docker || echo "⚠️  Failed to start Docker service"; \
+				fi; \
+			fi; \
+		else \
+			echo "⚠️  Unsupported OS: $$OS. Install Docker from: https://www.docker.com/products/docker-desktop"; \
+		fi; \
 	else \
 		echo "✓ Docker installed: $$(docker --version)"; \
 	fi; \
@@ -357,6 +489,43 @@ install-tools:
 		fi; \
 	fi; \
 	\
+	if ! command -v jq >/dev/null 2>&1; then \
+		echo "Installing jq (required for 1Password CLI integration)..."; \
+		if [ "$$OS" = "Darwin" ]; then \
+			if command -v brew >/dev/null 2>&1; then \
+				brew install jq || echo "⚠️  Failed to install jq"; \
+			else \
+				echo "⚠️  Homebrew not found. Install jq manually: brew install jq"; \
+			fi; \
+		elif [ "$$OS" = "Linux" ]; then \
+			if command -v apt-get >/dev/null 2>&1; then \
+				echo "Installing jq via apt..."; \
+				sudo apt-get update && sudo apt-get install -y jq || echo "⚠️  Failed to install jq via apt"; \
+			elif command -v yum >/dev/null 2>&1; then \
+				echo "Installing jq via yum..."; \
+				sudo yum install -y jq || echo "⚠️  Failed to install jq via yum"; \
+			elif command -v dnf >/dev/null 2>&1; then \
+				echo "Installing jq via dnf..."; \
+				sudo dnf install -y jq || echo "⚠️  Failed to install jq via dnf"; \
+			elif command -v pacman >/dev/null 2>&1; then \
+				echo "Installing jq via pacman..."; \
+				sudo pacman -S --noconfirm jq || echo "⚠️  Failed to install jq via pacman"; \
+			elif command -v zypper >/dev/null 2>&1; then \
+				echo "Installing jq via zypper..."; \
+				sudo zypper install -y jq || echo "⚠️  Failed to install jq via zypper"; \
+			else \
+				echo "⚠️  No supported package manager found. Install jq manually from: https://stedolan.github.io/jq/download/"; \
+			fi; \
+		else \
+			echo "⚠️  Unsupported OS: $$OS. Install jq manually from: https://stedolan.github.io/jq/download/"; \
+		fi; \
+		if command -v jq >/dev/null 2>&1; then \
+			echo "✓ jq installed: $$(jq --version)"; \
+		fi; \
+	else \
+		echo "✓ jq installed: $$(jq --version)"; \
+	fi; \
+	\
 	if ! command -v op >/dev/null 2>&1; then \
 		echo "Installing 1Password CLI..."; \
 		if [ "$$OS" = "Darwin" ]; then \
@@ -367,13 +536,31 @@ install-tools:
 			fi; \
 		elif [ "$$OS" = "Linux" ]; then \
 			echo "Installing 1Password CLI for Linux..."; \
-			curl -sS https://downloads.1password.com/linux/keys/1password.asc | sudo gpg --dearmor --output /usr/share/keyrings/1password-archive-keyring.gpg && \
-			echo "deb [arch=$$(dpkg --print-architecture) signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/$$( . /etc/os-release && echo "$$VERSION_CODENAME" ) stable" | sudo tee /etc/apt/sources.list.d/1password.list && \
-			sudo mkdir -p /etc/debsig/policies/AC2D62742012EA22/ && \
-			curl -sS https://downloads.1password.com/linux/debian/debsig/1password.pol | sudo tee /etc/debsig/policies/AC2D62742012EA22/1password.pol && \
-			sudo mkdir -p /usr/share/debsig/keyrings/AC2D62742012EA22 && \
-			curl -sS https://downloads.1password.com/linux/keys/1password.asc | sudo gpg --dearmor --output /usr/share/debsig/keyrings/AC2D62742012EA22/debsig.gpg && \
-			sudo apt-get update && sudo apt-get install -y 1password-cli || echo "⚠️  Failed to install 1Password CLI. See: https://developer.1password.com/docs/cli/get-started/#install"; \
+			if [ -f /etc/apt/sources.list.d/1password.list ]; then \
+				echo "Removing existing 1Password repository file (will recreate)..."; \
+				sudo rm -f /etc/apt/sources.list.d/1password.list; \
+			fi; \
+			if ! command -v apt-get >/dev/null 2>&1; then \
+				echo "⚠️  apt-get not found. 1Password CLI installation requires Debian/Ubuntu with apt-get. See: https://developer.1password.com/docs/cli/get-started/#install"; \
+			elif ! command -v curl >/dev/null 2>&1; then \
+				echo "⚠️  curl not found. Installing curl first..."; \
+				sudo apt-get update && sudo apt-get install -y curl || echo "⚠️  Failed to install curl. Please install curl manually."; \
+			elif ! command -v gpg >/dev/null 2>&1; then \
+				echo "⚠️  gpg not found. Installing gpg first..."; \
+				sudo apt-get update && sudo apt-get install -y gpg || echo "⚠️  Failed to install gpg. Please install gpg manually."; \
+			else \
+				curl -sS https://downloads.1password.com/linux/keys/1password.asc | \
+				  sudo gpg --dearmor --output /usr/share/keyrings/1password-archive-keyring.gpg && \
+				  echo "deb [arch=$$(dpkg --print-architecture) signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/$$(dpkg --print-architecture) stable main" | \
+				  sudo tee /etc/apt/sources.list.d/1password.list && \
+				  sudo mkdir -p /etc/debsig/policies/AC2D62742012EA22/ && \
+				  curl -sS https://downloads.1password.com/linux/debian/debsig/1password.pol | \
+				  sudo tee /etc/debsig/policies/AC2D62742012EA22/1password.pol && \
+				  sudo mkdir -p /usr/share/debsig/keyrings/AC2D62742012EA22 && \
+				  curl -sS https://downloads.1password.com/linux/keys/1password.asc | \
+				  sudo gpg --dearmor --output /usr/share/debsig/keyrings/AC2D62742012EA22/debsig.gpg && \
+				  sudo apt update && sudo apt install -y 1password-cli || echo "⚠️  Failed to install 1Password CLI. See: https://developer.1password.com/docs/cli/get-started/#install"; \
+			fi; \
 		else \
 			echo "⚠️  Unsupported OS for 1Password CLI auto-install. See: https://developer.1password.com/docs/cli/get-started/#install"; \
 		fi; \

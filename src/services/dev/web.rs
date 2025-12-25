@@ -16,9 +16,9 @@ pub async fn dev_web_bare_metal(port: u16, static_dir: Option<PathBuf>) -> Resul
     }
 
     // Start agent with web server on bare metal
-    // Agent on default port (23500) or can be configured
+    // Agent on default port (13500) or can be configured
     // Web server on the specified port
-    let agent_port = 23500; // Default agent port
+    let agent_port = 13500; // Default agent port
     println!("🚀 Starting halvor agent and web server locally (bare metal)...");
     println!(
         "🔌 Agent API available on port {} (for CLI connections)",

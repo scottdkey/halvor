@@ -1,7 +1,7 @@
 //! K3s node joining logic
 
 use crate::config::EnvConfig;
-use crate::services::k3s::{cleanup, kubeconfig, tools, verify};
+use crate::services::k3s::{agent_service, cleanup, kubeconfig, tools, verify};
 use crate::services::tailscale;
 use crate::utils::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
@@ -234,6 +234,25 @@ pub fn join_cluster(
     println!("Checking for existing K3s installation...");
     cleanup::cleanup_existing_k3s(&exec)?;
 
+    // Build and push halvor to experimental release if running in development mode
+    // This ensures the remote node can download the latest version
+    if crate::services::k3s::utils::is_development_mode() {
+        println!();
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!("Building and pushing halvor to experimental release");
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!();
+        
+        use crate::services::build;
+        if let Err(e) = build::build_and_push_experimental() {
+            eprintln!("⚠️  Warning: Failed to build/push to experimental: {}", e);
+            eprintln!("   Continuing with existing release...");
+        } else {
+            println!("✓ Halvor built and pushed to experimental release");
+        }
+        println!();
+    }
+
     // Ensure halvor is installed first (the glue that enables remote operations)
     println!();
     println!("Checking for halvor (required for remote operations)...");
@@ -262,9 +281,111 @@ pub fn join_cluster(
         .text()
         .context("Failed to read K3s install script content")?;
 
-    // Write script to remote host
+    // Detect init system to help K3s script detect correctly
+    println!("Detecting init system...");
+    let has_systemd = exec
+        .execute_shell("systemctl --version >/dev/null 2>&1 && echo yes || echo no")
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim() == "yes")
+        .unwrap_or(false);
+    
+    let has_openrc = exec
+        .execute_shell("command -v rc-update >/dev/null 2>&1 && echo yes || echo no")
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim() == "yes")
+        .unwrap_or(false);
+    
+    if has_systemd {
+        println!("✓ Detected systemd init system");
+    } else if has_openrc {
+        println!("✓ Detected OpenRC init system");
+    } else {
+        println!("⚠ Warning: Could not detect init system, assuming systemd");
+    }
+    
+    // Patch the K3s script to fix incorrect init system detection and sudo issues
+    // The script incorrectly tries to remove /etc/systemd/system when it detects OpenRC
+    // We'll prevent that by ensuring systemd detection is correct
+    let mut patched_script = k3s_script;
+    
+    // Fix the dangerous rm -f /etc/systemd/system line that appears when detection is wrong
+    // Replace it with a safer check
+    if patched_script.contains("rm -f /etc/systemd/system") {
+        println!("⚠ Patching K3s script to fix incorrect init system detection...");
+        patched_script = patched_script.replace(
+            "rm -f /etc/systemd/system",
+            "# Patched by halvor: removed dangerous rm command"
+        );
+    }
+    
+    // Fix broken sudo calls in the K3s script
+    // The script sometimes calls sudo incorrectly, causing "usage: sudo" errors
+    println!("⚠ Patching K3s script to fix sudo handling...");
+    
+    // Fix common sudo issues in the script:
+    // 1. Replace "sudo " with proper sudo calls (only if followed by a command)
+    // 2. Fix cases where sudo might be called with no arguments
+    // 3. Ensure sudo commands are properly formatted
+    
+    // Fix pattern: sudo followed by just whitespace or newline (invalid)
+    patched_script = patched_script.replace("sudo \n", "sudo -v\n");
+    patched_script = patched_script.replace("sudo \r\n", "sudo -v\r\n");
+    
+    // Fix pattern: sudo$ (sudo at end of line with no command)
+    patched_script = patched_script.replace("sudo$\n", "sudo -v\n");
+    
+    // Fix pattern: sudo || (sudo with no command before ||)
+    patched_script = patched_script.replace("sudo ||", "sudo -v ||");
+    
+    // Fix pattern: sudo && (sudo with no command before &&)
+    patched_script = patched_script.replace("sudo &&", "sudo -v &&");
+    
+    // Add a helper function at the beginning to ensure sudo works
+    let sudo_fix = r#"
+# Patched by halvor: Ensure sudo works correctly
+_sudo() {
+    if [ "$(id -u)" = "0" ]; then
+        # Already root, no sudo needed
+        "$@"
+    else
+        # Not root, use sudo
+        if command -v sudo >/dev/null 2>&1; then
+            sudo "$@"
+        else
+            echo "ERROR: sudo is required but not found" >&2
+            exit 1
+        fi
+    fi
+}
+"#;
+    
+    // Insert the fix near the beginning of the script (after shebang)
+    if let Some(pos) = patched_script.find('\n') {
+        let (shebang, rest) = patched_script.split_at(pos + 1);
+        patched_script = format!("{}{}{}", shebang, sudo_fix, rest);
+        
+        // Replace common sudo patterns with _sudo helper
+        // But be careful - only replace standalone sudo calls, not ones that are part of larger commands
+        // The script should use _sudo for systemd operations
+        patched_script = patched_script.replace("sudo systemctl", "_sudo systemctl");
+        patched_script = patched_script.replace("sudo mkdir", "_sudo mkdir");
+        patched_script = patched_script.replace("sudo tee", "_sudo tee");
+        patched_script = patched_script.replace("sudo chmod", "_sudo chmod");
+        patched_script = patched_script.replace("sudo chown", "_sudo chown");
+    }
+    
+    // If systemd is detected, ensure the script knows about it
+    if has_systemd && !has_openrc {
+        // Set environment variable to help script detection
+        // The script checks for systemd by looking for systemctl
+        // We've already verified it exists, so the script should detect it correctly
+    }
+
+    // Write patched script to remote host
     let remote_script_path = "/tmp/k3s-install.sh";
-    exec.write_file(remote_script_path, k3s_script.as_bytes())
+    exec.write_file(remote_script_path, patched_script.as_bytes())
         .context("Failed to write K3s install script to remote host")?;
 
     // Make script executable using execute_simple (same approach as Helm)
@@ -279,16 +400,33 @@ pub fn join_cluster(
     // Build install command
     // For control plane nodes joining, we need to use --server flag
     // For agent nodes, we also use --server flag
-    let install_cmd = if control_plane {
-        format!(
-            "{} server --server=https://{}:6443 --token={} --disable=traefik {}",
-            remote_script_path, server_addr, token, tls_sans
-        )
+    // Run with sudo from the start if not root to avoid script's internal sudo handling issues
+    let install_cmd = if exec.get_username().ok().as_deref() == Some("root") {
+        // Already running as root, no sudo needed
+        if control_plane {
+            format!(
+                "{} server --server=https://{}:6443 --token={} --disable=traefik {}",
+                remote_script_path, server_addr, token, tls_sans
+            )
+        } else {
+            format!(
+                "{} agent --server=https://{}:6443 --token={} {}",
+                remote_script_path, server_addr, token, tls_sans
+            )
+        }
     } else {
-        format!(
-            "{} agent --server=https://{}:6443 --token={} {}",
-            remote_script_path, server_addr, token, tls_sans
-        )
+        // Not root - run with sudo to avoid script's internal sudo handling issues
+        if control_plane {
+            format!(
+                "sudo {} server --server=https://{}:6443 --token={} --disable=traefik {}",
+                remote_script_path, server_addr, token, tls_sans
+            )
+        } else {
+            format!(
+                "sudo {} agent --server=https://{}:6443 --token={} {}",
+                remote_script_path, server_addr, token, tls_sans
+            )
+        }
     };
 
     println!("Join command details:");
@@ -633,6 +771,32 @@ pub fn join_cluster(
     } else {
         println!("✓ Successfully joined cluster as agent node!");
     }
+    println!();
+
+    // Setup halvor agent service on the node
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("Setting up halvor agent service");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+    
+    // Check if web UI should be enabled (check for HALVOR_WEB_DIR or web build)
+    let web_port = if std::env::var("HALVOR_WEB_DIR").is_ok() {
+        Some(13000)
+    } else {
+        None
+    };
+    
+    if let Err(e) = agent_service::setup_agent_service(&exec, web_port) {
+        eprintln!("⚠️  Warning: Failed to setup halvor agent service: {}", e);
+        eprintln!("   You can set it up manually later with: halvor agent start --daemon");
+    } else {
+        println!("✓ Halvor agent service is running on {}", hostname);
+        println!("  Agent API: port 13500 (over Tailscale)");
+        if web_port.is_some() {
+            println!("  Web UI: port 13000 (over Tailscale)");
+        }
+    }
+    println!();
 
     Ok(())
 }

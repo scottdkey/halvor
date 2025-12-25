@@ -11,18 +11,14 @@ pub mod backup;
 pub mod build;
 pub mod config;
 pub mod dev;
-pub mod docker;
 pub mod generate;
 pub mod helm;
+pub mod init;
 pub mod install;
-pub mod k3s;
+pub mod join;
 pub mod list;
 pub mod npm;
-pub mod pia_vpn;
-pub mod portainer;
-pub mod smb;
 pub mod sync;
-pub mod tailscale;
 pub mod uninstall;
 pub mod update;
 pub mod utils;
@@ -79,34 +75,22 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
                 uninstall::handle_guided_uninstall(hostname.as_deref())?;
             }
         }
-        Smb { uninstall } => {
-            smb::handle_smb(hostname.as_deref(), uninstall)?;
-        }
-        Docker { diagnose } => {
-            if diagnose {
-                docker::diagnose_docker(hostname.as_deref())?;
-            } else {
-                let target_host = hostname.as_deref().unwrap_or("localhost");
-                docker::handle_docker(target_host)?;
-            }
-        }
         Npm {
             compose_file,
             service,
         } => {
             npm::handle_npm(hostname.as_deref(), &compose_file, service.as_deref())?;
         }
-        Vpn { command } => {
-            // Convert from halvor::commands::pia_vpn::VpnCommands to commands::pia_vpn::VpnCommands
-            // These are the same type, just different path prefixes
-            let local_command: pia_vpn::VpnCommands = unsafe { mem::transmute(command) };
-            pia_vpn::handle_vpn(local_command)?;
-        }
         Update {
+            app,
             experimental,
             force,
         } => {
-            update::handle_update(experimental, force)?;
+            update::handle_update(hostname.as_deref(), app.as_deref(), experimental, force)?;
+        }
+        Init { token, yes } => {
+            let target_host = hostname.as_deref().unwrap_or("localhost");
+            init::handle_init(target_host, token.as_deref(), yes)?;
         }
         Config {
             verbose,
@@ -122,11 +106,6 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
             let local_command: config::DbCommands = unsafe { mem::transmute(command) };
             config::handle_db_command(local_command)?;
         }
-        Agent { command } => {
-            let local_command: agent::AgentCommands = unsafe { mem::transmute(command) };
-            let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(agent::handle_agent(local_command))?;
-        }
         Build { command } => {
             let local_command: build::BuildCommands = unsafe { mem::transmute(command) };
             build::handle_build(local_command)?;
@@ -140,13 +119,23 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
             let local_command: generate::GenerateCommands = unsafe { mem::transmute(command) };
             generate::handle_generate(local_command)?;
         }
-        K3s { command } => {
-            let local_command: k3s::K3sCommands = unsafe { mem::transmute(command) };
-            k3s::handle_k3s(hostname.as_deref(), local_command)?;
-        }
         Helm { command } => {
             let local_command: helm::HelmCommands = unsafe { mem::transmute(command) };
             helm::handle_helm(hostname.as_deref(), local_command)?;
+        }
+        Join {
+            hostname: join_hostname,
+            server,
+            token,
+            control_plane,
+        } => {
+            join::handle_join(
+                hostname.as_deref(),
+                join_hostname,
+                server,
+                token,
+                control_plane,
+            )?;
         }
     }
     Ok(())

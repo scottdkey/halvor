@@ -1,7 +1,7 @@
 // Build command handler - delegates to build service modules
 use crate::services::build::{
     build_and_sign_ios, build_and_sign_mac, build_android, build_cli, build_web, build_web_docker,
-    push_ios_to_app_store, run_web_prod, sign_android,
+    push_ios_to_app_store, run_web_prod, sign_android, build_and_push_experimental,
 };
 use crate::services::docker;
 use anyhow::Result;
@@ -48,6 +48,9 @@ pub enum BuildCommands {
         /// Push built binaries to GitHub releases
         #[arg(long)]
         push: bool,
+        /// Build for current platform and push to experimental release
+        #[arg(long)]
+        experimental: bool,
     },
     /// Build PIA VPN Docker container
     #[command(name = "pia-vpn", alias = "vpn")]
@@ -106,11 +109,16 @@ pub fn handle_build(command: BuildCommands) -> Result<()> {
             }
             println!("✓ Web build complete");
         }
-        BuildCommands::Cli { platforms, targets, push } => {
-            let platforms_str: Option<&str> = platforms.as_deref();
-            let targets_str: Option<&str> = targets.as_deref();
-            build_cli(platforms_str, targets_str, push)?;
-            println!("✓ CLI build complete");
+        BuildCommands::Cli { platforms, targets, push, experimental } => {
+            if experimental {
+                build_and_push_experimental()?;
+                println!("✓ CLI built and pushed to experimental release");
+            } else {
+                let platforms_str: Option<&str> = platforms.as_deref();
+                let targets_str: Option<&str> = targets.as_deref();
+                build_cli(platforms_str, targets_str, push)?;
+                println!("✓ CLI build complete");
+            }
         }
         BuildCommands::PiaVpn { no_cache, push, release } => {
             docker::build_container("pia-vpn", no_cache, push, release)?;

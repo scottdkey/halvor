@@ -27,6 +27,39 @@ const PLATFORM_TARGETS: &[(&str, &[&str])] = &[
     ),
 ];
 
+/// Build CLI binary for current platform and push to experimental release
+pub fn build_and_push_experimental() -> Result<()> {
+    use std::env::consts::{ARCH, OS};
+    
+    // Detect current platform
+    let current_target = match (OS, ARCH) {
+        ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
+        ("linux", "aarch64") => "aarch64-unknown-linux-gnu",
+        ("macos", "aarch64") => "aarch64-apple-darwin",
+        ("macos", "x86_64") => "x86_64-apple-darwin",
+        ("windows", "x86_64") => "x86_64-pc-windows-msvc",
+        _ => anyhow::bail!("Unsupported platform: {} {}", OS, ARCH),
+    };
+    
+    println!("Building halvor for current platform: {}", current_target);
+    println!("This will be pushed to the 'experimental' GitHub release\n");
+    
+    // Build for current target
+    let binary_path = build_target(current_target)?
+        .context(format!("Failed to build for target: {}", current_target))?;
+    
+    println!("✓ Build successful: {}", binary_path.display());
+    
+    // Push to experimental release
+    println!("\n📤 Pushing to GitHub 'experimental' release...");
+    push_cli_to_github(&[(current_target.to_string(), binary_path)], Some("experimental"))?;
+    
+    println!("\n✓ Successfully pushed to experimental release!");
+    println!("  Download URL: https://github.com/scottdkey/halvor/releases/tag/experimental");
+    
+    Ok(())
+}
+
 /// Build CLI binaries for specified platforms or targets
 pub fn build_cli(platforms: Option<&str>, targets: Option<&str>, push: bool) -> Result<()> {
     let platform_targets: HashMap<&str, Vec<&str>> = PLATFORM_TARGETS
@@ -197,7 +230,7 @@ pub fn build_cli(platforms: Option<&str>, targets: Option<&str>, push: bool) -> 
     // Push to GitHub releases if requested
     if push {
         println!("\n📤 Pushing to GitHub releases...");
-        push_cli_to_github(&built_binaries)?;
+        push_cli_to_github(&built_binaries, None)?;
     }
 
     Ok(())

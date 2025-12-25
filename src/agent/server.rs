@@ -14,7 +14,7 @@ pub struct AgentServer {
 impl Default for AgentServer {
     fn default() -> Self {
         Self {
-            port: 23500,
+            port: 13500,
             secret: None,
         }
     }

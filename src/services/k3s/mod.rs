@@ -3,6 +3,7 @@
 //! Handles K3s installation, HA configuration, and etcd snapshots.
 
 // Module declarations
+mod agent_service;
 mod cleanup;
 mod init;
 mod join;

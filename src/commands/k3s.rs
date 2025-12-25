@@ -2,7 +2,8 @@
 
 use crate::config;
 use crate::services::k3s;
-use anyhow::Result;
+use crate::utils::exec::CommandExecutor;
+use anyhow::{Context, Result};
 use clap::Subcommand;
 
 #[derive(Subcommand, Clone)]
@@ -18,9 +19,12 @@ pub enum K3sCommands {
     },
     /// Join a node to the cluster as control plane or agent
     Join {
-        /// First control plane node address (e.g., oak or 192.168.1.10)
+        /// Target hostname to join to the cluster (can also be specified via -H/--hostname)
+        #[arg(value_name = "HOSTNAME")]
+        hostname: Option<String>,
+        /// First control plane node address (e.g., frigg or 192.168.1.10). If not provided, will try to auto-detect from config.
         #[arg(long)]
-        server: String,
+        server: Option<String>,
         /// Cluster join token (if not provided, will be loaded from K3S_TOKEN env var or fetched from server)
         #[arg(long)]
         token: Option<String>,
@@ -138,10 +142,113 @@ pub fn handle_k3s(hostname: Option<&str>, command: K3sCommands) -> Result<()> {
             k3s::init_control_plane(target_host, token.as_deref(), yes, &config)?;
         }
         K3sCommands::Join {
+            hostname: join_hostname,
             server,
             token,
             control_plane,
         } => {
+            // Use positional hostname if provided, otherwise use global hostname
+            let join_target = join_hostname.as_deref().unwrap_or(target_host);
+            // Auto-detect server if not provided
+            let server_addr = if let Some(s) = server {
+                s
+            } else {
+                // First, check if we're running locally on a node with k3s
+                // This handles the case where we're on frigg and want to use frigg as the server
+                let mut found_primary: Option<String> = None;
+                
+                // First, check if we're running locally on a node with k3s
+                // This handles the case where we're on frigg and want to use frigg as the server
+                if target_host == "localhost" {
+                    let local_exec = crate::utils::exec::Executor::Local;
+                    let k3s_check = local_exec.execute_shell("systemctl is-active k3s 2>/dev/null || echo inactive").ok();
+                    if let Some(check) = k3s_check {
+                        let status_cow = String::from_utf8_lossy(&check.stdout);
+                        let status = status_cow.trim().to_string();
+                        if status == "active" {
+                            // We're on a node with k3s - try to find its hostname in config
+                            if let Ok(current_hostname) = crate::config::service::get_current_hostname() {
+                                // Use find_hostname_in_config to normalize (handles .ts.net, etc.)
+                                if let Some(normalized_hostname) = crate::config::service::find_hostname_in_config(&current_hostname, &config) {
+                                    found_primary = Some(normalized_hostname);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // If we didn't find a local primary, check remote nodes
+                // Prioritize frigg first, then check other nodes
+                if found_primary.is_none() {
+                    let possible_primaries = vec!["frigg", "oak", "primary"];
+                    
+                    for primary_name in possible_primaries {
+                        // Try to get host config (this will normalize the hostname)
+                        if let Ok(_host_config) = crate::services::tailscale::get_host_config(&config, primary_name) {
+                            // Get the normalized hostname that was found
+                            let normalized_name = crate::config::service::find_hostname_in_config(primary_name, &config)
+                                .unwrap_or_else(|| primary_name.to_string());
+                            
+                            // Check if this node has k3s running
+                            // Only try to connect if it's not the same as what we already checked locally
+                            if found_primary.as_ref().map(|s| s.as_str()) != Some(&normalized_name) {
+                                let exec = crate::utils::exec::Executor::new(primary_name, &config).ok();
+                                if let Some(ref e) = exec {
+                                    // Check if executor is local - if so, skip (we already checked)
+                                    if e.is_local() {
+                                        continue;
+                                    }
+                                    
+                                    let k3s_check = e.execute_shell("systemctl is-active k3s 2>/dev/null || echo inactive").ok();
+                                    if let Some(check) = k3s_check {
+                                        let status_cow = String::from_utf8_lossy(&check.stdout);
+                                        let status = status_cow.trim().to_string();
+                                        if status == "active" {
+                                            found_primary = Some(normalized_name);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if let Some(primary) = found_primary {
+                    println!("Auto-detected primary control plane node: {}", primary);
+                    // Get Tailscale hostname from config directly
+                    let host_config = crate::services::tailscale::get_host_config(&config, &primary)
+                        .with_context(|| format!("Failed to get config for {}", primary))?;
+                    
+                    // Get Tailscale hostname from config (preferred) or construct it
+                    let server_addr: String = if let Some(ts_hostname) = &host_config.hostname {
+                        // Use configured Tailscale hostname
+                        if ts_hostname.contains('.') {
+                            ts_hostname.clone()
+                        } else {
+                            // Construct full hostname from tailnet base
+                            format!("{}.{}", ts_hostname, config._tailnet_base)
+                        }
+                    } else if let Some(ts_ip) = &host_config.ip {
+                        // Fallback to IP if no hostname
+                        ts_ip.clone()
+                    } else {
+                        anyhow::bail!(
+                            "No Tailscale hostname or IP configured for {} in config",
+                            primary
+                        );
+                    };
+                    
+                    println!("Using server address from config: {}", server_addr);
+                    server_addr
+                } else {
+                    anyhow::bail!(
+                        "Server address not provided and could not auto-detect primary node.\n\
+                         Please specify --server=<primary_node> (e.g., --server=frigg)"
+                    );
+                }
+            };
+            
             // If token not provided, get it from environment or server
             let cluster_token = if let Some(t) = token {
                 t
@@ -152,12 +259,12 @@ pub fn handle_k3s(hostname: Option<&str>, command: K3sCommands) -> Result<()> {
                     env_token
                 } else {
                     // Fallback to getting from server node
-                    println!("Fetching cluster token from {}...", server);
-                    let (_, fetched_token) = k3s::get_cluster_join_info(&server, &config)?;
+                    println!("Fetching cluster token from {}...", server_addr);
+                    let (_, fetched_token) = k3s::get_cluster_join_info(&server_addr, &config)?;
                     fetched_token
                 }
             };
-            k3s::join_cluster(target_host, &server, &cluster_token, control_plane, &config)?;
+            k3s::join_cluster(join_target, &server_addr, &cluster_token, control_plane, &config)?;
         }
         K3sCommands::Status => {
             k3s::show_status(target_host, &config)?;

@@ -242,6 +242,9 @@ pub trait CommandExecutor {
 
     /// Get the current user's home directory
     fn get_home_dir(&self) -> Result<String>;
+
+    /// Check if this is a local executor
+    fn is_local(&self) -> bool;
 }
 
 /// Package manager types
@@ -548,9 +551,9 @@ impl Executor {
             let sudo_password = host_config.sudo_password.clone();
             let sudo_user = host_config.sudo_user.clone();
 
-            // Try to connect via agent first (port 23500)
+            // Try to connect via agent first (port 13500)
             // If agent is available, use it; otherwise fallback to SSH
-            let agent_client = AgentClient::new(&target_host, 23500);
+            let agent_client = AgentClient::new(&target_host, 13500);
             if agent_client.ping().is_ok() {
                 // Agent is available - use it
                 Ok(Executor::Agent {
@@ -767,16 +770,64 @@ impl CommandExecutor for Executor {
     fn write_file(&self, path: &str, content: &[u8]) -> Result<()> {
         match self {
             Executor::Local => {
-                std::fs::write(path, content)
-                    .with_context(|| format!("Failed to write file: {}", path))?;
+                // Check if path requires sudo (system directories)
+                let needs_sudo = path.starts_with("/etc/") 
+                    || path.starts_with("/usr/local/bin/")
+                    || path.starts_with("/opt/")
+                    || path.starts_with("/var/lib/");
+
+                if needs_sudo {
+                    // Use sudo tee for system paths
+                    use std::process::{Command, Stdio};
+                    let mut cmd = Command::new("sudo");
+                    cmd.arg("tee");
+                    cmd.arg(path);
+                    cmd.stdin(Stdio::piped());
+                    cmd.stdout(Stdio::null());
+                    cmd.stderr(Stdio::inherit());
+
+                    let mut child = cmd
+                        .spawn()
+                        .with_context(|| format!("Failed to spawn sudo command for writing file"))?;
+
+                    if let Some(mut stdin) = child.stdin.take() {
+                        stdin.write_all(content)?;
+                        stdin.flush()?;
+                    }
+
+                    let status = child
+                        .wait()
+                        .with_context(|| format!("Failed to write file: {}", path))?;
+
+                    if !status.success() {
+                        anyhow::bail!("Failed to write file: {}", path);
+                    }
+                } else {
+                    std::fs::write(path, content)
+                        .with_context(|| format!("Failed to write file: {}", path))?;
+                }
                 Ok(())
             }
             Executor::Agent { client, .. } => {
-                // Write file via echo/tee command
-                let content_str = String::from_utf8_lossy(content);
-                let escaped_content = shell_escape(&content_str);
-                let cmd = format!("echo -e {} > {}", escaped_content, shell_escape(path));
-                client.execute_command("sh", &["-c", &cmd])?;
+                // Check if path requires sudo
+                let needs_sudo = path.starts_with("/etc/") 
+                    || path.starts_with("/usr/local/bin/")
+                    || path.starts_with("/opt/")
+                    || path.starts_with("/var/lib/");
+
+                if needs_sudo {
+                    // Write via sudo tee
+                    let content_str = String::from_utf8_lossy(content);
+                    let escaped_content = shell_escape(&content_str);
+                    let cmd = format!("echo {} | sudo tee {} > /dev/null", escaped_content, shell_escape(path));
+                    client.execute_command("sh", &["-c", &cmd])?;
+                } else {
+                    // Write file via echo/tee command
+                    let content_str = String::from_utf8_lossy(content);
+                    let escaped_content = shell_escape(&content_str);
+                    let cmd = format!("echo -e {} > {}", escaped_content, shell_escape(path));
+                    client.execute_command("sh", &["-c", &cmd])?;
+                }
                 Ok(())
             }
             Executor::Remote(exec) => exec.write_file(path, content),
@@ -930,6 +981,10 @@ impl CommandExecutor for Executor {
             Executor::Remote(exec) => exec.get_home_dir(),
         }
     }
+
+    fn is_local(&self) -> bool {
+        self.is_local()
+    }
 }
 
 /// Remote command executor (SSH) - SshConnection already implements CommandExecutor
@@ -1002,5 +1057,9 @@ impl CommandExecutor for SshConnection {
         let output = self.execute_shell("echo $HOME")?;
         let home_dir = String::from_utf8(output.stdout)?.trim().to_string();
         Ok(home_dir)
+    }
+
+    fn is_local(&self) -> bool {
+        false
     }
 }

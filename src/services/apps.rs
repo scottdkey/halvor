@@ -44,6 +44,22 @@ pub static APPS: &[AppDefinition] = &[
         aliases: &["ts"],
         namespace: None, // Not applicable for platform tools
     },
+    AppDefinition {
+        name: "smb",
+        category: AppCategory::Platform,
+        description: "SMB share mounts",
+        requires_vpn: false,
+        aliases: &["samba", "cifs"],
+        namespace: None,
+    },
+    AppDefinition {
+        name: "k3s",
+        category: AppCategory::Platform,
+        description: "K3s Kubernetes cluster (initialize primary node)",
+        requires_vpn: false,
+        aliases: &["kubernetes", "k8s"],
+        namespace: None,
+    },
     // Helm charts
     AppDefinition {
         name: "portainer",

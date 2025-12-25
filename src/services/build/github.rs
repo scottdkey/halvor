@@ -5,13 +5,20 @@ use serde_json;
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
+use std::process::Command;
 
 /// Push CLI binaries to GitHub releases
-pub fn push_cli_to_github(binaries: &[(String, PathBuf)]) -> Result<()> {
+/// If release_tag is None, creates a development-{hash} tag
+/// If release_tag is Some("experimental"), creates/updates the experimental release
+pub fn push_cli_to_github(binaries: &[(String, PathBuf)], release_tag: Option<&str>) -> Result<()> {
     let github_user = get_github_user();
     let git_hash = get_git_hash();
-    let tag = format!("development-{}", git_hash);
-    let release_name = format!("Development Build ({})", git_hash);
+    
+    let (tag, release_name) = if let Some(tag_name) = release_tag {
+        (tag_name.to_string(), format!("Experimental Build ({})", git_hash))
+    } else {
+        (format!("development-{}", git_hash), format!("Development Build ({})", git_hash))
+    };
 
     // Check for GitHub token
     let github_token = std::env::var("GITHUB_TOKEN")
@@ -28,20 +35,20 @@ pub fn push_cli_to_github(binaries: &[(String, PathBuf)]) -> Result<()> {
         git_hash
     );
 
-    // Prepare assets
+    // Prepare assets - create tarballs for each binary
     let mut assets: Vec<(String, PathBuf, String)> = Vec::new();
+    let temp_dir = std::env::temp_dir();
+    
     for (target, binary_path) in binaries {
-        let extension = if target.contains("windows") {
-            "exe"
-        } else {
-            "bin"
-        };
-
-        // Create a more readable asset name that distinguishes gnu vs musl
-        let asset_name = format_asset_name(target, extension);
-        assets.push((asset_name.clone(), binary_path.clone(), target.clone()));
-
-        release_body.push_str(&format!("- **{}**: `{}`\n", target, asset_name));
+        // Create tarball for this binary
+        let tarball_name = format_tarball_name(target);
+        let tarball_path = temp_dir.join(&tarball_name);
+        
+        // Create tarball containing the binary named "halvor"
+        create_tarball(binary_path, &tarball_path)?;
+        
+        assets.push((tarball_name.clone(), tarball_path.clone(), target.clone()));
+        release_body.push_str(&format!("- **{}**: `{}`\n", target, tarball_name));
     }
 
     // Create or update release
@@ -206,6 +213,83 @@ fn format_asset_name(target: &str, extension: &str) -> String {
         let target_clean = parts.join("-");
         format!("halvor-{}.{}", target_clean, extension)
     }
+}
+
+/// Create a tarball from a binary file
+/// The tarball will contain the binary named "halvor" (or "halvor.exe" for Windows)
+fn create_tarball(binary_path: &PathBuf, tarball_path: &PathBuf) -> Result<()> {
+    let binary_name = if binary_path.to_string_lossy().contains("windows") {
+        "halvor.exe"
+    } else {
+        "halvor"
+    };
+    
+    // Create tarball: copy binary to temp location with correct name, then tar it
+    let temp_binary = std::env::temp_dir().join(binary_name);
+    std::fs::copy(binary_path, &temp_binary)
+        .context("Failed to copy binary to temp location")?;
+    
+    // Use tar command to create tarball from temp binary
+    let status = Command::new("tar")
+        .arg("czf")
+        .arg(tarball_path)
+        .arg("-C")
+        .arg(temp_binary.parent().unwrap())
+        .arg(binary_name)
+        .status()
+        .context("Failed to create tarball")?;
+    
+    // Clean up temp binary
+    let _ = std::fs::remove_file(&temp_binary);
+    
+    if !status.success() {
+        anyhow::bail!("tar command failed with status: {:?}", status.code());
+    }
+    
+    Ok(())
+}
+
+/// Format tarball name for GitHub release
+/// Matches the format expected by download_halvor_from_github
+/// The download function looks for assets containing the platform string
+/// Platform format: "linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", etc.
+fn format_tarball_name(target: &str) -> String {
+    // Convert target to platform format expected by download function
+    // The download function constructs platform as: "{os}-{arch}" (e.g., "linux-amd64")
+    // Examples:
+    // x86_64-unknown-linux-gnu -> halvor-linux-amd64.tar.gz
+    // aarch64-unknown-linux-gnu -> halvor-linux-arm64.tar.gz
+    // x86_64-unknown-linux-musl -> halvor-linux-amd64.tar.gz (musl handled separately)
+    // aarch64-apple-darwin -> halvor-darwin-arm64.tar.gz
+    // x86_64-apple-darwin -> halvor-darwin-amd64.tar.gz
+    
+    let platform = if target.contains("linux") {
+        let arch = if target.contains("aarch64") || target.contains("arm64") {
+            "arm64"
+        } else {
+            "amd64"
+        };
+        format!("linux-{}", arch)
+    } else if target.contains("darwin") || target.contains("apple") {
+        let arch = if target.contains("aarch64") || target.contains("arm64") {
+            "arm64"
+        } else {
+            "amd64"
+        };
+        format!("darwin-{}", arch)
+    } else if target.contains("windows") {
+        let arch = if target.contains("aarch64") || target.contains("arm64") {
+            "arm64"
+        } else {
+            "amd64"
+        };
+        format!("windows-{}", arch)
+    } else {
+        // Fallback: use target as-is but clean it up
+        target.replace("unknown-", "").replace("pc-", "")
+    };
+    
+    format!("halvor-{}.tar.gz", platform)
 }
 
 /// URL encode asset name for GitHub API

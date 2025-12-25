@@ -10,8 +10,8 @@ use std::time::Duration;
 pub enum AgentCommands {
     /// Start the halvor agent daemon
     Start {
-        /// Port to listen on (default: 23500)
-        #[arg(long, default_value = "23500")]
+        /// Port to listen on (default: 13500)
+        #[arg(long, default_value = "13500")]
         port: u16,
         /// Also start web server on this port (serves UI and API)
         #[arg(long)]
@@ -266,7 +266,7 @@ fn discover_agents(verbose: bool) -> Result<()> {
         println!("Make sure:");
         println!("  - Agents are running on other hosts (halvor agent start)");
         println!("  - Tailscale is configured and devices are connected");
-        println!("  - Firewall allows connections on port 23500");
+        println!("  - Firewall allows connections on port 13500");
     } else {
         println!("Discovered {} agent(s):", hosts.len());
         println!();
@@ -337,7 +337,7 @@ fn is_agent_running() -> Result<bool> {
     use crate::agent::api::AgentClient;
 
     // Try to ping localhost agent
-    let client = AgentClient::new("127.0.0.1", 23500);
+    let client = AgentClient::new("127.0.0.1", 13500);
     Ok(client.ping().is_ok())
 }
 

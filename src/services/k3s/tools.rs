@@ -10,6 +10,12 @@ use std::io::Write;
 /// In production mode: downloads from GitHub releases
 /// If halvor exists but is outdated, replaces it with the newer version
 pub fn check_and_install_halvor<E: CommandExecutor>(exec: &E) -> Result<()> {
+    // Skip installation if running on localhost (we're already running halvor)
+    if exec.is_local() {
+        println!("✓ Running on localhost - halvor installation not needed");
+        return Ok(());
+    }
+    
     let is_dev = utils::is_development_mode();
     let local_version = env!("CARGO_PKG_VERSION");
 

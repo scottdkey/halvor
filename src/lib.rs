@@ -69,18 +69,6 @@ pub enum Commands {
         /// Service to uninstall: npm, portainer, smb. If not provided, guided uninstall of halvor
         service: Option<String>,
     },
-    /// Setup and mount SMB shares
-    Smb {
-        /// Unmount and remove SMB mounts
-        #[arg(long)]
-        uninstall: bool,
-    },
-    /// Diagnose Docker daemon issues
-    Docker {
-        /// Run diagnostics instead of installing
-        #[arg(long)]
-        diagnose: bool,
-    },
     /// Automatically create proxy hosts in Nginx Proxy Manager
     Npm {
         /// Docker compose file to read services from (e.g., media.docker-compose.yml)
@@ -89,11 +77,6 @@ pub enum Commands {
         /// Create proxy host for a specific service (e.g., portainer:9000 or npm:81)
         #[arg(long)]
         service: Option<String>,
-    },
-    /// Build and push VPN container image to GitHub Container Registry
-    Vpn {
-        #[command(subcommand)]
-        command: commands::pia_vpn::VpnCommands,
     },
     /// Configure HAL settings (environment file location, etc.)
     Config {
@@ -111,19 +94,16 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::config::DbCommands,
     },
-    /// Check for and install updates
+    /// Update halvor or installed apps
     Update {
-        /// Use experimental channel for updates (version less, continuously updated)
+        /// App to update (e.g., docker, tailscale, portainer). If not provided, updates everything on the system.
+        app: Option<String>,
+        /// Use experimental channel for halvor updates (version less, continuously updated)
         #[arg(long)]
         experimental: bool,
         /// Force download and install the latest version (skips version check)
         #[arg(long)]
         force: bool,
-    },
-    /// Manage halvor agent daemon (start/stop/status/discover)
-    Agent {
-        #[command(subcommand)]
-        command: commands::agent::AgentCommands,
     },
     /// Build applications for different platforms
     Build {
@@ -140,14 +120,33 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::generate::GenerateCommands,
     },
-    /// Manage K3s cluster (init, join, status, snapshot)
-    K3s {
-        #[command(subcommand)]
-        command: commands::k3s::K3sCommands,
+    /// Initialize K3s cluster (primary control plane node)
+    Init {
+        /// Token for cluster join (generated if not provided)
+        #[arg(long)]
+        token: Option<String>,
+        /// Skip confirmation prompts
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
     /// Deploy and manage Helm charts
     Helm {
         #[command(subcommand)]
         command: commands::helm::HelmCommands,
+    },
+    /// Join a node to the K3s cluster
+    Join {
+        /// Target hostname to join to the cluster (can also be specified via -H/--hostname)
+        #[arg(value_name = "HOSTNAME")]
+        hostname: Option<String>,
+        /// First control plane node address (e.g., frigg or 192.168.1.10). If not provided, will try to auto-detect from config.
+        #[arg(long)]
+        server: Option<String>,
+        /// Cluster join token (if not provided, will be loaded from K3S_TOKEN env var or fetched from server)
+        #[arg(long)]
+        token: Option<String>,
+        /// Join as control plane node (default: false, use --control-plane to join as control plane)
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        control_plane: bool,
     },
 }

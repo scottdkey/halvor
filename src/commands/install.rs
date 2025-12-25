@@ -109,7 +109,7 @@ pub fn handle_install(
     Ok(())
 }
 
-/// Install a platform tool (docker, tailscale)
+/// Install a platform tool (docker, tailscale, smb, k3s, pia-vpn)
 fn install_platform_tool(hostname: &str, tool: &str, config: &config::EnvConfig) -> Result<()> {
     match tool {
         "docker" => {
@@ -121,6 +121,22 @@ fn install_platform_tool(hostname: &str, tool: &str, config: &config::EnvConfig)
             } else {
                 services::tailscale::install_tailscale_on_host(hostname, config)?;
             }
+        }
+        "smb" | "samba" | "cifs" => {
+            services::smb::setup_smb_mounts(hostname, config)?;
+        }
+        "k3s" | "kubernetes" | "k8s" => {
+            // K3s init - initialize primary control plane node
+            services::k3s::init_control_plane(hostname, None, false, config)?;
+        }
+        "pia-vpn" | "pia" | "vpn" => {
+            // For platform install, we might want to install the Docker container version
+            // But the Helm chart version is preferred for Kubernetes
+            anyhow::bail!(
+                "PIA VPN should be installed as a Helm chart on Kubernetes.\n\
+                 Use: halvor install pia-vpn --helm\n\
+                 Or: halvor install pia-vpn (on a Kubernetes cluster node)"
+            );
         }
         _ => {
             anyhow::bail!("Unknown platform tool: {}", tool);

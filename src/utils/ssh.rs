@@ -330,10 +330,42 @@ impl SshConnection {
     }
 
     pub fn write_file(&self, path: &str, content: &[u8]) -> Result<()> {
+        // Check if path requires sudo (system directories)
+        let needs_sudo = path.starts_with("/etc/") 
+            || path.starts_with("/usr/local/bin/")
+            || path.starts_with("/opt/")
+            || path.starts_with("/var/lib/");
+
+        let write_command = if needs_sudo {
+            // Use sudo with tee for system paths
+            if self.sudo_password.is_some() {
+                // We have sudo password, inject it
+                let password = self.sudo_password.as_ref().unwrap();
+                let escaped_password = shell_escape(password);
+                format!(
+                    "echo {} | sudo -S tee {} > /dev/null",
+                    escaped_password,
+                    shell_escape(path)
+                )
+            } else {
+                // No password, use interactive sudo (will prompt)
+                format!("sudo tee {} > /dev/null", shell_escape(path))
+            }
+        } else {
+            // Regular path, no sudo needed
+            format!("cat > {}", shell_escape(path))
+        };
+
         let mut ssh_args = self.build_ssh_args();
         ssh_args.push("sh".to_string());
         ssh_args.push("-c".to_string());
-        ssh_args.push(format!("cat > {}", shell_escape(path)));
+        ssh_args.push(write_command);
+
+        // For sudo commands without password, we need interactive mode
+        let needs_interactive = needs_sudo && self.sudo_password.is_none();
+        if needs_interactive {
+            ssh_args.push("-tt".to_string()); // Force TTY for sudo prompt
+        }
 
         let mut cmd = Command::new("ssh");
         cmd.args(&ssh_args);

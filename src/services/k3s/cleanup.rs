@@ -2,9 +2,18 @@
 
 use crate::utils::exec::CommandExecutor;
 use anyhow::{Context, Result};
+use std::io::{self, Write};
 
 /// Clean up existing K3s installation
 pub fn cleanup_existing_k3s<E: CommandExecutor>(exec: &E) -> Result<()> {
+    cleanup_existing_k3s_with_prompt(exec, true)
+}
+
+/// Clean up existing K3s installation with optional prompt
+pub fn cleanup_existing_k3s_with_prompt<E: CommandExecutor>(
+    exec: &E,
+    prompt: bool,
+) -> Result<()> {
     // Check for existing K3s installation
     let has_k3s_server = exec
         .execute_shell("test -f /usr/local/bin/k3s-uninstall.sh && echo exists || echo not_exists")
@@ -33,8 +42,37 @@ pub fn cleanup_existing_k3s<E: CommandExecutor>(exec: &E) -> Result<()> {
         return Ok(()); // No existing installation
     }
 
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("⚠ Found existing K3s installation on this node.");
-    println!("   Reinitializing K3s for the cluster...");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+    
+    if has_k3s_server {
+        println!("  - K3s server installation detected");
+    }
+    if has_k3s_agent {
+        println!("  - K3s agent installation detected");
+    }
+    if has_k3s_service {
+        println!("  - K3s systemd service detected");
+    }
+    println!();
+    
+    if prompt {
+        print!("Do you want to remove the existing K3s installation? [y/N]: ");
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let should_remove = input.trim().eq_ignore_ascii_case("y") || input.trim().eq_ignore_ascii_case("yes");
+        
+        if !should_remove {
+            println!("Aborted. Existing K3s installation will not be removed.");
+            anyhow::bail!("Cannot proceed with existing K3s installation. Please remove it manually or answer 'y' to remove it automatically.");
+        }
+        println!();
+    }
+
+    println!("Removing existing K3s installation...");
 
     // Uninstall existing installation
     if has_k3s_server {
