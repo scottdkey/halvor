@@ -45,8 +45,8 @@ pub mod local {
     pub fn execute(program: &str, args: &[&str]) -> Result<Output> {
         let mut cmd = Command::new(program);
         cmd.args(args);
-        cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::piped());
+        cmd.stdout(Stdio::inherit()); // Show stdout in real-time - ALL output must be visible
+        cmd.stderr(Stdio::inherit()); // Show stderr in real-time - ALL output must be visible
         cmd.stdin(Stdio::null());
         cmd.output()
             .with_context(|| format!("Failed to execute command: {}", program))
@@ -182,8 +182,8 @@ pub mod local {
         let output = Command::new("sh")
             .arg("-c")
             .arg(command)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stdout(Stdio::inherit()) // Show stdout in real-time - ALL output must be visible
+            .stderr(Stdio::inherit()) // Show stderr in real-time - ALL output must be visible
             .stdin(Stdio::null())
             .output()
             .with_context(|| format!("Failed to execute shell command: {}", command))?;

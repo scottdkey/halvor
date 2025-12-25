@@ -32,8 +32,8 @@ impl SshConnection {
                 "echo",
                 "test",
             ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(Stdio::null()) // Suppress stdout (just testing)
+            .stderr(Stdio::inherit()) // Show stderr so authentication prompts are visible
             .output();
 
         let use_key_auth = test_output.is_ok() && test_output.unwrap().status.success();
@@ -54,6 +54,7 @@ impl SshConnection {
     ) -> Result<Self> {
         // Test if key-based auth works (with very short timeout to avoid hanging)
         // Use spawn with a timeout to prevent indefinite hanging
+        // IMPORTANT: Show stderr so Tailscale SSH authentication prompts are visible
         eprintln!("  [DEBUG] Testing SSH key-based authentication for {} (2s timeout)...", host);
         
         let use_key_auth = {
@@ -73,8 +74,8 @@ impl SshConnection {
                     "echo",
                     "test",
                 ])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
+                .stdout(Stdio::null()) // Suppress stdout (just testing)
+                .stderr(Stdio::inherit()) // Show stderr so authentication prompts are visible
                 .stdin(Stdio::null())
                 .spawn()?;
             
@@ -160,12 +161,14 @@ impl SshConnection {
 
         let output = Command::new("ssh")
             .args(&ssh_args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stdout(Stdio::inherit()) // Show stdout in real-time - ALL output must be visible
+            .stderr(Stdio::inherit()) // Show stderr so authentication prompts (like Tailscale SSH) are visible
             .stdin(Stdio::null())
             .output()
             .with_context(|| format!("Failed to execute command: {}", program))?;
 
+        // Note: stdout/stderr are shown in real-time via inherit(), but we still get exit status
+        // If you need to parse output, use execute_shell_interactive or capture to a file
         Ok(output)
     }
 
@@ -205,12 +208,14 @@ impl SshConnection {
 
         let output = Command::new("ssh")
             .args(&ssh_args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stdout(Stdio::inherit()) // Show stdout in real-time - ALL output must be visible
+            .stderr(Stdio::inherit()) // Show stderr so authentication prompts (like Tailscale SSH) are visible
             .stdin(Stdio::null())
             .output()
             .with_context(|| format!("Failed to execute shell command"))?;
 
+        // Note: stdout/stderr are shown in real-time via inherit(), but we still get exit status
+        // If you need to parse output, use execute_shell_interactive or capture to a file
         Ok(output)
     }
 
@@ -362,12 +367,37 @@ impl SshConnection {
     }
 
     pub fn read_file(&self, path: &str) -> Result<String> {
-        let output = self.execute_simple("cat", &[path])?;
+        // Use tee to capture output while showing it in real-time
+        let temp_file = format!("/tmp/halvor_read_file_{}", std::process::id());
+        let read_cmd = format!("cat {} 2>&1 | tee {}", shell_escape(path), temp_file);
+        let output = self.execute_shell(&read_cmd)?;
         if !output.status.success() {
             anyhow::bail!("Failed to read file: {}", path);
         }
-        String::from_utf8(output.stdout)
-            .with_context(|| format!("Failed to decode file contents: {}", path))
+        // Read from the captured temp file using execute_simple with piped output
+        // (this is an internal operation, so we can use piped for the temp file read)
+        let mut ssh_args = self.build_ssh_args();
+        ssh_args.push("cat".to_string());
+        ssh_args.push(temp_file.clone());
+        let temp_output = Command::new("ssh")
+            .args(&ssh_args)
+            .stdout(Stdio::piped()) // Use piped for temp file read (internal operation)
+            .stderr(Stdio::inherit()) // Show errors
+            .stdin(Stdio::null())
+            .output()
+            .with_context(|| format!("Failed to read temp file: {}", temp_file))?;
+        
+        let content = if temp_output.status.success() {
+            String::from_utf8(temp_output.stdout)
+                .with_context(|| format!("Failed to decode temp file contents: {}", temp_file))?
+        } else {
+            // Fallback: if temp file read failed, the original command output should have been shown
+            anyhow::bail!("Failed to read captured file content from: {}", temp_file);
+        };
+        
+        // Clean up temp file
+        let _ = self.execute_shell(&format!("rm -f {}", temp_file));
+        Ok(content)
     }
 
     pub fn write_file(&self, path: &str, content: &[u8]) -> Result<()> {

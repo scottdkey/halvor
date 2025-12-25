@@ -2,6 +2,32 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Critical Rules
+
+### NEVER Hide Output
+
+**RULE: You MUST NEVER hide, suppress, or redirect console output by default, anywhere, for any reason.**
+
+- **ALL command output MUST be visible to the user in real-time**
+- **NEVER use `Stdio::null()`, `2>/dev/null`, `>/dev/null`, or any output suppression without explicit user request**
+- **NEVER pipe output away without showing it first**
+- **Interactive prompts (SSH authentication, sudo passwords, Tailscale login, etc.) MUST be visible**
+- **If a command might produce important output or prompts, use `Stdio::inherit()` or `execute_interactive()` methods**
+- **Only suppress output when:**
+  1. The user explicitly requests it (e.g., `--quiet` flag)
+  2. It's truly noise that would overwhelm the user (and even then, consider a `--verbose` flag instead)
+  3. It's a background operation that the user doesn't need to see (but log it somewhere)
+
+**Examples of violations:**
+- Using `execute_simple()` or `execute_shell()` when the command might show interactive prompts
+- Redirecting stderr to `/dev/null` without user request
+- Using `Stdio::null()` for stdout/stderr
+- Hiding SSH authentication prompts
+- Suppressing Tailscale login prompts
+- Hiding sudo password prompts
+
+**When in doubt, show the output.**
+
 ## Project Overview
 
 **HAL (Homelab Automation Layer)** is a multi-platform Rust CLI tool for managing homelab infrastructure. The project compiles to native binaries (Linux/macOS/Windows), mobile apps (iOS/Android via FFI), and web applications (WASM). It provides automation for Docker, SSH, VPN, SMB, Tailscale, Portainer, and Nginx Proxy Manager.

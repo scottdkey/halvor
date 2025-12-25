@@ -25,13 +25,23 @@ pub fn fetch_kubeconfig_content(primary_hostname: &str, config: &EnvConfig) -> R
     }
 
     // First check if K3s service is running on the primary node (use same reliable method as init)
+    // Use tee to capture output while showing it in real-time
     println!("  Checking K3s service status...");
+    let status_output_file = "/tmp/halvor_k3s_status_check";
+    let status_cmd = format!("systemctl is-active k3s 2>&1 | tee {}", status_output_file);
     let status_output = primary_exec
-        .execute_simple("systemctl", &["is-active", "k3s"])
+        .execute_shell(&status_cmd)
         .ok();
 
+    // Read the status from the temp file using read_file (which handles piped output correctly)
     let is_active = if let Some(output) = &status_output {
-        let status_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        // Use read_file to read the temp file - it uses piped output for internal operations
+        let status_str = primary_exec
+            .read_file(status_output_file)
+            .ok()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         let success = output.status.success();
         // systemctl is-active returns "active" if running, non-zero exit if not
         success && status_str == "active"
@@ -42,11 +52,19 @@ pub fn fetch_kubeconfig_content(primary_hostname: &str, config: &EnvConfig) -> R
     if !is_active {
         // Try with sudo in case systemctl requires it
         println!("  Service check failed, trying with sudo (may prompt for password)...");
+        let sudo_status_file = "/tmp/halvor_k3s_status_check_sudo";
+        let sudo_status_cmd = format!("sudo systemctl is-active k3s 2>&1 | tee {}", sudo_status_file);
         let sudo_status = primary_exec
-            .execute_simple("sudo", &["systemctl", "is-active", "k3s"])
+            .execute_shell(&sudo_status_cmd)
             .ok();
         let is_active_sudo = if let Some(output) = &sudo_status {
-            let status_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            // Use read_file to read the temp file - it uses piped output for internal operations
+            let status_str = primary_exec
+                .read_file(sudo_status_file)
+                .ok()
+                .unwrap_or_default()
+                .trim()
+                .to_string();
             let success = output.status.success();
             success && status_str == "active"
         } else {
@@ -71,15 +89,18 @@ pub fn fetch_kubeconfig_content(primary_hostname: &str, config: &EnvConfig) -> R
     // Get kubeconfig using k3s kubectl config view --raw
     // This is more reliable than reading the file directly, as it gets the config
     // from the running K3s service and doesn't require file permissions
+    // Use tee to capture output while showing it in real-time
     println!("  Fetching kubeconfig via k3s kubectl (may prompt for sudo password)...");
-    let get_config_cmd = "sudo k3s kubectl config view --raw 2>&1";
+    let kubeconfig_output_file = "/tmp/halvor_kubeconfig_output";
+    let get_config_cmd = format!("sudo k3s kubectl config view --raw 2>&1 | tee {}", kubeconfig_output_file);
     
     let mut kubeconfig_content = None;
     
     // Try k3s kubectl config view first (most reliable)
-    if let Ok(output) = primary_exec.execute_shell(get_config_cmd) {
+    if let Ok(output) = primary_exec.execute_shell(&get_config_cmd) {
         if output.status.success() {
-            if let Ok(content) = String::from_utf8(output.stdout) {
+            // Read from the captured temp file using read_file (which handles piped output correctly)
+            if let Ok(content) = primary_exec.read_file(kubeconfig_output_file) {
                 if !content.trim().is_empty()
                     && content.contains("apiVersion")
                     && (content.contains("clusters") || content.contains("server"))
@@ -88,9 +109,6 @@ pub fn fetch_kubeconfig_content(primary_hostname: &str, config: &EnvConfig) -> R
                     kubeconfig_content = Some(content);
                 }
             }
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            println!("  ⚠ k3s kubectl config view failed: {}", stderr.trim());
         }
     }
     
@@ -98,11 +116,13 @@ pub fn fetch_kubeconfig_content(primary_hostname: &str, config: &EnvConfig) -> R
     if kubeconfig_content.is_none() {
         println!("  Trying fallback: reading kubeconfig file directly (may prompt for sudo password)...");
         let kubeconfig_path = "/etc/rancher/k3s/k3s.yaml";
-        let sudo_cat_cmd = format!("sudo cat {} 2>&1", kubeconfig_path);
+        let kubeconfig_file_output = "/tmp/halvor_kubeconfig_file_output";
+        let sudo_cat_cmd = format!("sudo cat {} 2>&1 | tee {}", kubeconfig_path, kubeconfig_file_output);
         
         if let Ok(output) = primary_exec.execute_shell(&sudo_cat_cmd) {
             if output.status.success() {
-                if let Ok(content) = String::from_utf8(output.stdout) {
+                // Read from the captured temp file using read_file (which handles piped output correctly)
+                if let Ok(content) = primary_exec.read_file(kubeconfig_file_output) {
                     if !content.trim().is_empty()
                         && content.contains("apiVersion")
                         && (content.contains("clusters") || content.contains("server"))
@@ -111,9 +131,6 @@ pub fn fetch_kubeconfig_content(primary_hostname: &str, config: &EnvConfig) -> R
                         kubeconfig_content = Some(content);
                     }
                 }
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                println!("  ⚠ File read failed: {}", stderr.trim());
             }
         }
     }

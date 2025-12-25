@@ -19,47 +19,6 @@ pub fn check_and_install_halvor<E: CommandExecutor>(exec: &E) -> Result<()> {
     let is_dev = utils::is_development_mode();
     let local_version = env!("CARGO_PKG_VERSION");
 
-    // Check if halvor is already installed
-    if exec.check_command_exists("halvor")? {
-        // Get remote version
-        let remote_version_output = exec
-            .execute_shell("halvor --version 2>&1 | head -1 || echo 'unknown'")
-            .ok();
-        let remote_version = remote_version_output
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|s| {
-                // Extract version from output like "halvor 1.2.3 (experimental)"
-                s.trim()
-                    .strip_prefix("halvor ")
-                    .and_then(|v| v.split_whitespace().next())
-                    .unwrap_or("unknown")
-                    .to_string()
-            })
-            .unwrap_or_else(|| "unknown".to_string());
-
-        // In dev mode, always replace to ensure latest code
-        // In production, only replace if versions differ
-        if is_dev {
-            println!(
-                "halvor found (version: {}), replacing with local version ({})...",
-                remote_version, local_version
-            );
-        } else if remote_version != local_version && remote_version != "unknown" {
-            println!(
-                "halvor found (version: {}), replacing with newer version ({})...",
-                remote_version, local_version
-            );
-        } else {
-            println!(
-                "✓ halvor is already installed (version: {})",
-                remote_version
-            );
-            return Ok(());
-        }
-    } else {
-        println!("halvor not found, installing...");
-    }
-
     // Detect remote platform first (needed for both dev and production)
     // Get architecture using uname -m (machine hardware name)
     let arch_output = exec.execute_shell("uname -m")?;
@@ -76,9 +35,6 @@ pub fn check_and_install_halvor<E: CommandExecutor>(exec: &E) -> Result<()> {
     if arch_str.is_empty() {
         anyhow::bail!("Failed to detect architecture: 'uname -m' returned empty string");
     }
-
-    // Debug output
-    println!("  Detected architecture: '{}' (from uname -m)", arch_str);
 
     let remote_arch = match arch_str.as_str() {
         "x86_64" | "amd64" => "amd64",
@@ -105,9 +61,6 @@ pub fn check_and_install_halvor<E: CommandExecutor>(exec: &E) -> Result<()> {
         anyhow::bail!("Failed to detect OS: 'uname -s' returned empty string");
     }
 
-    // Debug output
-    println!("  Detected OS: '{}' (from uname -s)", os_str);
-
     let remote_os = match os_str.as_str() {
         "Linux" => "linux",
         "Darwin" => "darwin",
@@ -132,14 +85,85 @@ pub fn check_and_install_halvor<E: CommandExecutor>(exec: &E) -> Result<()> {
         format!("{}-{}", remote_os, remote_arch)
     };
 
-    // Always download from GitHub releases
-    // In development mode, use "experimental" release
-    // In production mode, use "latest" release
+    // Map platform to Rust target triple
+    let remote_target = match remote_platform.as_str() {
+        "linux-amd64" => "x86_64-unknown-linux-gnu",
+        "linux-arm64" => "aarch64-unknown-linux-gnu",
+        "linux-amd64-musl" => "x86_64-unknown-linux-musl",
+        "linux-arm64-musl" => "aarch64-unknown-linux-musl",
+        "darwin-amd64" => "x86_64-apple-darwin",
+        "darwin-arm64" => "aarch64-apple-darwin",
+        _ => anyhow::bail!("Unsupported platform: {}", remote_platform),
+    };
+
+    // Check if halvor is already installed
+    let needs_update = if exec.check_command_exists("halvor")? {
+        // Get remote version
+        let remote_version_output = exec
+            .execute_shell("halvor --version 2>&1 | head -1 || echo 'unknown'")
+            .ok();
+        let remote_version = remote_version_output
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| {
+                // Extract version from output like "halvor 1.2.3 (experimental)"
+                s.trim()
+                    .strip_prefix("halvor ")
+                    .and_then(|v| v.split_whitespace().next())
+                    .unwrap_or("unknown")
+                    .to_string()
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // In dev mode, check if local version is newer
+        if is_dev {
+            if remote_version != local_version {
+                println!(
+                    "halvor found (version: {}), local version ({}) is different, will update...",
+                    remote_version, local_version
+                );
+                true
+            } else {
+                println!(
+                    "✓ halvor is already installed and up-to-date (version: {})",
+                    remote_version
+                );
+                false
+            }
+        } else {
+            // Production mode: check against GitHub latest
+            // For now, if versions differ, update (we'll add GitHub version check later)
+            if remote_version != local_version && remote_version != "unknown" {
+                println!(
+                    "halvor found (version: {}), will check for updates...",
+                    remote_version
+                );
+                true
+            } else {
+                println!(
+                    "✓ halvor is already installed (version: {})",
+                    remote_version
+                );
+                false
+            }
+        }
+    } else {
+        println!("halvor not found, installing...");
+        true
+    };
+
+    if !needs_update {
+        return Ok(());
+    }
+
+    println!("  Detected remote platform: {} (target: {})", remote_platform, remote_target);
+
+    // In development mode: download from existing 'experimental' release
+    // In production mode: download from latest versioned release
     if is_dev {
-        println!("  Development mode: downloading halvor from GitHub 'experimental' release...");
+        println!("  Development mode: downloading from 'experimental' release...");
         download_halvor_from_github(exec, &remote_platform, "experimental")?;
     } else {
-        println!("  Production mode: downloading halvor from GitHub 'latest' release...");
+        println!("  Production mode: downloading from latest versioned release...");
         download_halvor_from_github(exec, &remote_platform, "latest")?;
     }
 
