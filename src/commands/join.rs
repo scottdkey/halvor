@@ -15,10 +15,20 @@ pub fn handle_join(
 ) -> Result<()> {
     let halvor_dir = config::find_halvor_dir()?;
     let config = config::load_env_config(&halvor_dir)?;
-    let target_host = hostname.unwrap_or("localhost");
-
-    // Use positional hostname if provided, otherwise use global hostname
-    let join_target = join_hostname.as_deref().unwrap_or(target_host);
+    
+    // Determine target host: prioritize global -H flag, then positional argument, then localhost
+    let join_target = if let Some(host) = hostname {
+        // Global -H flag takes precedence
+        host
+    } else if let Some(host) = join_hostname.as_deref() {
+        // Use positional argument if provided
+        host
+    } else {
+        // Default to localhost
+        "localhost"
+    };
+    
+    let target_host = join_target; // For auto-detection logic
 
     // Auto-detect server if not provided
     let server_addr = if let Some(s) = server {
@@ -52,22 +62,33 @@ fn auto_detect_primary_node(config: &config::EnvConfig, target_host: &str) -> Re
     let mut found_primary: Option<String> = None;
 
     // First, check if we're running locally on a node with k3s
-    if target_host == "localhost" {
-        let local_exec = crate::utils::exec::Executor::Local;
-        let k3s_check = local_exec
-            .execute_shell("systemctl is-active k3s 2>/dev/null || echo inactive")
-            .ok();
-        if let Some(check) = k3s_check {
-            let status_cow = String::from_utf8_lossy(&check.stdout);
-            let status = status_cow.trim().to_string();
-            if status == "active" {
-                // We're on a node with k3s - try to find its hostname in config
-                if let Ok(current_hostname) = crate::config::service::get_current_hostname() {
-                    // Use find_hostname_in_config to normalize (handles .ts.net, etc.)
-                    if let Some(normalized_hostname) =
-                        crate::config::service::find_hostname_in_config(&current_hostname, config)
-                    {
-                        found_primary = Some(normalized_hostname);
+    // This works regardless of target_host - we always check the current machine first
+    let local_exec = crate::utils::exec::Executor::Local;
+    let k3s_check = local_exec
+        .execute_shell("systemctl is-active k3s 2>/dev/null || echo inactive")
+        .ok();
+    if let Some(check) = k3s_check {
+        let status_cow = String::from_utf8_lossy(&check.stdout);
+        let status = status_cow.trim().to_string();
+        if status == "active" {
+            // We're on a node with k3s - verify it's a control plane and find its hostname in config
+            let server_check = local_exec
+                .execute_shell(
+                    "test -f /var/lib/rancher/k3s/server/node-token 2>/dev/null && echo server || echo agent",
+                )
+                .ok();
+            if let Some(server_check_output) = server_check {
+                let server_status_cow = String::from_utf8_lossy(&server_check_output.stdout);
+                let server_status = server_status_cow.trim();
+                if server_status == "server" {
+                    // This is a control plane node - find its hostname in config
+                    if let Ok(current_hostname) = crate::config::service::get_current_hostname() {
+                        // Use find_hostname_in_config to normalize (handles .ts.net, etc.)
+                        if let Some(normalized_hostname) =
+                            crate::config::service::find_hostname_in_config(&current_hostname, config)
+                        {
+                            found_primary = Some(normalized_hostname);
+                        }
                     }
                 }
             }
@@ -75,43 +96,62 @@ fn auto_detect_primary_node(config: &config::EnvConfig, target_host: &str) -> Re
     }
 
     // If we didn't find a local primary, check all configured nodes
+    // But only check hosts that are local (by IP comparison) to avoid SSH prompts
     if found_primary.is_none() {
+        // Get local IPs first to check if hosts are local
+        let local_ips = crate::utils::networking::get_local_ips().unwrap_or_default();
+        
         // Try all configured hosts to find one with k3s running
-        for (hostname, _host_config) in &config.hosts {
+        for (hostname, host_config) in &config.hosts {
             // Skip if this is the same as what we already checked locally
             if found_primary.as_ref().map(|s| s.as_str()) == Some(hostname.as_str()) {
                 continue;
             }
+            
+            // Skip the target host - we're trying to join it, not check if it's the primary
+            // Normalize both hostnames for comparison (handles .ts.net suffixes, etc.)
+            let normalized_target = crate::config::service::find_hostname_in_config(target_host, config)
+                .unwrap_or_else(|| target_host.to_string());
+            let normalized_hostname = crate::config::service::find_hostname_in_config(hostname, config)
+                .unwrap_or_else(|| hostname.clone());
+            
+            if normalized_hostname == normalized_target {
+                continue;
+            }
 
-            // Try to create an executor for this node
-            let exec = crate::utils::exec::Executor::new(hostname, config).ok();
-            if let Some(ref e) = exec {
-                // Check if executor is local - if so, skip (we already checked)
-                if e.is_local() {
-                    continue;
-                }
+            // Only check hosts that are local (by IP comparison) to avoid SSH prompts
+            let is_local_host = if let Some(ip) = &host_config.ip {
+                local_ips.contains(ip)
+            } else {
+                false
+            };
+            
+            if !is_local_host {
+                // Skip remote hosts during auto-detection to avoid SSH prompts
+                continue;
+            }
 
-                // Check if k3s is running on this node
-                let k3s_check = e
-                    .execute_shell("systemctl is-active k3s 2>/dev/null || echo inactive")
-                    .ok();
-                if let Some(check) = k3s_check {
-                    let status_cow = String::from_utf8_lossy(&check.stdout);
-                    let status = status_cow.trim().to_string();
-                    if status == "active" {
-                        // Verify this is actually a control plane node by checking for k3s server
-                        let server_check = e
-                            .execute_shell(
-                                "test -f /var/lib/rancher/k3s/server/node-token 2>/dev/null && echo server || echo agent",
-                            )
-                            .ok();
-                        if let Some(server_check_output) = server_check {
-                            let server_status_cow = String::from_utf8_lossy(&server_check_output.stdout);
-                            let server_status = server_status_cow.trim();
-                            if server_status == "server" {
-                                found_primary = Some(hostname.clone());
-                                break;
-                            }
+            // This host is local - check if k3s is running
+            let local_exec = crate::utils::exec::Executor::Local;
+            let k3s_check = local_exec
+                .execute_shell("systemctl is-active k3s 2>/dev/null || echo inactive")
+                .ok();
+            if let Some(check) = k3s_check {
+                let status_cow = String::from_utf8_lossy(&check.stdout);
+                let status = status_cow.trim().to_string();
+                if status == "active" {
+                    // Verify this is actually a control plane node by checking for k3s server
+                    let server_check = local_exec
+                        .execute_shell(
+                            "test -f /var/lib/rancher/k3s/server/node-token 2>/dev/null && echo server || echo agent",
+                        )
+                        .ok();
+                    if let Some(server_check_output) = server_check {
+                        let server_status_cow = String::from_utf8_lossy(&server_check_output.stdout);
+                        let server_status = server_status_cow.trim();
+                        if server_status == "server" {
+                            found_primary = Some(hostname.clone());
+                            break;
                         }
                     }
                 }

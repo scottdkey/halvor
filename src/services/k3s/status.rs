@@ -53,7 +53,7 @@ pub fn show_status(hostname: &str, config: &EnvConfig) -> Result<()> {
         );
         println!();
         println!("To start K3s, you need to initialize the cluster:");
-        println!("  halvor k3s init -H {} -y", hostname);
+        println!("  halvor init -H {} -y", hostname);
         return Ok(());
     }
     println!();
@@ -74,7 +74,7 @@ pub fn show_status(hostname: &str, config: &EnvConfig) -> Result<()> {
         println!();
         println!("If the cluster was just initialized, wait a few minutes and try again.");
         println!("If the cluster was never initialized, run:");
-        println!("  halvor k3s init -H {} -y", hostname);
+        println!("  halvor init -H {} -y", hostname);
     } else {
         println!("{}", nodes_output);
     }
@@ -124,9 +124,9 @@ pub fn get_cluster_join_info(hostname: &str, config: &EnvConfig) -> Result<(Stri
 
             if token_result.is_ok() {
                 if let Ok(token_content) = exec.read_file(token_tmp) {
-                    let trimmed = token_content.trim().to_string();
-                    if !trimmed.is_empty() {
-                        trimmed
+                    let parsed_token = crate::services::k3s::utils::parse_node_token(&token_content);
+                    if !parsed_token.is_empty() {
+                        parsed_token
                     } else {
                         anyhow::bail!(
                             "Could not retrieve cluster token. K3S_TOKEN is empty and token file is empty. Please set K3S_TOKEN in 1Password or ensure the cluster is initialized."
@@ -153,9 +153,9 @@ pub fn get_cluster_join_info(hostname: &str, config: &EnvConfig) -> Result<(Stri
 
         if token_result.is_ok() {
             if let Ok(token_content) = exec.read_file(token_tmp) {
-                let trimmed = token_content.trim().to_string();
-                if !trimmed.is_empty() {
-                    trimmed
+                let parsed_token = crate::services::k3s::utils::parse_node_token(&token_content);
+                if !parsed_token.is_empty() {
+                    parsed_token
                 } else {
                     anyhow::bail!(
                         "Could not retrieve cluster token. Token file is empty and K3S_TOKEN is not set. Please set K3S_TOKEN in 1Password or ensure the cluster is initialized."

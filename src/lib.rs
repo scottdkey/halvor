@@ -66,16 +66,7 @@ pub enum Commands {
     },
     /// Uninstall a service from a host or halvor itself
     Uninstall {
-        /// Service to uninstall: npm, portainer, smb. If not provided, guided uninstall of halvor
-        service: Option<String>,
-    },
-    /// Automatically create proxy hosts in Nginx Proxy Manager
-    Npm {
-        /// Docker compose file to read services from (e.g., media.docker-compose.yml)
-        #[arg(default_value = "")]
-        compose_file: String,
-        /// Create proxy host for a specific service (e.g., portainer:9000 or npm:81)
-        #[arg(long)]
+        /// Service to uninstall (e.g., portainer, smb, nginx-proxy-manager). If not provided, guided uninstall of halvor
         service: Option<String>,
     },
     /// Configure HAL settings (environment file location, etc.)
@@ -129,16 +120,11 @@ pub enum Commands {
         #[arg(long, short = 'y')]
         yes: bool,
     },
-    /// Deploy and manage Helm charts
-    Helm {
-        #[command(subcommand)]
-        command: commands::helm::HelmCommands,
-    },
     /// Join a node to the K3s cluster
     Join {
-        /// Target hostname to join to the cluster (can also be specified via -H/--hostname)
+        /// Target hostname to join to the cluster (use -H/--hostname to specify)
         #[arg(value_name = "HOSTNAME")]
-        hostname: Option<String>,
+        join_hostname: Option<String>,
         /// First control plane node address (e.g., frigg or 192.168.1.10). If not provided, will try to auto-detect from config.
         #[arg(long)]
         server: Option<String>,
@@ -148,5 +134,10 @@ pub enum Commands {
         /// Join as control plane node (default: false, use --control-plane to join as control plane)
         #[arg(long, action = clap::ArgAction::SetTrue)]
         control_plane: bool,
+    },
+    /// Show status of services
+    Status {
+        #[command(subcommand)]
+        command: commands::status::StatusCommands,
     },
 }

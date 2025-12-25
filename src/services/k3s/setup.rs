@@ -317,7 +317,7 @@ pub fn setup_cluster(
     println!();
     println!("Next steps:");
     println!(
-        "  • Check cluster status:    halvor k3s status -H {}",
+        "  • Check cluster status:    halvor status k3s -H {}",
         primary
     );
     println!(

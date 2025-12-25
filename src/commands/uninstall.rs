@@ -11,23 +11,66 @@ use std::path::Path;
 /// hostname: None = local, Some(hostname) = remote host
 pub fn handle_uninstall(hostname: Option<&str>, service: &str) -> Result<()> {
     let config = config::load_config()?;
-    let target_host = hostname.unwrap_or("localhost");
+    // Default to frigg (primary cluster node) for helm charts
+    let target_host = if let Some(host) = hostname {
+        host
+    } else {
+        // Check if this is a Helm chart
+        let is_helm_chart = crate::services::apps::find_app(service)
+            .map(|app| matches!(app.category, crate::services::apps::AppCategory::HelmChart))
+            .unwrap_or(false);
+        
+        if is_helm_chart {
+            println!("⚠️  No hostname specified for Helm chart uninstall.");
+            println!("   Defaulting to 'frigg' (primary cluster node).");
+            println!("   Use '-H <hostname>' to specify a different node.\n");
+            "frigg"
+        } else {
+            "localhost"
+        }
+    };
 
+    // Check if this is a Helm chart
+    if let Some(app) = crate::services::apps::find_app(service) {
+        match app.category {
+            crate::services::apps::AppCategory::HelmChart => {
+                // Use release name (chart name)
+                let release_name = app.name;
+                println!("Uninstalling Helm chart '{}' (release: {})...", service, release_name);
+                services::helm::uninstall_release(target_host, release_name, false, &config)?;
+                return Ok(());
+            }
+            crate::services::apps::AppCategory::Platform => {
+                // Handle platform tools
+                match service.to_lowercase().as_str() {
+                    "smb" | "samba" | "cifs" => {
+                        services::smb::uninstall_smb_mounts(target_host, &config)?;
+                        return Ok(());
+                    }
+                    _ => {
+                        // Fall through to error
+                    }
+                }
+            }
+        }
+    }
+
+    // Legacy service names (for backward compatibility)
     match service.to_lowercase().as_str() {
-        "npm" => {
-            // TODO: Implement NPM uninstall
-            anyhow::bail!("NPM uninstall not yet implemented");
+        "npm" | "nginx-proxy-manager" => {
+            // NPM is a Helm chart, uninstall it
+            services::helm::uninstall_release(target_host, "nginx-proxy-manager", false, &config)?;
         }
         "portainer" => {
-            // TODO: Implement Portainer uninstall
-            anyhow::bail!("Portainer uninstall not yet implemented");
+            // Portainer is a Helm chart, uninstall it
+            services::helm::uninstall_release(target_host, "portainer", false, &config)?;
         }
-        "smb" => {
+        "smb" | "samba" | "cifs" => {
             services::smb::uninstall_smb_mounts(target_host, &config)?;
         }
         _ => {
             anyhow::bail!(
-                "Unknown service: {}. Supported services: npm, portainer, smb",
+                "Unknown service: {}. Use 'halvor install --list' to see available apps.",
                 service
             );
         }

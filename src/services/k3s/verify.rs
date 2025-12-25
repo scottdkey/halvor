@@ -594,7 +594,7 @@ pub fn verify_ha_cluster(
         anyhow::bail!(
             "Could not query cluster from any control plane node. Tried: {}\n\
              This may indicate:\n  - K3s is not running on any control plane node\n  - kubectl is not available\n  - Cluster is not initialized\n\n\
-             Try: halvor k3s status -H <node>",
+             Try: halvor status k3s -H <node>",
             expected_nodes.join(", ")
         );
     }

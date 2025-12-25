@@ -8,12 +8,24 @@ use anyhow::{Context, Result};
 /// Fetch kubeconfig content from primary control plane node (without writing to file)
 /// Returns the kubeconfig content as a string, with localhost/127.0.0.1 replaced with Tailscale address
 pub fn fetch_kubeconfig_content(primary_hostname: &str, config: &EnvConfig) -> Result<String> {
-    // Get kubeconfig from primary control plane node
-    let primary_exec = Executor::new(primary_hostname, config)?;
-
     println!("  Fetching kubeconfig from {}...", primary_hostname);
+    
+    // Use Executor::new which will correctly detect if we're on the primary node
+    // It checks local IPs and will return Executor::Local if we're already there
+    let primary_exec = Executor::new(primary_hostname, config)
+        .with_context(|| format!("Failed to create executor for primary node: {}", primary_hostname))?;
+    
+    // Check if we're on the primary node itself
+    let is_local_primary = primary_exec.is_local();
+    
+    if is_local_primary {
+        println!("  Primary node is local, using local execution");
+    } else {
+        println!("  Primary node is remote, connecting via SSH");
+    }
 
     // First check if K3s service is running on the primary node (use same reliable method as init)
+    println!("  Checking K3s service status...");
     let status_output = primary_exec
         .execute_simple("systemctl", &["is-active", "k3s"])
         .ok();
@@ -29,6 +41,7 @@ pub fn fetch_kubeconfig_content(primary_hostname: &str, config: &EnvConfig) -> R
 
     if !is_active {
         // Try with sudo in case systemctl requires it
+        println!("  Service check failed, trying with sudo (may prompt for password)...");
         let sudo_status = primary_exec
             .execute_simple("sudo", &["systemctl", "is-active", "k3s"])
             .ok();
@@ -44,79 +57,86 @@ pub fn fetch_kubeconfig_content(primary_hostname: &str, config: &EnvConfig) -> R
             anyhow::bail!(
                 "K3s service is not running on {}.\n\
                  Please ensure K3s is initialized and running:\n\
-                 halvor k3s init -H {} -y\n\
+                 halvor init -H {} -y\n\
                  Or check service status: ssh {} 'sudo systemctl status k3s'",
                 primary_hostname,
                 primary_hostname,
                 primary_hostname
             );
         }
+    } else {
+        println!("  ✓ K3s service is running");
     }
 
-    // Wait for kubeconfig to be available (with retries)
-    // Use execute_shell to get kubeconfig directly without temp files
-    // K3s with embedded etcd can take 1-2 minutes to fully initialize
-    let kubeconfig_path = "/etc/rancher/k3s/k3s.yaml";
-    let max_retries = 24; // 24 * 5 seconds = 2 minutes max (embedded etcd can be slow)
+    // Get kubeconfig using k3s kubectl config view --raw
+    // This is more reliable than reading the file directly, as it gets the config
+    // from the running K3s service and doesn't require file permissions
+    println!("  Fetching kubeconfig via k3s kubectl (may prompt for sudo password)...");
+    let get_config_cmd = "sudo k3s kubectl config view --raw 2>&1";
+    
     let mut kubeconfig_content = None;
-
-    for attempt in 1..=max_retries {
-        // Try to get kubeconfig using k3s kubectl config view (more reliable than reading file)
-        // This works even if the file doesn't exist yet, as long as k3s is running
-        // First try reading the file directly (no sudo needed if readable)
-        if let Ok(content) = primary_exec.read_file(kubeconfig_path) {
-            if !content.trim().is_empty()
-                && content.contains("apiVersion")
-                && (content.contains("clusters") || content.contains("server"))
-            {
-                kubeconfig_content = Some(content);
-                break;
+    
+    // Try k3s kubectl config view first (most reliable)
+    if let Ok(output) = primary_exec.execute_shell(get_config_cmd) {
+        if output.status.success() {
+            if let Ok(content) = String::from_utf8(output.stdout) {
+                if !content.trim().is_empty()
+                    && content.contains("apiVersion")
+                    && (content.contains("clusters") || content.contains("server"))
+                {
+                    println!("  ✓ Kubeconfig fetched via k3s kubectl");
+                    kubeconfig_content = Some(content);
+                }
             }
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            println!("  ⚠ k3s kubectl config view failed: {}", stderr.trim());
         }
-
-        // If file read failed, try using k3s kubectl (requires sudo)
-        // Use execute_interactive with sudo which handles password injection automatically
-        // But we need to capture output, so use execute_shell with password injection
-        // The execute_shell_interactive method handles sudo password injection
-        let get_config_cmd = "sudo k3s kubectl config view --raw 2>&1";
-        let get_config_output = primary_exec.execute_shell(get_config_cmd).ok();
-
-        if let Some(output) = get_config_output {
+    }
+    
+    // Fallback: try reading the file directly with sudo cat
+    if kubeconfig_content.is_none() {
+        println!("  Trying fallback: reading kubeconfig file directly (may prompt for sudo password)...");
+        let kubeconfig_path = "/etc/rancher/k3s/k3s.yaml";
+        let sudo_cat_cmd = format!("sudo cat {} 2>&1", kubeconfig_path);
+        
+        if let Ok(output) = primary_exec.execute_shell(&sudo_cat_cmd) {
             if output.status.success() {
                 if let Ok(content) = String::from_utf8(output.stdout) {
-                    // Check if content looks like valid kubeconfig (contains apiVersion)
                     if !content.trim().is_empty()
-                        && !content.contains("Error")
-                        && !content.contains("error")
                         && content.contains("apiVersion")
                         && (content.contains("clusters") || content.contains("server"))
                     {
+                        println!("  ✓ Kubeconfig fetched via file read");
                         kubeconfig_content = Some(content);
-                        break;
                     }
                 }
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                println!("  ⚠ File read failed: {}", stderr.trim());
             }
         }
-
-        if attempt < max_retries {
-            println!(
-                "  Kubeconfig not ready yet, waiting... (attempt {}/{})",
-                attempt, max_retries
-            );
-            std::thread::sleep(std::time::Duration::from_secs(5));
-        }
     }
-
+    
     let mut kubeconfig_content = kubeconfig_content.ok_or_else(|| {
         anyhow::anyhow!(
-            "Failed to read kubeconfig from {} after {} attempts. \
-             K3s may still be initializing. Please wait a few minutes and try again, \
-             or check K3s status: halvor k3s status -H {}",
-            primary_hostname,
-            max_retries,
+            "Failed to get kubeconfig from {}. Both 'k3s kubectl config view' and file read failed.\n\
+             Ensure K3s is running and accessible.",
             primary_hostname
         )
     })?;
+    
+    // Validate that we got valid kubeconfig
+    if kubeconfig_content.trim().is_empty() {
+        anyhow::bail!("Kubeconfig file is empty");
+    }
+    if !kubeconfig_content.contains("apiVersion") {
+        anyhow::bail!("Kubeconfig file does not contain apiVersion - file may be corrupted");
+    }
+    if !kubeconfig_content.contains("clusters") && !kubeconfig_content.contains("server") {
+        anyhow::bail!("Kubeconfig file does not contain cluster configuration");
+    }
+
 
     // Get Tailscale IP/hostname for the primary node to replace 127.0.0.1
     let tailscale_ip =

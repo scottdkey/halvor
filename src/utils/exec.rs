@@ -461,11 +461,26 @@ impl Executor {
 
         // Try to find hostname (with normalization for TLDs)
         let actual_hostname = crate::config::service::find_hostname_in_config(hostname, config)
-            .ok_or_else(|| anyhow::anyhow!("Host '{}' not found in config", hostname))?;
+            .ok_or_else(|| {
+                let available_hosts: Vec<String> = config.hosts.keys().cloned().collect();
+                anyhow::anyhow!(
+                    "Host '{}' not found in config.\n\nAvailable hosts: {}\n\nAdd to .env:\n  HOST_{}_IP=\"<ip-address>\"\n  HOST_{}_HOSTNAME=\"<hostname>\"",
+                    hostname,
+                    available_hosts.join(", "),
+                    hostname.to_uppercase(),
+                    hostname.to_uppercase()
+                )
+            })?;
+        
+        // Verify we're using the correct hostname (not a different one)
+        if actual_hostname != hostname && !hostname.eq_ignore_ascii_case(&actual_hostname) {
+            eprintln!("⚠️  Warning: Hostname '{}' was normalized to '{}'", hostname, actual_hostname);
+        }
+        
         let host_config = config
             .hosts
             .get(&actual_hostname)
-            .with_context(|| format!("Host '{}' not found in config", hostname))?;
+            .with_context(|| format!("Host '{}' (normalized from '{}') not found in config", actual_hostname, hostname))?;
 
         // Get target IP
         let target_ip = if let Some(ip) = &host_config.ip {
@@ -506,11 +521,30 @@ impl Executor {
             }));
         };
 
-        // Get local IP addresses
+        // Get local IP addresses (both regular and Tailscale)
         let local_ips = crate::utils::networking::get_local_ips()?;
-
-        // Check if target IP matches any local IP
-        let is_local = local_ips.contains(&target_ip);
+        let tailscale_ips = crate::utils::networking::get_tailscale_ips().unwrap_or_default();
+        
+        // Check if target IP matches any local IP (regular or Tailscale)
+        let is_local_by_ip = local_ips.contains(&target_ip) || tailscale_ips.contains(&target_ip);
+        
+        // Also check if the hostname matches the current machine's hostname
+        // This is a fallback in case IP comparison fails (e.g., if IPs don't match exactly)
+        let is_local_by_hostname = if !is_local_by_ip {
+            if let Ok(current_hostname) = crate::config::service::get_current_hostname() {
+                if let Some(normalized_current) = crate::config::service::find_hostname_in_config(&current_hostname, config) {
+                    normalized_current == actual_hostname
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        
+        let is_local = is_local_by_ip || is_local_by_hostname;
 
         if is_local {
             Ok(Executor::Local)
@@ -553,33 +587,38 @@ impl Executor {
 
             // Try to connect via agent first (port 13500)
             // If agent is available, use it; otherwise fallback to SSH
+            // Use a quick timeout check - if agent isn't available, fall back to SSH immediately
             let agent_client = AgentClient::new(&target_host, 13500);
-            if agent_client.ping().is_ok() {
-                // Agent is available - use it
-                Ok(Executor::Agent {
-                    client: agent_client,
-                    host: target_host,
-                    sudo_password,
-                    sudo_user,
-                })
-            } else {
-                // Agent not available - fallback to SSH
-                let username = get_ssh_config_username(&target_host)
-                    .or_else(|| get_ssh_config_username(hostname))
-                    .or_else(|| get_ssh_config_username(&actual_hostname))
-                    .unwrap_or_else(|| {
-                        // No username in SSH config - prompt user
-                        prompt_ssh_username(&target_host)
-                            .unwrap_or_else(|_| crate::config::get_default_username())
-                    });
-                let host_with_user = format!("{}@{}", username, target_host);
-                let ssh_conn = SshConnection::new_with_sudo_password(
-                    &host_with_user,
-                    sudo_password,
-                    sudo_user,
-                )?;
+            match agent_client.ping() {
+                Ok(true) => {
+                    // Agent is available - use it
+                    Ok(Executor::Agent {
+                        client: agent_client,
+                        host: target_host,
+                        sudo_password,
+                        sudo_user,
+                    })
+                }
+                _ => {
+                    // Agent not available or ping failed - fallback to SSH
+                    // (Don't log this as it's expected for nodes without agents yet)
+                    let username = get_ssh_config_username(&target_host)
+                        .or_else(|| get_ssh_config_username(hostname))
+                        .or_else(|| get_ssh_config_username(&actual_hostname))
+                        .unwrap_or_else(|| {
+                            // No username in SSH config - prompt user
+                            prompt_ssh_username(&target_host)
+                                .unwrap_or_else(|_| crate::config::get_default_username())
+                        });
+                    let host_with_user = format!("{}@{}", username, target_host);
+                    let ssh_conn = SshConnection::new_with_sudo_password(
+                        &host_with_user,
+                        sudo_password,
+                        sudo_user,
+                    )?;
 
-                Ok(Executor::Remote(ssh_conn))
+                    Ok(Executor::Remote(ssh_conn))
+                }
             }
         }
     }

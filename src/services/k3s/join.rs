@@ -38,8 +38,12 @@ pub fn join_cluster(
     println!();
 
     // Now connect to the remote node
-    let exec = Executor::new(hostname, config)?;
+    println!("Connecting to node: {}", hostname);
+    println!("  [DEBUG] Creating executor for {}...", hostname);
+    let exec = Executor::new(hostname, config)
+        .with_context(|| format!("Failed to create executor for hostname: {}", hostname))?;
     let is_local = exec.is_local();
+    println!("  [DEBUG] Executor created (local: {})", is_local);
 
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     if control_plane {
@@ -56,6 +60,54 @@ pub fn join_cluster(
         println!("Target: {} (remote)", hostname);
     }
     println!("Server: {}", server);
+    println!();
+
+    // Ensure Tailscale is installed and running (required for cluster communication)
+    println!("Checking for Tailscale (required for cluster communication)...");
+    if !tailscale::is_tailscale_installed(&exec) {
+        println!("Tailscale not found. Installing Tailscale...");
+        if is_local {
+            tailscale::install_tailscale()?;
+        } else {
+            tailscale::install_tailscale_on_host(hostname, config)?;
+        }
+        println!("✓ Tailscale installed");
+    } else {
+        println!("✓ Tailscale is installed");
+    }
+    
+    // Check if Tailscale is running and connected
+    let tailscale_status = exec
+        .execute_shell("tailscale status --json 2>/dev/null || echo 'not_running'")
+        .ok();
+    
+    let is_tailscale_running = tailscale_status
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| {
+            let status_str = s.trim();
+            !status_str.contains("not_running") 
+                && !status_str.is_empty()
+                && (status_str.contains("\"Self\"") || status_str.contains("\"Status\""))
+        })
+        .unwrap_or(false);
+    
+    if !is_tailscale_running {
+        println!("⚠️  Warning: Tailscale may not be running or connected.");
+        println!("   Please ensure Tailscale is running and authenticated before continuing.");
+        println!("   Run: sudo tailscale up");
+        println!();
+        print!("Continue anyway? [y/N]: ");
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Aborted.");
+            return Ok(());
+        }
+        println!();
+    } else {
+        println!("✓ Tailscale is running and connected");
+    }
     println!();
 
     // Get Tailscale IP for this node (for TLS SANs)
@@ -255,6 +307,10 @@ pub fn join_cluster(
 
     // Ensure halvor is installed first (the glue that enables remote operations)
     println!();
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("Preparing node: {}", hostname);
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
     println!("Checking for halvor (required for remote operations)...");
     tools::check_and_install_halvor(&exec)?;
 
@@ -400,13 +456,16 @@ _sudo() {
     // Build install command
     // For control plane nodes joining, we need to use --server flag
     // For agent nodes, we also use --server flag
+    // Use --advertise-address with Tailscale IP for cluster communication
+    let advertise_addr = format!("--advertise-address={}", tailscale_ip);
+    
     // Run with sudo from the start if not root to avoid script's internal sudo handling issues
     let install_cmd = if exec.get_username().ok().as_deref() == Some("root") {
         // Already running as root, no sudo needed
         if control_plane {
             format!(
-                "{} server --server=https://{}:6443 --token={} --disable=traefik {}",
-                remote_script_path, server_addr, token, tls_sans
+                "{} server --server=https://{}:6443 --token={} --disable=traefik --write-kubeconfig-mode=0644 {} {}",
+                remote_script_path, server_addr, token, advertise_addr, tls_sans
             )
         } else {
             format!(
@@ -418,8 +477,8 @@ _sudo() {
         // Not root - run with sudo to avoid script's internal sudo handling issues
         if control_plane {
             format!(
-                "sudo {} server --server=https://{}:6443 --token={} --disable=traefik {}",
-                remote_script_path, server_addr, token, tls_sans
+                "sudo {} server --server=https://{}:6443 --token={} --disable=traefik --write-kubeconfig-mode=0644 {} {}",
+                remote_script_path, server_addr, token, advertise_addr, tls_sans
             )
         } else {
             format!(
@@ -444,17 +503,28 @@ _sudo() {
     // NOTE: Must use execute_shell_interactive because the K3s install script uses sudo
     // which requires a TTY to prompt for password. execute_shell (non-interactive) doesn't
     // allocate a TTY, causing sudo to fail silently.
-    println!("Installing K3s...");
-    println!("Command: {}", install_cmd);
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("Installing K3s on {}...", hostname);
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!();
+    println!("Installation command:");
+    println!("  {}", install_cmd);
+    println!();
+    println!("This may take a few minutes. Output will be displayed below:");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!();
     io::stdout().flush()?; // Ensure message is displayed before password prompt
 
-    // Use curl pipe format (same as init_control_plane) - this is the proven working method
-    // Capture output to check if service was skipped
+    // Use execute_shell_interactive which shows output in real-time
+    // Also capture output to a file for later analysis
     let install_output_file = "/tmp/k3s_install_output";
     let install_cmd_with_capture = format!("{} 2>&1 | tee {}", install_cmd, install_output_file);
+    println!("[K3s Install Output Start]");
+    io::stdout().flush()?;
     let install_result = exec.execute_shell_interactive(&install_cmd_with_capture);
+    println!();
+    println!("[K3s Install Output End]");
+    println!();
 
     // Check if service was skipped (check this regardless of install_result)
     let service_skipped = exec
@@ -543,6 +613,38 @@ _sudo() {
                 // Skip diagnostic checks - service is running, proceed with verification
                 // These checks were causing SSH connection issues and are not critical
             }
+            
+            // Configure K3s service to depend on Tailscale (for cluster communication)
+            println!("Configuring K3s service to depend on Tailscale...");
+            let service_name = if control_plane { "k3s" } else { "k3s-agent" };
+            let service_override_dir = format!("/etc/systemd/system/{}.service.d", service_name);
+            let override_content = r#"[Unit]
+After=tailscale.service
+Wants=tailscale.service
+Requires=network-online.target
+"#;
+            
+            // Create override directory
+            let _ = exec.execute_shell(&format!("sudo mkdir -p {}", service_override_dir));
+            
+            // Write override file
+            let override_file = format!("{}/10-tailscale.conf", service_override_dir);
+            if let Err(e) = exec.write_file(&override_file, override_content.as_bytes()) {
+                println!("⚠️  Warning: Failed to create systemd override: {}", e);
+                println!("   K3s service may start before Tailscale is ready.");
+            } else {
+                println!("✓ Created systemd override to ensure K3s starts after Tailscale");
+                
+                // Reload systemd to pick up the override
+                let _ = exec.execute_shell("sudo systemctl daemon-reload");
+                
+                // Restart K3s service to apply the override
+                println!("Restarting K3s service to apply Tailscale dependency...");
+                let _ = exec.execute_shell(&format!("sudo systemctl restart {}.service", service_name));
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                println!("✓ K3s service restarted with Tailscale dependency");
+            }
+            println!();
         }
         Err(e) => {
             // Command execution itself failed (not just exit code)
@@ -773,30 +875,44 @@ _sudo() {
     }
     println!();
 
-    // Setup halvor agent service on the node
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("Setting up halvor agent service");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!();
-    
-    // Check if web UI should be enabled (check for HALVOR_WEB_DIR or web build)
-    let web_port = if std::env::var("HALVOR_WEB_DIR").is_ok() {
-        Some(13000)
+    // Setup halvor agent service on the node (only if not already set up)
+    let service_exists = exec.file_exists("/etc/systemd/system/halvor-agent.service").unwrap_or(false);
+    let service_active = exec
+        .execute_shell("systemctl is-active halvor-agent.service 2>/dev/null || echo inactive")
+        .ok()
+        .and_then(|o| {
+            String::from_utf8(o.stdout).ok().map(|s| s.trim() == "active")
+        })
+        .unwrap_or(false);
+
+    if service_exists && service_active {
+        println!("✓ Halvor agent service is already configured and running");
+        println!();
     } else {
-        None
-    };
-    
-    if let Err(e) = agent_service::setup_agent_service(&exec, web_port) {
-        eprintln!("⚠️  Warning: Failed to setup halvor agent service: {}", e);
-        eprintln!("   You can set it up manually later with: halvor agent start --daemon");
-    } else {
-        println!("✓ Halvor agent service is running on {}", hostname);
-        println!("  Agent API: port 13500 (over Tailscale)");
-        if web_port.is_some() {
-            println!("  Web UI: port 13000 (over Tailscale)");
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!("Setting up halvor agent service");
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!();
+        
+        // Check if web UI should be enabled (check for HALVOR_WEB_DIR or web build)
+        let web_port = if std::env::var("HALVOR_WEB_DIR").is_ok() {
+            Some(13000)
+        } else {
+            None
+        };
+        
+        if let Err(e) = agent_service::setup_agent_service(&exec, web_port) {
+            eprintln!("⚠️  Warning: Failed to setup halvor agent service: {}", e);
+            eprintln!("   You can set it up manually later with: halvor agent start --daemon");
+        } else {
+            println!("✓ Halvor agent service is running on {}", hostname);
+            println!("  Agent API: port 13500 (over Tailscale)");
+            if web_port.is_some() {
+                println!("  Web UI: port 13000 (over Tailscale)");
+            }
         }
+        println!();
     }
-    println!();
 
     Ok(())
 }

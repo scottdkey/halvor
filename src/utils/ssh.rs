@@ -3,6 +3,7 @@ use crate::utils::exec::local;
 use anyhow::{Context, Result};
 use std::io::{self, Write};
 use std::process::{Command, Output, Stdio};
+use std::time::Duration;
 
 /// SSH connection for remote command execution
 pub struct SshConnection {
@@ -51,28 +52,68 @@ impl SshConnection {
         sudo_password: Option<String>,
         sudo_user: Option<String>,
     ) -> Result<Self> {
-        // Test if key-based auth works (with longer timeout for initial connection)
-        let test_output = Command::new("ssh")
-            .args([
-                "-o",
-                "ConnectTimeout=10", // Increased from 1 to 10 seconds
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                "PreferredAuthentications=publickey",
-                "-o",
-                "PasswordAuthentication=no",
-                "-o",
-                "StrictHostKeyChecking=no",
-                host,
-                "echo",
-                "test",
-            ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .output();
-
-        let use_key_auth = test_output.is_ok() && test_output.unwrap().status.success();
+        // Test if key-based auth works (with very short timeout to avoid hanging)
+        // Use spawn with a timeout to prevent indefinite hanging
+        eprintln!("  [DEBUG] Testing SSH key-based authentication for {} (2s timeout)...", host);
+        
+        let use_key_auth = {
+            let mut child = Command::new("ssh")
+                .args([
+                    "-o",
+                    "ConnectTimeout=2", // Very short timeout
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "PreferredAuthentications=publickey",
+                    "-o",
+                    "PasswordAuthentication=no",
+                    "-o",
+                    "StrictHostKeyChecking=no",
+                    host,
+                    "echo",
+                    "test",
+                ])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .stdin(Stdio::null())
+                .spawn()?;
+            
+            // Wait for process with timeout
+            let start = std::time::Instant::now();
+            let timeout = Duration::from_secs(3); // 3 second max wait
+            
+            let mut result = false;
+            while start.elapsed() < timeout {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        result = status.success();
+                        break;
+                    }
+                    Ok(None) => {
+                        // Still running, wait a bit
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                    Err(_) => {
+                        // Error waiting, assume failure
+                        break;
+                    }
+                }
+            }
+            
+            // If still running, kill it
+            if child.try_wait()?.is_none() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            
+            result
+        };
+        
+        if use_key_auth {
+            eprintln!("  [DEBUG] SSH key-based authentication works");
+        } else {
+            eprintln!("  [DEBUG] SSH key-based authentication failed or timed out, will use password authentication");
+        }
 
         Ok(Self {
             host: host.to_string(),

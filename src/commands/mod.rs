@@ -12,12 +12,11 @@ pub mod build;
 pub mod config;
 pub mod dev;
 pub mod generate;
-pub mod helm;
 pub mod init;
 pub mod install;
 pub mod join;
 pub mod list;
-pub mod npm;
+pub mod status;
 pub mod sync;
 pub mod uninstall;
 pub mod update;
@@ -75,12 +74,6 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
                 uninstall::handle_guided_uninstall(hostname.as_deref())?;
             }
         }
-        Npm {
-            compose_file,
-            service,
-        } => {
-            npm::handle_npm(hostname.as_deref(), &compose_file, service.as_deref())?;
-        }
         Update {
             app,
             experimental,
@@ -119,12 +112,8 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
             let local_command: generate::GenerateCommands = unsafe { mem::transmute(command) };
             generate::handle_generate(local_command)?;
         }
-        Helm { command } => {
-            let local_command: helm::HelmCommands = unsafe { mem::transmute(command) };
-            helm::handle_helm(hostname.as_deref(), local_command)?;
-        }
         Join {
-            hostname: join_hostname,
+            join_hostname,
             server,
             token,
             control_plane,
@@ -136,6 +125,10 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
                 token,
                 control_plane,
             )?;
+        }
+        Status { command } => {
+            let local_command: status::StatusCommands = unsafe { mem::transmute(command) };
+            status::handle_status(hostname.as_deref(), local_command)?;
         }
     }
     Ok(())

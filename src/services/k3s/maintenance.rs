@@ -72,7 +72,7 @@ pub fn take_snapshot(hostname: &str, output: Option<&str>, config: &EnvConfig) -
     println!();
     println!("✓ Snapshot created successfully!");
     println!();
-    println!("List snapshots with: halvor k3s status");
+    println!("List snapshots with: halvor status k3s");
 
     Ok(())
 }

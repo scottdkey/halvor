@@ -1,7 +1,8 @@
 use crate::agent::server::{AgentRequest, AgentResponse, HostInfo};
 use crate::utils::{format_address, read_json, write_json};
 use anyhow::{Context, Result};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
+use std::time::Duration;
 
 /// Client for communicating with halvor agents
 pub struct AgentClient {
@@ -74,8 +75,15 @@ impl AgentClient {
 
     fn send_request(&self, request: AgentRequest) -> Result<AgentResponse> {
         let addr = format_address(&self.host, self.port);
-        let mut stream = TcpStream::connect(&addr)
-            .with_context(|| format!("Failed to connect to agent at {}", addr))?;
+        
+        // Resolve address and connect with timeout
+        let socket_addr = addr
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("Failed to resolve address: {}", addr))?;
+        
+        let mut stream = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(2))
+            .with_context(|| format!("Failed to connect to agent at {} (timeout: 2s)", addr))?;
 
         write_json(&mut stream, &request)?;
         read_json(&mut stream, 8192)

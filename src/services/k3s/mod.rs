@@ -16,7 +16,7 @@ mod utils;
 mod verify;
 
 // Re-export public utilities
-pub use utils::{generate_cluster_token, is_development_mode};
+pub use utils::{generate_cluster_token, is_development_mode, parse_node_token};
 
 // Re-export tool installation functions
 pub use tools::{check_and_install_halvor, check_and_install_helm, check_and_install_kubectl};

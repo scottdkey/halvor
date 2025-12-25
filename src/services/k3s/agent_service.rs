@@ -7,6 +7,40 @@ use std::path::PathBuf;
 pub fn setup_agent_service<E: CommandExecutor>(exec: &E, web_port: Option<u16>) -> Result<()> {
     println!("Setting up halvor agent systemd service...");
 
+    // Check if service is already configured and running
+    let service_file = "/etc/systemd/system/halvor-agent.service";
+    let service_exists = exec.file_exists(service_file).unwrap_or(false);
+    let service_enabled = exec
+        .execute_shell("systemctl is-enabled halvor-agent.service 2>/dev/null || echo disabled")
+        .ok()
+        .and_then(|o| {
+            String::from_utf8(o.stdout).ok().map(|s| s.trim() == "enabled")
+        })
+        .unwrap_or(false);
+    let service_active = exec
+        .execute_shell("systemctl is-active halvor-agent.service 2>/dev/null || echo inactive")
+        .ok()
+        .and_then(|o| {
+            String::from_utf8(o.stdout).ok().map(|s| s.trim() == "active")
+        })
+        .unwrap_or(false);
+
+    if service_exists && service_enabled {
+        if service_active {
+            println!("✓ Halvor agent service is already configured and running");
+            println!("  Skipping setup (service already active)");
+            return Ok(());
+        } else {
+            println!("⚠️  Service is configured but not running, attempting to start...");
+            let start_result = exec.execute_shell("systemctl start halvor-agent.service");
+            if start_result.is_ok() && start_result.unwrap().status.success() {
+                println!("✓ Started halvor agent service");
+                return Ok(());
+            }
+            // If start failed, continue with full setup
+        }
+    }
+
     // Check if agent is already running as a daemon and stop it
     println!("Checking for existing halvor agent daemon...");
     let pid_file_path = format!("{}/.config/halvor/halvor-agent.pid", 

@@ -8,7 +8,7 @@ pub mod dev;
 pub mod docker;
 pub mod helm;
 pub mod host;
-pub mod k3s;
+pub(crate) mod k3s;  // Internal to crate - accessed via commands only
 pub mod npm;
 pub mod pia_vpn;
 pub mod portainer;
