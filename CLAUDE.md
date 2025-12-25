@@ -39,7 +39,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Build and install CLI to system (macOS only by default)
 make install-cli
 # or
-cargo build --release --bin halvor && cargo install --path . --bin halvor --force
+cargo build --release --bin halvor --manifest-path projects/core/Cargo.toml && cargo install --path projects/core --bin halvor --force
 
 # Build for all platforms (requires Docker for Linux/Windows)
 halvor build cli --platforms apple,linux,windows
@@ -195,7 +195,7 @@ Use GitHub Actions workflows which build natively on each platform. Much more re
 
 ### Core Structure
 
-**Commands** (`src/commands/`) are CLI entry points that delegate to **Services** (`src/services/`). This separation enables FFI exports - services can be called from Swift, Kotlin, or WASM without CLI dependencies.
+**Commands** (`projects/core/commands/`) are CLI entry points that delegate to **Services** (`projects/core/services/`). This separation enables FFI exports - services can be called from Swift, Kotlin, or WASM without CLI dependencies.
 
 ```
 User invokes CLI → main.rs → commands/*.rs → services/*.rs → utils/*.rs
@@ -207,19 +207,19 @@ User invokes CLI → main.rs → commands/*.rs → services/*.rs → utils/*.rs
 
 ### Key Modules
 
-- **`src/commands/`** - CLI command handlers (agent, backup, build, config, dev, install, npm, provision, smb, sync, tailscale, uninstall, update). Each command parses CLI args and calls corresponding service.
+- **`projects/core/commands/`** - CLI command handlers (agent, backup, build, config, dev, install, init, join, status, sync, uninstall, update). Each command parses CLI args and calls corresponding service.
 
-- **`src/services/`** - Business logic implementations. These are platform-agnostic and exported via FFI. Organized by feature (backup, build/, dev/, docker/, npm, portainer, provision, smb, sync, tailscale, web).
+- **`projects/core/services/`** - Business logic implementations. These are platform-agnostic and exported via FFI. Organized by feature (backup, build/, dev/, docker/, helm/, k3s/, smb/, sync/, tailscale/, web/).
 
-- **`src/config/`** - Configuration management using TOML files and environment variables. Supports encrypted data via `config_manager.rs` and `.env` file parsing via `env_file.rs`.
+- **`projects/core/config/`** - Configuration management using TOML files and environment variables. Supports encrypted data via `config_manager.rs` and `.env` file parsing via `env_file.rs`.
 
-- **`src/db/`** - SQLite database abstraction with migrations. Schema is in `migrations/`, generated table code in `generated/`, and core traits in `core/`. Run migrations via `db::migrate::run_migrations()`. Current version: 004.
+- **`projects/core/db/`** - SQLite database abstraction with migrations. Schema is in `migrations/`, generated table code in `generated/`, and core traits in `core/`. Run migrations via `db::migrate::run_migrations()`. Current version: 004.
 
-- **`src/agent/`** - HTTP server (Axum) for agent daemon mode. Provides REST API for remote command execution, service discovery, and sync operations. Start with `halvor agent start`.
+- **`projects/core/agent/`** - HTTP server (Axum) for agent daemon mode. Provides REST API for remote command execution, service discovery, and sync operations. Start with `halvor agent start`.
 
-- **`src/ffi/`** - Foreign Function Interface layer. `c_ffi.rs` defines C exports, `client.rs` provides FFI client library. Uses custom `#[multi_platform_export]` macro from `halvor-ffi-macro` crate.
+- **`projects/core/ffi/`** - Foreign Function Interface layer. `c_ffi.rs` defines C exports, `client.rs` provides FFI client library. Uses custom `#[multi_platform_export]` macro from `projects/ffi-macro` crate.
 
-- **`src/utils/`** - Cross-cutting utilities: `exec.rs` (command execution), `ssh.rs` (SSH operations), `crypto.rs` (AES-GCM encryption), `networking.rs`, `ffi_bindings.rs` (FFI code generation).
+- **`projects/core/utils/`** - Cross-cutting utilities: `exec.rs` (command execution), `ssh.rs` (SSH operations), `crypto.rs` (AES-GCM encryption), `networking.rs`, `ffi_bindings.rs` (FFI code generation).
 
 ### FFI Integration
 
@@ -235,11 +235,11 @@ When adding new service functions that should be available on mobile/web, annota
 ### Database Migrations
 
 Database schema changes require new migration files:
-1. Create new migration in `src/db/migrations/` with version number (e.g., `005_description.sql`)
-2. Update version constant in `src/db/migrate.rs`
+1. Create new migration in `projects/core/db/migrations/` with version number (e.g., `005_description.sql`)
+2. Update version constant in `projects/core/db/migrate.rs`
 3. Run migrations automatically on startup or manually via `db::migrate::run_migrations()`
 
-Tables are defined in `src/db/generated/`. Modify these carefully as they're used throughout the codebase.
+Tables are defined in `projects/core/db/generated/`. Modify these carefully as they're used throughout the codebase.
 
 ## Build System
 
@@ -345,18 +345,18 @@ Run tests: `cargo test`
 
 ### Adding a New Command
 
-1. Add variant to `Commands` enum in `src/lib.rs`
-2. Create handler in `src/commands/new_command.rs`
-3. Implement service logic in `src/services/new_command.rs`
-4. Export in `src/commands/mod.rs` and `src/services/mod.rs`
-5. Handle command in `src/main.rs` match statement
+1. Add variant to `Commands` enum in `projects/core/lib.rs`
+2. Create handler in `projects/core/commands/new_command.rs`
+3. Implement service logic in `projects/core/services/new_command.rs`
+4. Export in `projects/core/commands/mod.rs` and `projects/core/services/mod.rs`
+5. Handle command in `projects/core/main.rs` match statement
 
 ### Adding FFI-Exported Function
 
 1. Implement function in service module
 2. Annotate with `#[multi_platform_export]`
 3. Rebuild platform bindings:
-   - Swift: `cd halvor-swift && ./build.sh`
+   - Swift: `cd projects/ios && ./build.sh`
    - Android: `halvor build android`
    - Web: `halvor build web`
 
@@ -394,19 +394,19 @@ println!("Output: {}", output);
 ## Platform-Specific Notes
 
 ### iOS/macOS (Swift)
-- Build script: `halvor-swift/build.sh`
+- Build script: `projects/ios/build.sh`
 - Generates XCFramework from Rust static library
-- Swift Package Manager configuration in `halvor-swift/Package.swift`
+- Swift Package Manager configuration in `projects/ios/Package.swift`
 - Xcode project generated via xcodegen
 
 ### Android (Kotlin)
-- Gradle project in `halvor-android/`
+- Gradle project in `projects/android/`
 - Uses NDK for native library compilation
 - JNI bindings generated automatically
 
 ### Web (TypeScript/Svelte)
-- SvelteKit application in `halvor-web/`
-- Vite configuration: `halvor-web/vite.config.ts`
+- SvelteKit application in `projects/web/`
+- Vite configuration: `projects/web/vite.config.ts`
 - WASM module built with wasm-pack
 - Multi-stage Dockerfile for production builds
 - Development: `halvor dev web` (Docker) or `halvor dev web --bare-metal`

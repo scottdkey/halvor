@@ -26,7 +26,7 @@ This document describes the CI/CD workflows for the halvor project.
    - Image: `ghcr.io/{owner}/pia-vpn`
    - Tags: `latest`, version tag, and experimental (for main branch pushes)
    - Multi-platform: `linux/amd64` and `linux/arm64`
-   - Triggers on changes to `openvpn-container/**` or manual dispatch
+   - Triggers on changes to `vpn-container/**` or manual dispatch
 
 4. **build-summary**: Provides a summary of all build jobs
 
@@ -94,7 +94,7 @@ To test the builds locally:
 cargo build --release
 
 # Build Docker image
-cd openvpn-container
+cd vpn-container
 docker build -t ghcr.io/<your-username>/vpn:latest .
 ```
 

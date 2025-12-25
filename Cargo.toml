@@ -1,34 +1,24 @@
-[package]
-name = "halvor"
+[workspace]
+members = [
+    "projects/core",
+    "projects/ffi-macro",
+    "projects/vpn-container",
+]
+resolver = "2"
+
+[workspace.package]
 version = "0.0.6"
 edition = "2024"
 authors = ["Scott Key <scott@scottkey.dev>"]
-description = "Homelab Automation Layer - CLI tool for managing homelab infrastructure"
 license = "MIT"
 
-# Library target for FFI (iOS, macOS, Android, WASM)
-[lib]
-name = "halvor"
-path = "src/lib.rs"
-crate-type = ["staticlib", "cdylib", "rlib"]
-
-# Binary target for CLI
-[[bin]]
-name = "halvor"
-path = "src/main.rs"
-
-[dependencies]
+[workspace.dependencies]
 clap = { version = "4.5.53", features = ["derive"] }
 dotenv = "0.15"
 anyhow = "1.0.100"
 which = "8.0"
 chrono = "0.4"
-reqwest = { version = "0.12", default-features = false, features = [
-  "json",
-  "cookies",
-  "rustls-tls",
-  "blocking",
-] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "cookies", "rustls-tls", "blocking"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.9.8"
@@ -47,21 +37,12 @@ rand = "0.8"
 glob = "0.3"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 libc = "0.2"
-nix = { version = "0.28", default-features = false, features = [
-  "signal",
-  "process",
-] }
-halvor-ffi-macro = { path = "crates/halvor-ffi-macro" }
+nix = { version = "0.28", default-features = false, features = ["signal", "process"] }
 quote = "1.0"
 syn = { version = "2.0", features = ["full", "extra-traits"] }
-
-[dev-dependencies]
-cargo-watch = "8.5"
-
-[build-dependencies]
-# No build dependencies needed - using std only
-
-[features]
-# FFI feature - enables C FFI exports for mobile/WASM builds
-# Don't enable this for CLI builds to avoid duplicate symbol issues
-ffi = []
+proc-macro2 = "1.0"
+regex = "1.10"
+tempfile = "3.10"
+ctrlc = "3.4"
+if-addrs = "0.10"
+resolv-conf = "0.7"

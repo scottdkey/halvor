@@ -83,7 +83,7 @@ runs:
         if [ "${{ inputs.unset_macos_deployment_target }}" == "true" ]; then
           unset MACOSX_DEPLOYMENT_TARGET || true
         fi
-        cargo build --release --target ${{ inputs.target }}
+        cargo build --release --target ${{ inputs.target }} --manifest-path projects/core/Cargo.toml
       env:
         SKIP_TARGET: ${{ env.SKIP_TARGET }}
         MUSL_CROSS_DIR: ${{ env.MUSL_CROSS_DIR }}

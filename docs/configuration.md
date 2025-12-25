@@ -1,65 +1,98 @@
 # Configuration Guide
 
-## Initial Setup
+## Overview
 
-When `hal` is installed globally, you need to configure the location of your `.env` file:
+Halvor uses environment variables loaded from a `.env` file. The `.env` file is typically managed via **direnv** and **1Password** for secure secret management.
 
-```bash
-hal config init
-```
+## Environment File Setup
 
-This will:
+### Using direnv + 1Password (Recommended)
 
-- Prompt you for the path to your `.env` file
-- Store the configuration in `~/.config/hal/config.toml`
-- Allow `hal` to work from any directory
-
-## Environment File
-
-1. Copy `.env.example` to `.env` (or create your own):
-
+1. **Setup direnv** (if not already installed):
    ```bash
-   cp .env.example .env
+   # macOS
+   brew install direnv
+   
+   # Linux
+   sudo apt install direnv
    ```
 
-2. Edit `.env` with your host configurations:
-
+2. **Configure `.envrc`** to load secrets from 1Password:
    ```bash
-   # Tailscale configuration
-   TAILNET_BASE="ts.net"
-
-   # Host configurations
-   HOST_FRIGG_IP="10.10.10.10"
-   HOST_FRIGG_HOSTNAME="frigg.ts.net"
-
-   # SSH host configurations (for setup-ssh-hosts.sh)
-   SSH_MAPLE_HOST="10.10.10.130"
-   SSH_MAPLE_USER="skey"
-   SSH_FRIGG_HOST="10.10.10.10"
-   SSH_FRIGG_USER="skey"
+   # Copy example
+   cp .envrc.example .envrc
+   
+   # Edit .envrc with your 1Password vault reference
+   # Then allow direnv
+   direnv allow
    ```
 
-## Managing Configuration
+3. **Environment variables are automatically loaded** when you enter the directory.
 
-**View current configuration:**
+### Manual .env File
 
-```bash
-hal config show
-```
-
-**Set environment file path:**
+Alternatively, create a `.env` file manually:
 
 ```bash
-hal config set-env /path/to/.env
+# Create example file
+halvor config env
+
+# Or manually create .env in your project directory
 ```
 
-**Re-initialize configuration (interactive):**
+## Configuration Format
+
+### Host Configurations
+
+Format: `HOST_<HOSTNAME>_<FIELD>=<value>`
 
 ```bash
-hal config init
+# Tailscale base domain
+TAILNET_BASE="ts.net"
+
+# Host IP addresses
+HOST_FRIGG_IP="10.10.10.10"
+HOST_BAULDER_IP="10.10.10.11"
+
+# Host hostnames (typically Tailscale hostnames)
+HOST_FRIGG_HOSTNAME="frigg.ts.net"
+HOST_BAULDER_HOSTNAME="baulder.ts.net"
+
+# Backup paths (optional)
+HOST_FRIGG_BACKUP_PATH="/mnt/smb/maple/backups/frigg"
+HOST_BAULDER_BACKUP_PATH="/mnt/smb/maple/backups/baulder"
 ```
 
-## Nginx Proxy Manager Configuration
+### SMB Server Configuration
+
+Format: `SMB_<SERVERNAME>_<FIELD>=<value>`
+
+**Required fields:**
+- `HOST` - SMB server IP address or hostname
+- `SHARES` - Comma-separated list of share names
+
+**Optional fields:**
+- `USERNAME` - SMB username
+- `PASSWORD` - SMB password
+- `OPTIONS` - Additional mount options
+
+**Example:**
+```bash
+# SMB server configuration
+SMB_MAPLE_HOST="10.10.10.130"
+SMB_MAPLE_SHARES="backups,data,halvor"
+SMB_MAPLE_USERNAME="skey"
+SMB_MAPLE_PASSWORD="your-password"
+SMB_MAPLE_OPTIONS="vers=3.0"  # Optional mount options
+
+# Multiple SMB servers
+SMB_WILLOW_HOST="10.10.10.10"
+SMB_WILLOW_SHARES="backups,data,halvor"
+SMB_WILLOW_USERNAME="skey"
+SMB_WILLOW_PASSWORD="your-password"
+```
+
+### Nginx Proxy Manager Configuration
 
 For NPM automation, add these to your `.env` file:
 
@@ -69,13 +102,70 @@ NPM_USERNAME="admin@example.com"
 NPM_PASSWORD="your-password"
 ```
 
-## SMB Configuration
+## Managing Configuration
 
-For SMB mount automation, configure SMB servers in your `.env`:
+### View Current Configuration
 
 ```bash
-SMB_MAPLE_HOST="10.10.10.130"
-SMB_MAPLE_USER="username"
-SMB_MAPLE_PASSWORD="password"
-SMB_MAPLE_DOMAIN="WORKGROUP"  # Optional
+# List all configuration
+halvor config list
+
+# Show configuration with verbose output (including passwords)
+halvor config --verbose
 ```
+
+### Initialize Configuration
+
+```bash
+# Interactive configuration setup
+halvor config init
+```
+
+### Create Example .env File
+
+```bash
+# Generate .env.example template
+halvor config env
+```
+
+### Create SMB Server Configuration
+
+```bash
+# Interactive SMB server setup
+halvor config create smb
+
+# Or specify server name
+halvor config create smb maple
+```
+
+### Set Environment File Path
+
+```bash
+halvor config set-env /path/to/.env
+```
+
+### Host-Specific Configuration
+
+```bash
+# Set IP address for a host
+halvor config ip <hostname> <ip-address>
+
+# Set hostname for a host
+halvor config hostname <hostname> <hostname-value>
+
+# Set backup path for a host
+halvor config backup-path <hostname> <backup-path>
+```
+
+## Configuration Storage
+
+- **Primary**: Environment variables in `.env` file (loaded from 1Password via direnv)
+- **Secondary**: SQLite database at `~/.hal/halvor.db` (for runtime data)
+
+Configuration is automatically loaded from the `.env` file. The database is used for storing runtime state and encrypted data.
+
+## See Also
+
+- [Setup Guide](setup.md) - Initial project setup
+- [Usage Guide](usage.md) - Common commands
+- [CLI Commands Reference](generated/cli-commands.md) - Complete command documentation

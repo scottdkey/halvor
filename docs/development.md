@@ -27,7 +27,7 @@ make dev
 
 This uses `cargo-watch` to automatically rebuild and reinstall when files change.
 
-For platform-specific development, see [Multi-Platform Guide](multi-platform.md).
+For platform-specific development and architecture details, see [Architecture Guide](architecture.md).
 
 ## Project Structure
 
@@ -39,9 +39,10 @@ For platform-specific development, see [Multi-Platform Guide](multi-platform.md)
 │   ├── install.sh      # Unix/macOS/Linux installation script
 │   ├── install.ps1     # Windows PowerShell installation script
 │   └── generate-docs.sh # Documentation generation
-├── src/
-│   ├── main.rs         # Main CLI binary entry point
-│   ├── lib.rs          # Library crate (exposes modules)
+├── projects/
+│   ├── core/           # Main halvor application
+│   │   ├── main.rs     # Main CLI binary entry point
+│   │   ├── lib.rs      # Library crate (exposes modules)
 │   ├── commands/       # CLI command handlers
 │   │   ├── agent.rs    # Agent daemon commands
 │   │   ├── backup.rs   # Backup/restore commands
@@ -49,11 +50,11 @@ For platform-specific development, see [Multi-Platform Guide](multi-platform.md)
 │   │   ├── config.rs   # Configuration commands
 │   │   ├── dev.rs      # Development commands
 │   │   ├── install.rs  # Installation commands
-│   │   ├── init.rs     # Cluster initialization
-│   │   ├── join.rs     # Cluster join
-│   │   ├── status.rs   # Status commands
-│   │   ├── sync.rs     # Sync commands
-│   │   ├── tailscale.rs # Tailscale commands
+│   │   ├── init.rs      # Cluster initialization
+│   │   ├── join.rs      # Cluster join
+│   │   ├── status.rs    # Status commands
+│   │   ├── sync.rs      # Sync commands
+│   │   ├── configure.rs # Tailscale configuration
 │   │   └── ...
 │   ├── services/       # Business logic (platform-agnostic)
 │   │   ├── backup/     # Backup service
@@ -88,18 +89,19 @@ For platform-specific development, see [Multi-Platform Guide](multi-platform.md)
 │       ├── ssh.rs      # SSH operations
 │       ├── crypto.rs   # Encryption
 │       └── ...
-├── halvor-swift/       # Swift/iOS/macOS bindings
-│   ├── Package.swift   # Swift Package Manager
-│   ├── build.sh        # Build script
-│   └── Sources/        # Swift source code
-├── halvor-android/     # Android/Kotlin bindings
-│   ├── build.gradle.kts # Gradle configuration
-│   └── src/            # Kotlin source code
-├── halvor-web/         # Web/WASM application
-│   ├── package.json    # Node.js dependencies
-│   ├── vite.config.ts  # Vite configuration
-│   └── src/            # SvelteKit source code
-├── openvpn-container/  # VPN Docker container
+│   ├── ios/            # Swift/iOS/macOS bindings
+│   │   ├── Package.swift   # Swift Package Manager
+│   │   ├── build.sh        # Build script
+│   │   └── Sources/        # Swift source code
+│   ├── android/        # Android/Kotlin bindings
+│   │   ├── build.gradle.kts # Gradle configuration
+│   │   └── src/            # Kotlin source code
+│   ├── web/            # Web/WASM application
+│   │   ├── package.json    # Node.js dependencies
+│   │   ├── vite.config.ts  # Vite configuration
+│   │   └── src/            # SvelteKit source code
+│   ├── ffi-macro/      # FFI macro crate
+│   └── vpn-container/  # VPN Docker container
 ├── compose/            # Docker Compose files
 ├── charts/             # Helm charts
 ├── docs/                # Documentation

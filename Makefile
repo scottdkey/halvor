@@ -49,8 +49,8 @@ install: install-rust install-rust-targets install-rust-deps install-swift insta
 .PHONY: install-cli
 install-cli:
 	@echo "Building and installing CLI to system..."
-	@cargo build --release --bin halvor
-	@cargo install --path . --bin halvor --force
+	@cargo build --release --bin halvor --manifest-path projects/core/Cargo.toml
+	@cargo install --path projects/core --bin halvor --force
 	@echo "✓ CLI installed to system (available as 'halvor')"
 
 # Install Rust toolchain
@@ -166,21 +166,21 @@ install-rust-deps: install-rust
 	echo "✓ cross installed: $$(cross --version 2>&1 | head -1)"; \
 	echo "Fetching dependencies for main crate..."; \
 	cargo fetch || echo "⚠️  Failed to fetch main crate dependencies"; \
-	if [ -d "halvor-swift/halvor-ffi" ]; then \
+	if [ -d "projects/ios/halvor-ffi" ]; then \
 		echo "Fetching dependencies for halvor-ffi..."; \
-		cd halvor-swift/halvor-ffi && cargo fetch || echo "⚠️  Failed to fetch halvor-ffi dependencies"; \
+		cd projects/ios/halvor-ffi && cargo fetch || echo "⚠️  Failed to fetch halvor-ffi dependencies"; \
 	fi; \
-	if [ -d "halvor-swift/halvor-ffi-macro" ]; then \
+	if [ -d "projects/ios/halvor-ffi-macro" ]; then \
 		echo "Fetching dependencies for halvor-ffi-macro..."; \
-		cd halvor-swift/halvor-ffi-macro && cargo fetch || echo "⚠️  Failed to fetch halvor-ffi-macro dependencies"; \
+		cd projects/ios/halvor-ffi-macro && cargo fetch || echo "⚠️  Failed to fetch halvor-ffi-macro dependencies"; \
 	fi; \
-	if [ -d "halvor-swift/halvor-ffi-jni" ]; then \
+	if [ -d "projects/ios/halvor-ffi-jni" ]; then \
 		echo "Fetching dependencies for halvor-ffi-jni..."; \
-		cd halvor-swift/halvor-ffi-jni && cargo fetch || echo "⚠️  Failed to fetch halvor-ffi-jni dependencies"; \
+		cd projects/ios/halvor-ffi-jni && cargo fetch || echo "⚠️  Failed to fetch halvor-ffi-jni dependencies"; \
 	fi; \
-	if [ -d "halvor-swift/halvor-ffi-wasm" ]; then \
+	if [ -d "projects/ios/halvor-ffi-wasm" ]; then \
 		echo "Fetching dependencies for halvor-ffi-wasm..."; \
-		cd halvor-swift/halvor-ffi-wasm && cargo fetch || echo "⚠️  Failed to fetch halvor-ffi-wasm dependencies"; \
+		cd projects/ios/halvor-ffi-wasm && cargo fetch || echo "⚠️  Failed to fetch halvor-ffi-wasm dependencies"; \
 	fi; \
 	echo "✓ Rust dependencies installed"
 
@@ -205,8 +205,26 @@ install-swift:
 		else \
 			echo "✓ xcodegen installed"; \
 		fi; \
+	elif [ "$$OS" = "Linux" ]; then \
+		if ! command -v swift >/dev/null 2>&1; then \
+			echo "⚠️  Swift not found on Linux."; \
+			if command -v apt-get >/dev/null 2>&1; then \
+				echo "   Attempting to install Swift via package manager..."; \
+				if sudo apt-get update && sudo apt-get install -y swift 2>/dev/null; then \
+					echo "✓ Swift installed via package manager"; \
+				else \
+					echo "   Swift not available via package manager."; \
+					echo "   Install manually from: https://www.swift.org/download/"; \
+					echo "   Or download and extract Swift to /opt/swift and add to PATH"; \
+				fi; \
+			else \
+				echo "   Install Swift manually from: https://www.swift.org/download/"; \
+			fi; \
+		else \
+			echo "✓ Swift installed: $$(swift --version | head -1)"; \
+		fi; \
 	else \
-		echo "ℹ️  Swift/Xcode only available on macOS (skipping)"; \
+		echo "ℹ️  Swift/Xcode only available on macOS/Linux (skipping on other platforms)"; \
 	fi; \
 	if ! command -v cargo-watch >/dev/null 2>&1; then \
 		echo "Installing cargo-watch..."; \
@@ -219,8 +237,8 @@ install-swift:
 # Install Swift package dependencies
 install-swift-deps: install-swift
 	@echo "Installing Swift package dependencies..."
-	@if [ -d "halvor-swift" ]; then \
-		cd halvor-swift && \
+	@if [ -d "projects/ios" ]; then \
+		cd projects/ios && \
 		if command -v swift >/dev/null 2>&1; then \
 			echo "Resolving Swift package dependencies..."; \
 			swift package resolve || echo "⚠️  Failed to resolve Swift package dependencies"; \
@@ -250,9 +268,9 @@ install-android:
 			echo "⚠️  Java not found. Android builds require Java 17+"; \
 			echo "   Install via: brew install openjdk@17"; \
 		elif [ "$$OS" = "Linux" ]; then \
-			echo "Java not found. Installing OpenJDK 17..."; \
+			echo "Java not found. Installing OpenJDK 17 (required for Android)..."; \
 			if command -v apt-get >/dev/null 2>&1; then \
-				sudo apt-get update && sudo apt-get install -y openjdk-17-jdk || echo "⚠️  Failed to install Java via apt"; \
+				sudo apt-get update && sudo apt-get install -y openjdk-17-jdk || echo "⚠️  Failed to install openjdk-17-jdk. Install manually: sudo apt-get install -y openjdk-17-jdk"; \
 			elif command -v yum >/dev/null 2>&1; then \
 				sudo yum install -y java-17-openjdk-devel || echo "⚠️  Failed to install Java via yum"; \
 			elif command -v dnf >/dev/null 2>&1; then \
@@ -260,29 +278,36 @@ install-android:
 			elif command -v pacman >/dev/null 2>&1; then \
 				sudo pacman -S --noconfirm jdk17-openjdk || echo "⚠️  Failed to install Java via pacman"; \
 			else \
-				echo "⚠️  No supported package manager found. Install Java manually"; \
+				echo "⚠️  No supported package manager found. Install Java 17 manually"; \
 			fi; \
 		fi; \
 	else \
 		echo "✓ Java installed: $$(java -version 2>&1 | head -1)"; \
 	fi; \
-	if [ -d "halvor-android" ]; then \
+	if [ -d "projects/android" ]; then \
 		echo "Checking Gradle wrapper..."; \
-		cd halvor-android && chmod +x gradlew 2>/dev/null || true; \
+		cd projects/android && chmod +x gradlew 2>/dev/null || true; \
 	fi
 
 # Install Android Gradle dependencies
 install-android-deps: install-android
 	@echo "Installing Android Gradle dependencies..."
-	@if [ -d "halvor-android" ]; then \
-		cd halvor-android && \
+	@if [ -d "projects/android" ]; then \
+		cd projects/android && \
 		if [ -f "gradlew" ]; then \
 			echo "Downloading Gradle and dependencies..."; \
 			chmod +x gradlew && \
 			./gradlew --no-daemon tasks --all >/dev/null 2>&1 || ./gradlew --no-daemon build --dry-run || echo "⚠️  Failed to download Gradle dependencies"; \
 			echo "✓ Android Gradle dependencies installed"; \
 		else \
-			echo "⚠️  Gradle wrapper not found in halvor-android"; \
+			echo "Gradle wrapper not found. Initializing Gradle wrapper..."; \
+			if command -v gradle >/dev/null 2>&1; then \
+				gradle wrapper --gradle-version 8.5 || echo "⚠️  Failed to initialize Gradle wrapper. Install Gradle: https://gradle.org/install/"; \
+			else \
+				echo "⚠️  Gradle not found. Install Gradle to initialize wrapper:"; \
+				echo "   https://gradle.org/install/"; \
+				echo "   Or run: gradle wrapper --gradle-version 8.5"; \
+			fi; \
 		fi; \
 	fi
 
@@ -331,13 +356,11 @@ install-web-deps: install-web
 	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
 		. "$$NVM_DIR/nvm.sh"; \
 	fi; \
-	if [ -d "halvor-web" ]; then \
-		cd halvor-web && \
+	if [ -d "projects/web" ]; then \
+		cd projects/web && \
 		if command -v npm >/dev/null 2>&1; then \
 			echo "Running npm install..."; \
 			npm install || echo "⚠️  Failed to install npm dependencies"; \
-			echo "Running svelte-kit sync to initialize SvelteKit..."; \
-			npx svelte-kit sync || echo "⚠️  Failed to run svelte-kit sync"; \
 			echo "✓ npm dependencies installed"; \
 		else \
 			echo "⚠️  npm not found, skipping npm install"; \
@@ -607,5 +630,6 @@ install-tools:
 # Generate documentation
 docs:
 	@echo "Generating documentation..."
+	@chmod +x scripts/generate-docs.sh
 	@./scripts/generate-docs.sh
 	@echo "✓ Documentation generated in docs/generated/"

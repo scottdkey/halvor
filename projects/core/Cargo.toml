@@ -1,0 +1,60 @@
+[package]
+name = "halvor"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Homelab Automation Layer - CLI tool for managing homelab infrastructure"
+license.workspace = true
+
+# Library target for FFI (iOS, macOS, Android, WASM)
+[lib]
+name = "halvor"
+path = "lib.rs"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# Binary target for CLI
+[[bin]]
+name = "halvor"
+path = "main.rs"
+
+[dependencies]
+clap.workspace = true
+dotenv.workspace = true
+anyhow.workspace = true
+which.workspace = true
+chrono.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+yaml-rust.workspace = true
+tokio.workspace = true
+axum.workspace = true
+tower-http.workspace = true
+whoami.workspace = true
+flate2.workspace = true
+tar.workspace = true
+zip.workspace = true
+rusqlite.workspace = true
+aes-gcm.workspace = true
+base64.workspace = true
+rand.workspace = true
+glob.workspace = true
+uuid.workspace = true
+libc.workspace = true
+nix.workspace = true
+halvor-ffi-macro = { path = "../ffi-macro" }
+quote.workspace = true
+syn.workspace = true
+
+[dev-dependencies]
+cargo-watch = "8.5"
+
+[build-dependencies]
+# No build dependencies needed - using std only
+
+[features]
+# FFI feature - enables C FFI exports for mobile/WASM builds
+# Don't enable this for CLI builds to avoid duplicate symbol issues
+ffi = []
+

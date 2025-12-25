@@ -1,4 +1,4 @@
-# HAL - Homelab Automation Layer
+# Halvor - Homelab Automation Layer
 
 ## Status Badges
 
@@ -38,7 +38,7 @@
 A Rust-based CLI tool for managing your homelab infrastructure, with scripts for SSH setup and
 automation.
 
-**HAL** stands for **Homelab Automation Layer** - your intelligent assistant for homelab operations.
+**Halvor** is a **Homelab Automation Layer** - your intelligent assistant for homelab operations.
 
 ## Installation
 
@@ -120,33 +120,33 @@ make docs
 
 ### Manual Documentation
 
-**Setup & Configuration:**
+**Getting Started:**
+- **[Installation Guide](docs/installation.md)** - Installing halvor and initial setup
+- **[Usage Guide](docs/usage.md)** - Complete command reference
 - **[Configuration Guide](docs/configuration.md)** - Setting up your environment file and managing configuration
-- **[Setup Guide](docs/setup.md)** - Initial setup and SSH configuration
 - **[Cluster Setup Guide](docs/cluster-setup.md)** - Setting up K3s Kubernetes cluster
 
 **Development:**
 - **[Development Guide](docs/development.md)** - Building, testing, and contributing
-- **[Multi-Platform Guide](docs/multi-platform.md)** - Building for iOS, Android, and Web
 
-**Architecture & Advanced:**
-- **[Agent Architecture](docs/agent-architecture.md)** - Understanding the agent mesh network
-- **[VPN Setup](docs/vpn-setup.md)** - PIA VPN container setup and configuration
-- **[VPN Troubleshooting](docs/vpn-troubleshooting.md)** - Common VPN issues and solutions
-- **[VPN Routing](docs/vpn-routing.md)** - VPN routing configuration
-- **[IPv6 Setup](docs/ipv6-setup.md)** - Enabling IPv6 support in VPN container
+**Architecture:**
+- **[Architecture Guide](docs/architecture.md)** - System architecture, multi-platform FFI, and agent mesh network
+
+**Advanced Topics:**
+- **[VPN Guide](docs/vpn.md)** - Complete PIA VPN setup, routing, and troubleshooting
 - **[Workflows](docs/workflows.md)** - GitHub Actions CI/CD documentation
+- **[IPv6 Setup](docs/ipv6-setup.md)** - Enabling IPv6 support in VPN container
 
 ## Quick Start
 
 After installation:
 
-1. **Configure HAL**: `halvor config init`
-2. **Setup SSH hosts**: `./scripts/setup-ssh-hosts.sh`
-3. **Setup SSH keys**: `./scripts/setup-ssh-keys.sh <hostname>`
-4. **Connect**: `ssh <hostname>`
+1. **Configure halvor**: `halvor config init`
+2. **Install platform tools**: `halvor install docker -H <hostname>`
+3. **Initialize cluster**: `halvor init -H <hostname>`
+4. **Install services**: `halvor install portainer -H <hostname>`
 
-See the [Configuration Guide](docs/configuration.md) for detailed setup instructions.
+See the [Installation Guide](docs/installation.md) for detailed setup instructions.
 
 ## Key Features
 
