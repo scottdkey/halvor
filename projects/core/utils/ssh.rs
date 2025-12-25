@@ -396,7 +396,10 @@ impl SshConnection {
         };
         
         // Clean up temp file (use shell_escape to ensure path is properly quoted)
-        let _ = self.execute_shell(&format!("rm -f {}", shell_escape(&temp_file)));
+        // Only try to remove if temp_file is not empty
+        if !temp_file.is_empty() {
+            let _ = self.execute_shell(&format!("rm -f {}", shell_escape(&temp_file)));
+        }
         Ok(content)
     }
 

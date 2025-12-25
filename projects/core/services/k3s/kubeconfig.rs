@@ -24,24 +24,17 @@ pub fn fetch_kubeconfig_content(primary_hostname: &str, config: &EnvConfig) -> R
         println!("  Primary node is remote, connecting via SSH");
     }
 
-    // First check if K3s service is running on the primary node (use same reliable method as init)
-    // Use tee to capture output while showing it in real-time
+    // First check if K3s service is running on the primary node
+    // Use a direct check that reads output directly (more reliable over SSH)
     println!("  Checking K3s service status...");
-    let status_output_file = "/tmp/halvor_k3s_status_check";
-    let status_cmd = format!("systemctl is-active k3s 2>&1 | tee {}", status_output_file);
+    
+    // Try without sudo first (systemctl is-active doesn't require sudo for status checks)
     let status_output = primary_exec
-        .execute_shell(&status_cmd)
+        .execute_shell("systemctl is-active k3s 2>/dev/null")
         .ok();
-
-    // Read the status from the temp file using read_file (which handles piped output correctly)
+    
     let is_active = if let Some(output) = &status_output {
-        // Use read_file to read the temp file - it uses piped output for internal operations
-        let status_str = primary_exec
-            .read_file(status_output_file)
-            .ok()
-            .unwrap_or_default()
-            .trim()
-            .to_string();
+        let status_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let success = output.status.success();
         // systemctl is-active returns "active" if running, non-zero exit if not
         success && status_str == "active"
@@ -52,21 +45,14 @@ pub fn fetch_kubeconfig_content(primary_hostname: &str, config: &EnvConfig) -> R
     if !is_active {
         // Try with sudo in case systemctl requires it
         println!("  Service check failed, trying with sudo (may prompt for password)...");
-        let sudo_status_file = "/tmp/halvor_k3s_status_check_sudo";
-        let sudo_status_cmd = format!("sudo systemctl is-active k3s 2>&1 | tee {}", sudo_status_file);
         let sudo_status = primary_exec
-            .execute_shell(&sudo_status_cmd)
+            .execute_shell("sudo systemctl is-active k3s 2>/dev/null")
             .ok();
         let is_active_sudo = if let Some(output) = &sudo_status {
-            // Use read_file to read the temp file - it uses piped output for internal operations
-            let status_str = primary_exec
-                .read_file(sudo_status_file)
-                .ok()
-                .unwrap_or_default()
-                .trim()
-                .to_string();
-            let success = output.status.success();
-            success && status_str == "active"
+            let status_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            // Check if output is "active" - this is the primary indicator
+            // Don't rely on exit code as some systems may return non-zero even when active
+            status_str == "active"
         } else {
             false
         };
@@ -81,6 +67,8 @@ pub fn fetch_kubeconfig_content(primary_hostname: &str, config: &EnvConfig) -> R
                 primary_hostname,
                 primary_hostname
             );
+        } else {
+            println!("  ✓ K3s service is running (checked with sudo)");
         }
     } else {
         println!("  ✓ K3s service is running");
