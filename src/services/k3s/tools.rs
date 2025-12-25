@@ -21,7 +21,10 @@ pub fn check_and_install_halvor<E: CommandExecutor>(exec: &E) -> Result<()> {
 
     // Detect remote platform first (needed for both dev and production)
     // Get architecture using uname -m (machine hardware name)
-    let arch_output = exec.execute_shell("uname -m")?;
+    // Use tee to capture output while showing it
+    let arch_temp = "/tmp/halvor_detect_arch";
+    let arch_cmd = format!("uname -m 2>&1 | tee {}", arch_temp);
+    let arch_output = exec.execute_shell(&arch_cmd)?;
     if !arch_output.status.success() {
         let stderr = String::from_utf8_lossy(&arch_output.stderr);
         anyhow::bail!(
@@ -29,9 +32,13 @@ pub fn check_and_install_halvor<E: CommandExecutor>(exec: &E) -> Result<()> {
             stderr
         );
     }
-    let arch_str = String::from_utf8_lossy(&arch_output.stdout)
+    // Read from temp file since stdout goes to terminal
+    let arch_str = exec.read_file(arch_temp)
+        .ok()
+        .unwrap_or_default()
         .trim()
         .to_string();
+    let _ = exec.execute_shell(&format!("rm -f {}", arch_temp)); // Clean up
     if arch_str.is_empty() {
         anyhow::bail!("Failed to detect architecture: 'uname -m' returned empty string");
     }
@@ -46,7 +53,10 @@ pub fn check_and_install_halvor<E: CommandExecutor>(exec: &E) -> Result<()> {
     };
 
     // Get OS using uname -s (operating system name)
-    let os_output = exec.execute_shell("uname -s")?;
+    // Use tee to capture output while showing it
+    let os_temp = "/tmp/halvor_detect_os";
+    let os_cmd = format!("uname -s 2>&1 | tee {}", os_temp);
+    let os_output = exec.execute_shell(&os_cmd)?;
     if !os_output.status.success() {
         let stderr = String::from_utf8_lossy(&os_output.stderr);
         anyhow::bail!(
@@ -54,9 +64,13 @@ pub fn check_and_install_halvor<E: CommandExecutor>(exec: &E) -> Result<()> {
             stderr
         );
     }
-    let os_str = String::from_utf8_lossy(&os_output.stdout)
+    // Read from temp file since stdout goes to terminal
+    let os_str = exec.read_file(os_temp)
+        .ok()
+        .unwrap_or_default()
         .trim()
         .to_string();
+    let _ = exec.execute_shell(&format!("rm -f {}", os_temp)); // Clean up
     if os_str.is_empty() {
         anyhow::bail!("Failed to detect OS: 'uname -s' returned empty string");
     }
