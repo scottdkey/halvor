@@ -67,6 +67,12 @@ pub mod local {
     /// List directory contents using native Rust
     pub fn list_directory(path: impl AsRef<std::path::Path>) -> Result<Vec<String>> {
         let path_ref = path.as_ref();
+        
+        // Check if directory exists first - if not, return empty vector
+        if !path_ref.exists() || !path_ref.is_dir() {
+            return Ok(Vec::new());
+        }
+        
         let mut entries = Vec::new();
         let dir = std::fs::read_dir(path_ref)
             .with_context(|| format!("Failed to read directory: {}", path_ref.display()))?;
@@ -457,6 +463,22 @@ impl Executor {
         // Handle "localhost" as a special case - always local execution
         if hostname == "localhost" || hostname == "127.0.0.1" {
             return Ok(Executor::Local);
+        }
+
+        // Check if hostname matches current machine BEFORE requiring it to be in config
+        // This allows commands to work on the current machine even if not yet configured
+        if let Ok(current_hostname) = crate::config::service::get_current_hostname() {
+            let normalized_current = crate::config::service::normalize_hostname(&current_hostname);
+            let normalized_input = crate::config::service::normalize_hostname(hostname);
+            
+            // Check if hostname matches current machine (exact or normalized)
+            if hostname.eq_ignore_ascii_case(&current_hostname)
+                || hostname.eq_ignore_ascii_case(&normalized_current)
+                || normalized_input.eq_ignore_ascii_case(&normalized_current)
+                || normalized_input.eq_ignore_ascii_case(&current_hostname)
+            {
+                return Ok(Executor::Local);
+            }
         }
 
         // Try to find hostname (with normalization for TLDs)
@@ -978,6 +1000,10 @@ impl CommandExecutor for Executor {
                 cmd.stdin(Stdio::inherit());
                 cmd.stdout(Stdio::inherit());
                 cmd.stderr(Stdio::inherit());
+                // Set environment variables to disable pagers
+                cmd.env("PAGER", "cat");
+                cmd.env("SYSTEMD_PAGER", "cat");
+                cmd.env("DEBIAN_FRONTEND", "noninteractive");
                 let status = cmd.status()?;
                 if !status.success() {
                     anyhow::bail!("Shell command failed");

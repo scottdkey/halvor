@@ -30,7 +30,7 @@ pub fn cleanup_existing_k3s_with_prompt<E: CommandExecutor>(
         .unwrap_or(false);
 
     let has_k3s_service = exec
-        .execute_shell("systemctl list-unit-files")
+        .execute_shell("systemctl list-unit-files --no-pager 2>/dev/null || systemctl list-unit-files 2>/dev/null | head -100")
         .ok()
         .map(|c| {
             let output = String::from_utf8_lossy(&c.stdout);
@@ -119,11 +119,39 @@ pub fn cleanup_existing_k3s_with_prompt<E: CommandExecutor>(
     }
 
     // Clean up K3s data directories to ensure fresh start
+    // This is critical to avoid "bootstrap data already found and encrypted with different token" errors
     println!("Cleaning up K3s data directories...");
-    let _ =
-        exec.execute_shell("sudo rm -rf /var/lib/rancher/k3s /etc/rancher/k3s 2>/dev/null || true");
+    
+    // Remove SMB failover service dependency if it exists (we no longer use it)
+    println!("Removing SMB failover service dependency...");
+    let _ = exec.execute_shell("sudo rm -rf /etc/systemd/system/k3s.service.d/20-smb-failover.conf 2>/dev/null || true");
+    let _ = exec.execute_shell("sudo systemctl daemon-reload 2>/dev/null || true");
+    
+    // Remove all K3s data directories thoroughly
+    let cleanup_cmd = r#"
+        sudo systemctl stop k3s.service 2>/dev/null || true
+        sudo systemctl stop k3s-agent.service 2>/dev/null || true
+        sudo systemctl stop k3s-smb-failover.service 2>/dev/null || true
+        sudo pkill -9 k3s 2>/dev/null || true
+        sudo pkill -9 containerd-shim 2>/dev/null || true
+        sudo pkill -9 containerd 2>/dev/null || true
+        sleep 3
+        # Clean up containerd namespaces and processes more aggressively
+        sudo find /run/containerd -name '*k3s*' -type f -delete 2>/dev/null || true
+        sudo find /run/containerd -name '*k3s*' -type d -exec rm -rf {} + 2>/dev/null || true
+        sudo rm -rf /var/lib/rancher/k3s 2>/dev/null || true
+        sudo rm -rf /etc/rancher/k3s 2>/dev/null || true
+        sudo rm -rf /var/lib/rancher/k3s-storage 2>/dev/null || true
+        sudo rm -rf /opt/k3s 2>/dev/null || true
+        # Also clean up any containerd data that might have K3s references
+        sudo find /var/lib/containerd -name '*k3s*' -type d -exec rm -rf {} + 2>/dev/null || true
+        # Clean up cgroup leftovers
+        sudo systemctl reset-failed k3s.service 2>/dev/null || true
+        sudo systemctl reset-failed k3s-agent.service 2>/dev/null || true
+    "#;
+    let _ = exec.execute_shell_interactive(cleanup_cmd);
 
-    // Wait a moment for cleanup
+    // Wait a moment for cleanup to complete
     std::thread::sleep(std::time::Duration::from_secs(3));
     println!("✓ Previous installation removed - ready for reinitialization");
 

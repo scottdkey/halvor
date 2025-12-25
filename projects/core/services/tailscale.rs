@@ -216,7 +216,7 @@ pub struct TailscaleDevice {
     pub ip: Option<String>,
 }
 
-/// List Tailscale devices on the network
+/// List Tailscale devices on the network (includes current node and peers)
 pub fn list_tailscale_devices() -> Result<Vec<TailscaleDevice>> {
     let output = Command::new("tailscale")
         .args(&["status", "--json"])
@@ -232,7 +232,41 @@ pub fn list_tailscale_devices() -> Result<Vec<TailscaleDevice>> {
 
     let mut devices = Vec::new();
 
-    // Parse Tailscale status JSON format
+    // Add current node (Self) first
+    if let Some(self_data) = status_json.get("Self") {
+        let name = self_data
+            .get("DNSName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        let ip = self_data
+            .get("TailscaleIPs")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.iter().find(|v| {
+                // Prefer IPv4 (starts with 100.)
+                if let Some(ip_str) = v.as_str() {
+                    ip_str.starts_with("100.")
+                } else {
+                    false
+                }
+            }))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                // Fallback to first IP if no IPv4 found
+                self_data
+                    .get("TailscaleIPs")
+                    .and_then(|v| v.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            });
+
+        devices.push(TailscaleDevice { name, ip });
+    }
+
+    // Parse Tailscale status JSON format for peers
     if let Some(peer_map) = status_json.get("Peer") {
         if let Some(peers) = peer_map.as_object() {
             for (_, peer_data) in peers {
@@ -245,9 +279,25 @@ pub fn list_tailscale_devices() -> Result<Vec<TailscaleDevice>> {
                 let ip = peer_data
                     .get("TailscaleIPs")
                     .and_then(|v| v.as_array())
-                    .and_then(|arr| arr.first())
+                    .and_then(|arr| arr.iter().find(|v| {
+                        // Prefer IPv4 (starts with 100.)
+                        if let Some(ip_str) = v.as_str() {
+                            ip_str.starts_with("100.")
+                        } else {
+                            false
+                        }
+                    }))
                     .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
+                    .map(|s| s.to_string())
+                    .or_else(|| {
+                        // Fallback to first IP if no IPv4 found
+                        peer_data
+                            .get("TailscaleIPs")
+                            .and_then(|v| v.as_array())
+                            .and_then(|arr| arr.first())
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                    });
 
                 devices.push(TailscaleDevice { name, ip });
             }
@@ -255,6 +305,161 @@ pub fn list_tailscale_devices() -> Result<Vec<TailscaleDevice>> {
     }
 
     Ok(devices)
+}
+
+/// Show Tailscale status with all nodes on the tailnet
+pub fn show_tailscale_status(hostname: &str, config: &EnvConfig) -> Result<()> {
+    use crate::utils::exec::Executor;
+    
+    let exec = Executor::new(hostname, config)?;
+    let is_local = exec.is_local();
+
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("Tailscale Status");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+
+    // Check if Tailscale is installed
+    if !is_tailscale_installed(&exec) {
+        println!("✗ Tailscale is not installed on this node.");
+        println!();
+        println!("To install Tailscale:");
+        if is_local {
+            println!("  halvor install tailscale");
+        } else {
+            println!("  halvor install tailscale -H {}", hostname);
+        }
+        return Ok(());
+    }
+
+    // Get Tailscale status
+    let status_output = if is_local {
+        // Local execution - use direct command
+        Command::new("tailscale")
+            .args(&["status", "--json"])
+            .output()
+            .context("Failed to execute tailscale status")?
+    } else {
+        // Remote execution - use executor
+        let output = exec.execute_shell("tailscale status --json 2>&1")?;
+        std::process::Output {
+            status: output.status,
+            stdout: output.stdout,
+            stderr: output.stderr,
+        }
+    };
+
+    if !status_output.status.success() {
+        let error_msg = String::from_utf8_lossy(&status_output.stderr);
+        println!("✗ Tailscale is installed but not running or not connected.");
+        if !error_msg.trim().is_empty() {
+            println!("  Error: {}", error_msg.trim());
+        }
+        println!();
+        println!("To start Tailscale:");
+        if is_local {
+            println!("  sudo tailscale up");
+        } else {
+            println!("  SSH to {} and run: sudo tailscale up", hostname);
+        }
+        return Ok(());
+    }
+
+    // Parse JSON status
+    let status_json: serde_json::Value = serde_json::from_slice(&status_output.stdout)
+        .context("Failed to parse tailscale status JSON")?;
+
+    // Get current node info
+    let mut current_node_name = "unknown".to_string();
+    let mut current_node_ip: Option<String> = None;
+    
+    if let Some(self_data) = status_json.get("Self") {
+        if let Some(dns_name) = self_data.get("DNSName").and_then(|v| v.as_str()) {
+            current_node_name = dns_name.trim_end_matches('.').to_string();
+        }
+        if let Some(ips) = self_data.get("TailscaleIPs").and_then(|v| v.as_array()) {
+            // Prefer IPv4
+            if let Some(ip) = ips.iter().find_map(|v| {
+                v.as_str().and_then(|s| {
+                    if s.starts_with("100.") {
+                        Some(s.to_string())
+                    } else {
+                        None
+                    }
+                })
+            }) {
+                current_node_ip = Some(ip);
+            } else if let Some(ip) = ips.first().and_then(|v| v.as_str()) {
+                current_node_ip = Some(ip.to_string());
+            }
+        }
+    }
+
+    println!("Current Node:");
+    println!("  Name: {}", current_node_name);
+    if let Some(ref ip) = current_node_ip {
+        println!("  IP:   {}", ip);
+    }
+    println!();
+
+    // Get all devices (peers) - parse from the status JSON we already have
+    let mut peers = Vec::new();
+    
+    if let Some(peer_map) = status_json.get("Peer") {
+        if let Some(peers_obj) = peer_map.as_object() {
+            for (_, peer_data) in peers_obj {
+                let name = peer_data
+                    .get("DNSName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .trim_end_matches('.')
+                    .to_string();
+
+                let ip = peer_data
+                    .get("TailscaleIPs")
+                    .and_then(|v| v.as_array())
+                    .and_then(|arr| arr.iter().find_map(|v| {
+                        v.as_str().and_then(|s| {
+                            if s.starts_with("100.") {
+                                Some(s.to_string())
+                            } else {
+                                None
+                            }
+                        })
+                    }))
+                    .or_else(|| {
+                        peer_data
+                            .get("TailscaleIPs")
+                            .and_then(|v| v.as_array())
+                            .and_then(|arr| arr.first())
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                    });
+
+                peers.push((name, ip));
+            }
+        }
+    }
+
+    // Sort peers by name
+    peers.sort_by(|a, b| a.0.cmp(&b.0));
+
+    if peers.is_empty() {
+        println!("No other nodes found on the tailnet.");
+    } else {
+        println!("Nodes on Tailnet ({}):", peers.len());
+        println!();
+        println!("  {:<40} {:<20}", "Hostname", "IP Address");
+        println!("  {}", "-".repeat(60));
+
+        for (name, ip) in &peers {
+            let ip_str = ip.as_deref().unwrap_or("N/A");
+            println!("  {:<40} {:<20}", name, ip_str);
+        }
+    }
+
+    println!();
+    Ok(())
 }
 
 /// Get local Tailscale IP address

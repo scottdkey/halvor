@@ -83,8 +83,31 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
             update::handle_update(hostname.as_deref(), app.as_deref(), experimental, force)?;
         }
         Init { token, yes } => {
-            let target_host = hostname.as_deref().unwrap_or("localhost");
-            init::handle_init(target_host, token.as_deref(), yes)?;
+            // Detect current machine's hostname if not provided
+            let halvor_dir = crate::config::find_halvor_dir()?;
+            let config = crate::config::load_env_config(&halvor_dir)?;
+            
+            let target_host = if let Some(host) = hostname.as_deref() {
+                host.to_string()
+            } else {
+                // Try to detect current hostname and find it in config
+                match crate::config::service::get_current_hostname() {
+                    Ok(current_host) => {
+                        // Try to find it in config (with normalization)
+                        if let Some(found_host) = crate::config::service::find_hostname_in_config(&current_host, &config) {
+                            found_host
+                        } else {
+                            // Not in config, but we can still use it - Executor will detect it's local
+                            current_host
+                        }
+                    }
+                    Err(_) => {
+                        // Fallback to localhost if we can't detect hostname
+                        "localhost".to_string()
+                    }
+                }
+            };
+            init::handle_init(&target_host, token.as_deref(), yes)?;
         }
         Config {
             verbose,
@@ -128,7 +151,7 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
             )?;
         }
         Status { command } => {
-            let local_command: status::StatusCommands = unsafe { mem::transmute(command) };
+            let local_command: Option<status::StatusCommands> = command.map(|c| unsafe { mem::transmute(c) });
             status::handle_status(hostname.as_deref(), local_command)?;
         }
         Configure { hostname: target_host } => {

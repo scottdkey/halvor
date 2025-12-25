@@ -33,4 +33,5 @@ pub use smb::{setup_smb_mounts, uninstall_smb_mounts};
 pub use sync::sync_data;
 pub use tailscale::{
     get_tailscale_hostname, get_tailscale_ip, install_tailscale_on_host, list_tailscale_devices,
+    show_tailscale_status,
 };

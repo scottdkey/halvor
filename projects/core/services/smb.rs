@@ -5,11 +5,22 @@ use anyhow::Result;
 pub fn setup_smb_mounts(hostname: &str, config: &EnvConfig) -> Result<()> {
     // Create executor - it automatically determines if execution should be local or remote
     let exec = Executor::new(hostname, config)?;
-    let target_host = exec.target_host(hostname, config)?;
     let is_local = exec.is_local();
+    
+    // Get the actual hostname for display - detect current machine if local
+    let display_hostname = if is_local && (hostname == "localhost" || hostname == "127.0.0.1") {
+        // Try to detect current hostname
+        crate::config::service::get_current_hostname()
+            .ok()
+            .unwrap_or_else(|| hostname.to_string())
+    } else {
+        hostname.to_string()
+    };
+    
+    let target_host = exec.target_host(hostname, config)?;
 
     if is_local {
-        println!("Setting up SMB mounts locally on {}...", hostname);
+        println!("Setting up SMB mounts locally on {}...", display_hostname);
     } else {
         println!("Setting up SMB mounts on {} ({})...", hostname, target_host);
     }
@@ -19,7 +30,7 @@ pub fn setup_smb_mounts(hostname: &str, config: &EnvConfig) -> Result<()> {
     setup_smb_mounts_remote(&exec, config)?;
 
     println!();
-    println!("✓ SMB mount setup complete for {}", hostname);
+    println!("✓ SMB mount setup complete for {}", display_hostname);
 
     Ok(())
 }
@@ -130,14 +141,20 @@ fn cleanup_old_mounts<E: CommandExecutor>(exec: &E) -> Result<()> {
 
     // Check if /mnt/smb exists before trying to list it
     // If it doesn't exist, there's nothing to clean up
-    if !exec.is_directory("/mnt/smb")? {
+    let smb_dir_exists = exec.is_directory("/mnt/smb").unwrap_or(false);
+    if !smb_dir_exists {
         println!("Mount directory /mnt/smb doesn't exist yet, nothing to clean up");
         println!();
         return Ok(());
     }
 
-    // List directories in /mnt/smb using native Rust
-    let dirs = exec.list_directory("/mnt/smb")?;
+    // List directories in /mnt/smb - handle gracefully if directory doesn't exist
+    let dirs = exec.list_directory("/mnt/smb")
+        .unwrap_or_else(|_| {
+            // Directory might have been removed between check and list, or check might have been wrong
+            println!("Mount directory /mnt/smb doesn't exist, nothing to clean up");
+            Vec::new()
+        });
     for server_dir in dirs {
         let server_dir = server_dir.trim();
         if server_dir.is_empty() {

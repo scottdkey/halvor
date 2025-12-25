@@ -1,7 +1,7 @@
 //! K3s node joining logic
 
 use crate::config::EnvConfig;
-use crate::services::k3s::{agent_service, cleanup, kubeconfig, smb_failover, tools, verify};
+use crate::services::k3s::{agent_service, cleanup, kubeconfig, tools, verify};
 use crate::services::tailscale;
 use crate::utils::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
@@ -372,12 +372,9 @@ pub fn join_cluster(
     tools::check_and_install_kubectl(&exec)?;
     tools::check_and_install_helm(&exec)?;
 
-    // Setup SMB failover for k3s data directory (maple -> willow)
-    println!();
-    if let Err(e) = smb_failover::setup_smb_failover(&exec, hostname) {
-        println!("⚠️  Warning: Failed to setup SMB failover: {}", e);
-        println!("   K3s will use default data directory. You may need to configure SMB failover manually.");
-    }
+    // Note: SMB mounts are set up separately for cluster storage, not for K3s data directory
+    // K3s will use default local data directory (/var/lib/rancher/k3s)
+    // SMB mounts will be available in the cluster for persistent volumes
 
     // Check if K3s needs to be installed
     // Note: We always clean up existing installations to ensure correct cluster join,

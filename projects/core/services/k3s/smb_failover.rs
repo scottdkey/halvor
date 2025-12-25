@@ -69,12 +69,19 @@ if check_mount "/mnt/smb/willow/halvor"; then
     exit 0
 fi
 
-# Neither server is available
-echo "ERROR: Neither maple nor willow SMB servers are available!"
+# Neither server is available - create local fallback directory
+echo "WARNING: Neither maple nor willow SMB servers are available!"
 echo "  Check SMB mounts:"
 echo "    - /mnt/smb/maple/halvor"
 echo "    - /mnt/smb/willow/halvor"
-exit 1
+echo "  Creating local fallback directory..."
+LOCAL_FALLBACK="/var/lib/rancher/k3s/data-fallback"
+mkdir -p "$LOCAL_FALLBACK"
+mkdir -p "$(dirname "$UNIFIED_DIR")"
+ln -sfn "$LOCAL_FALLBACK" "$UNIFIED_DIR"
+echo "✓ Created local fallback symlink: $UNIFIED_DIR -> $LOCAL_FALLBACK"
+echo "  Note: Data will be stored locally until SMB mounts are available"
+exit 0
 "#,
         hostname
     );
@@ -139,10 +146,11 @@ WantedBy=k3s.service
     }
     
     // Update k3s service to depend on the failover service
+    // Use Wants instead of Requires so k3s can start even if SMB mounts aren't available
     let service_override_dir = "/etc/systemd/system/k3s.service.d";
     let override_content = r#"[Unit]
 After=k3s-smb-failover.service
-Requires=k3s-smb-failover.service
+Wants=k3s-smb-failover.service
 "#;
     
     exec.execute_shell(&format!("sudo mkdir -p {}", service_override_dir))?;

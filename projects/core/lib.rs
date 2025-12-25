@@ -132,10 +132,10 @@ pub enum Commands {
         #[arg(long, action = clap::ArgAction::SetTrue)]
         control_plane: bool,
     },
-    /// Show status of services
+    /// Show status of services (mesh overview by default)
     Status {
         #[command(subcommand)]
-        command: commands::status::StatusCommands,
+        command: Option<commands::status::StatusCommands>,
     },
     /// Configure Tailscale integration for K3s cluster
     Configure {

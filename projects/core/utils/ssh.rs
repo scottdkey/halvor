@@ -332,10 +332,21 @@ impl SshConnection {
 
         let mut ssh_args = self.build_ssh_args();
         ssh_args.push("-tt".to_string()); // Force TTY for interactive
+        // Set environment variables to disable pagers via SSH
+        ssh_args.push("-o".to_string());
+        ssh_args.push("SendEnv=PAGER SYSTEMD_PAGER DEBIAN_FRONTEND".to_string());
         ssh_args.push("sh".to_string());
         ssh_args.push("-c".to_string());
-        ssh_args.push(final_command);
+        // Export environment variables in the remote shell
+        let env_prefix = "export PAGER=cat SYSTEMD_PAGER=cat DEBIAN_FRONTEND=noninteractive && ";
+        let final_command_with_env = format!("{}{}", env_prefix, final_command);
+        ssh_args.push(final_command_with_env);
 
+        let mut ssh_cmd = Command::new("ssh");
+        ssh_cmd.args(&ssh_args);
+        ssh_cmd.env("PAGER", "cat");
+        ssh_cmd.env("SYSTEMD_PAGER", "cat");
+        ssh_cmd.env("DEBIAN_FRONTEND", "noninteractive");
         let status = Command::new("ssh")
             .args(&ssh_args)
             .stdin(Stdio::inherit())
