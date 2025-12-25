@@ -6,6 +6,17 @@ use crate::utils::exec::CommandExecutor;
 use anyhow::{Context, Result};
 
 /// Join a node to the K3s cluster
+///
+/// This command works in two modes:
+/// 1. **Remote join**: Run from another machine (e.g., frigg) to join a remote node
+///    Example: `halvor join -H baulder --server=frigg --control-plane`
+/// 2. **Local join**: Run directly on the target node (e.g., baulder) to join itself
+///    Example: `halvor join --server=frigg --control-plane` (when run on baulder)
+///
+/// The command automatically detects:
+/// - If running locally (no -H flag or -H points to localhost) vs remotely
+/// - The primary control plane node if --server is not provided
+/// - Uses K3S_TOKEN env var if available, otherwise fetches from primary node
 pub fn handle_join(
     hostname: Option<&str>,
     join_hostname: Option<String>,
@@ -17,6 +28,9 @@ pub fn handle_join(
     let config = config::load_env_config(&halvor_dir)?;
     
     // Determine target host: prioritize global -H flag, then positional argument, then localhost
+    // This allows the command to work both remotely and locally:
+    // - Remote: `halvor join -H baulder` (from frigg)
+    // - Local: `halvor join` (from baulder, joins localhost)
     let join_target = if let Some(host) = hostname {
         // Global -H flag takes precedence
         host
@@ -24,7 +38,7 @@ pub fn handle_join(
         // Use positional argument if provided
         host
     } else {
-        // Default to localhost
+        // Default to localhost (when running on the target machine itself)
         "localhost"
     };
     

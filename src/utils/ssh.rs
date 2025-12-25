@@ -395,8 +395,8 @@ impl SshConnection {
             anyhow::bail!("Failed to read captured file content from: {}", temp_file);
         };
         
-        // Clean up temp file
-        let _ = self.execute_shell(&format!("rm -f {}", temp_file));
+        // Clean up temp file (use shell_escape to ensure path is properly quoted)
+        let _ = self.execute_shell(&format!("rm -f {}", shell_escape(&temp_file)));
         Ok(content)
     }
 
@@ -517,7 +517,7 @@ impl SshConnection {
 }
 
 /// Escape a string for safe use in shell commands
-fn shell_escape(s: &str) -> String {
+pub(crate) fn shell_escape(s: &str) -> String {
     // Simple escaping - wrap in single quotes and escape single quotes
     if s.is_empty() {
         return "''".to_string();

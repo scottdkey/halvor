@@ -204,7 +204,7 @@ fn update_platform_tool(hostname: &str, tool: &str, config: &config::EnvConfig) 
 }
 
 /// Update Helm charts
-fn update_helm_charts(hostname: &str, config: &config::EnvConfig) -> Result<()> {
+fn update_helm_charts(_hostname: &str, _config: &config::EnvConfig) -> Result<()> {
     println!("Updating Helm charts...");
     // Get list of installed Helm releases and update them
     // This is a simplified version - in practice, you'd want to list all releases

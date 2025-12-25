@@ -1,7 +1,7 @@
 use crate::config;
 use crate::services::backup;
 use anyhow::Result;
-use std::io::{self, Write};
+use std::io::Write;
 
 /// Handle backup command
 /// hostname: None = local, Some(hostname) = remote host

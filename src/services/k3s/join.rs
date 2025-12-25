@@ -9,6 +9,15 @@ use serde_json;
 use std::io::{self, Write};
 
 /// Join a node to the cluster
+///
+/// This function handles both remote and local joins:
+/// - **Remote join**: When `hostname` is not localhost, creates SSH connection to remote node
+/// - **Local join**: When `hostname` is localhost, executes commands directly on current machine
+///
+/// The executor automatically detects if the target is local or remote based on:
+/// - IP address comparison (checks if target IP matches local IPs)
+/// - Hostname comparison (checks if target hostname matches current hostname)
+/// - Tailscale IP comparison (for Tailscale-connected nodes)
 pub fn join_cluster(
     hostname: &str,
     server: &str,

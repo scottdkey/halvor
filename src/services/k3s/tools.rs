@@ -1,6 +1,7 @@
 //! Tool installation functions for K3s cluster setup
 use crate::services::k3s::utils;
 use crate::utils::exec::{CommandExecutor, PackageManager};
+use crate::utils::ssh::shell_escape;
 use anyhow::{Context, Result};
 use reqwest;
 use std::io::Write;
@@ -21,24 +22,41 @@ pub fn check_and_install_halvor<E: CommandExecutor>(exec: &E) -> Result<()> {
 
     // Detect remote platform first (needed for both dev and production)
     // Get architecture using uname -m (machine hardware name)
-    // Use tee to capture output while showing it
-    let arch_temp = "/tmp/halvor_detect_arch";
-    let arch_cmd = format!("uname -m 2>&1 | tee {}", arch_temp);
-    let arch_output = exec.execute_shell(&arch_cmd)?;
-    if !arch_output.status.success() {
-        let stderr = String::from_utf8_lossy(&arch_output.stderr);
-        anyhow::bail!(
-            "Failed to detect architecture: 'uname -m' failed with stderr: {}",
-            stderr
-        );
+    // For remote hosts, we need to capture output while showing it
+    // The simplest approach: use read_file which handles both local and remote correctly
+    // But read_file uses tee internally, so we'll just capture directly
+    let arch_str = if exec.is_local() {
+        // For local, just run uname -m directly and capture output
+        let output = exec.execute_simple("uname", &["-m"])?;
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    } else {
+        // For remote, use tee to capture while showing, then read the temp file
+        // Use a unique temp file name
+        let arch_temp = format!("/tmp/halvor_detect_arch_{}", std::process::id());
+        let arch_cmd = format!("uname -m 2>&1 | tee {}", shell_escape(&arch_temp));
+        let arch_output = exec.execute_shell(&arch_cmd)?;
+        if !arch_output.status.success() {
+            let stderr = String::from_utf8_lossy(&arch_output.stderr);
+            anyhow::bail!(
+                "Failed to detect architecture: 'uname -m' failed with stderr: {}",
+                stderr
+            );
+        }
+        
+        // Read the temp file directly using cat with piped output (internal operation)
+        // We need to access the SSH connection directly, but we can't from the trait
+        // So we'll use read_file, which will create its own temp file, but that's okay
+        // The key is that read_file will read our temp file and return the content
+        let content = exec.read_file(&arch_temp)
+            .ok()
+            .unwrap_or_default();
+        
+        // Clean up our temp file
+        let _ = exec.execute_shell(&format!("rm -f {}", shell_escape(&arch_temp)));
+        
+        content.trim().to_string()
     }
-    // Read from temp file since stdout goes to terminal
-    let arch_str = exec.read_file(arch_temp)
-        .ok()
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-    let _ = exec.execute_shell(&format!("rm -f {}", arch_temp)); // Clean up
+    
     if arch_str.is_empty() {
         anyhow::bail!("Failed to detect architecture: 'uname -m' returned empty string");
     }
@@ -53,24 +71,34 @@ pub fn check_and_install_halvor<E: CommandExecutor>(exec: &E) -> Result<()> {
     };
 
     // Get OS using uname -s (operating system name)
-    // Use tee to capture output while showing it
-    let os_temp = "/tmp/halvor_detect_os";
-    let os_cmd = format!("uname -s 2>&1 | tee {}", os_temp);
-    let os_output = exec.execute_shell(&os_cmd)?;
-    if !os_output.status.success() {
-        let stderr = String::from_utf8_lossy(&os_output.stderr);
-        anyhow::bail!(
-            "Failed to detect OS: 'uname -s' failed with stderr: {}",
-            stderr
-        );
+    let os_str = if exec.is_local() {
+        // For local, just run uname -s directly and capture output
+        let output = exec.execute_simple("uname", &["-s"])?;
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    } else {
+        // For remote, use tee to capture while showing, then read the temp file
+        let os_temp = format!("/tmp/halvor_detect_os_{}", std::process::id());
+        let os_cmd = format!("uname -s 2>&1 | tee {}", shell_escape(&os_temp));
+        let os_output = exec.execute_shell(&os_cmd)?;
+        if !os_output.status.success() {
+            let stderr = String::from_utf8_lossy(&os_output.stderr);
+            anyhow::bail!(
+                "Failed to detect OS: 'uname -s' failed with stderr: {}",
+                stderr
+            );
+        }
+        
+        // Read the temp file using read_file
+        let content = exec.read_file(&os_temp)
+            .ok()
+            .unwrap_or_default();
+        
+        // Clean up our temp file
+        let _ = exec.execute_shell(&format!("rm -f {}", shell_escape(&os_temp)));
+        
+        content.trim().to_string()
     }
-    // Read from temp file since stdout goes to terminal
-    let os_str = exec.read_file(os_temp)
-        .ok()
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-    let _ = exec.execute_shell(&format!("rm -f {}", os_temp)); // Clean up
+    
     if os_str.is_empty() {
         anyhow::bail!("Failed to detect OS: 'uname -s' returned empty string");
     }
