@@ -18,7 +18,6 @@ pub fn handle_install(
     hostname: Option<&str>,
     app: Option<&str>,
     list: bool,
-    helm: bool,
 ) -> Result<()> {
     // Handle --list flag
     if list {
@@ -43,10 +42,9 @@ pub fn handle_install(
         host
     } else {
         // Check if this is a Helm chart deployment
-        let is_helm_chart = helm
-            || find_app(app_name)
-                .map(|app| matches!(app.category, AppCategory::HelmChart))
-                .unwrap_or(false);
+        let is_helm_chart = find_app(app_name)
+            .map(|app| matches!(app.category, AppCategory::HelmChart))
+            .unwrap_or(false);
 
         if is_helm_chart {
             // Default to frigg (primary control plane) for cluster deployments
@@ -60,24 +58,7 @@ pub fn handle_install(
         }
     };
 
-    // If --helm flag is set, install as Helm chart directly
-    if helm {
-        // Look up the app to get its namespace
-        let namespace = find_app(app_name)
-            .and_then(|app| app.namespace)
-            .or(Some("default"));
-        return helm::install_chart(
-            target_host,
-            app_name,
-            None, // Use chart name as release name
-            namespace,
-            None, // No values file - will generate from env vars
-            &[],  // No --set flags - will generate from env vars
-            &config,
-        );
-    }
-
-    // Otherwise, look up the app and use its category
+    // Look up the app and use its category
     let app_def = match find_app(app_name) {
         Some(def) => def,
         None => {
@@ -130,12 +111,10 @@ fn install_platform_tool(hostname: &str, tool: &str, config: &config::EnvConfig)
             services::k3s::init_control_plane(hostname, None, false, config)?;
         }
         "pia-vpn" | "pia" | "vpn" => {
-            // For platform install, we might want to install the Docker container version
-            // But the Helm chart version is preferred for Kubernetes
+            // PIA VPN is a Helm chart - should be installed via Helm chart category
             anyhow::bail!(
-                "PIA VPN should be installed as a Helm chart on Kubernetes.\n\
-                 Use: halvor install pia-vpn --helm\n\
-                 Or: halvor install pia-vpn (on a Kubernetes cluster node)"
+                "PIA VPN is a Helm chart and should be installed on a Kubernetes cluster.\n\
+                 Use: halvor install pia-vpn -H <cluster-node>"
             );
         }
         _ => {

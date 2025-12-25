@@ -120,14 +120,22 @@ make docs
 
 ### Manual Documentation
 
+**Setup & Configuration:**
 - **[Configuration Guide](docs/configuration.md)** - Setting up your environment file and managing configuration
-- **[Setup Guide](docs/setup.md)** - SSH host configuration and key setup
-- **[Usage Guide](docs/usage.md)** - Common commands and operations
+- **[Setup Guide](docs/setup.md)** - Initial setup and SSH configuration
+- **[Cluster Setup Guide](docs/cluster-setup.md)** - Setting up K3s Kubernetes cluster
+
+**Development:**
 - **[Development Guide](docs/development.md)** - Building, testing, and contributing
-- **[Workflows](docs/workflows.md)** - GitHub Actions CI/CD documentation
+- **[Multi-Platform Guide](docs/multi-platform.md)** - Building for iOS, Android, and Web
+
+**Architecture & Advanced:**
+- **[Agent Architecture](docs/agent-architecture.md)** - Understanding the agent mesh network
 - **[VPN Setup](docs/vpn-setup.md)** - PIA VPN container setup and configuration
 - **[VPN Troubleshooting](docs/vpn-troubleshooting.md)** - Common VPN issues and solutions
+- **[VPN Routing](docs/vpn-routing.md)** - VPN routing configuration
 - **[IPv6 Setup](docs/ipv6-setup.md)** - Enabling IPv6 support in VPN container
+- **[Workflows](docs/workflows.md)** - GitHub Actions CI/CD documentation
 
 ## Quick Start
 

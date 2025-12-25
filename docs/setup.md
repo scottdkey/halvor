@@ -1,73 +1,43 @@
 # Setup Guide
 
-## Configure SSH Hosts
+## Initial Configuration
 
-First, set up your SSH hosts from `.env` configuration:
+1. **Configure halvor**: 
+   ```bash
+   halvor config init
+   ```
+   This sets up the path to your `.env` file and initializes configuration.
 
-```bash
-./scripts/setup-ssh-hosts.sh
-```
+2. **Setup SSH hosts**: 
+   ```bash
+   ./scripts/setup-ssh-hosts.sh
+   ```
+   This reads SSH host configurations from your `.env` file and adds them to `~/.ssh/config`.
 
-This reads SSH host configurations from your `.env` file and adds them to `~/.ssh/config`. Add
-entries like:
+3. **Setup SSH keys**: 
+   ```bash
+   ./scripts/setup-ssh-keys.sh <hostname>
+   ```
+   Copies your SSH public key to the remote host (one-time password required).
 
-```bash
-SSH_MAPLE_HOST="10.10.10.130"
-SSH_MAPLE_USER="skey"
-SSH_MAPLE_PORT="22"
+## Environment Configuration
 
-SSH_BELLEROPHON_HOST="10.10.10.14"
-SSH_BELLEROPHON_USER="username"
-```
-
-## Setup SSH Keys
-
-After configuring hosts, set up SSH key authentication (one-time password required):
-
-```bash
-./scripts/setup-ssh-keys.sh maple
-```
-
-This will:
-
-- Copy your SSH public key to the remote host
-- Prompt for password once (only time needed)
-- Enable passwordless SSH connections
-
-## Install Tailscale
-
-Install Tailscale on your system (supports macOS, Linux, and Windows):
+Add host configurations to your `.env` file:
 
 ```bash
-hal tailscale install
+HOST_FRIGG_IP="10.10.10.10"
+HOST_FRIGG_HOSTNAME="frigg.ts.net"
+HOST_FRIGG_USER="skey"
+
+HOST_BAULDER_IP="10.10.10.11"
+HOST_BAULDER_HOSTNAME="baulder.ts.net"
+HOST_BAULDER_USER="skey"
 ```
 
-This will:
+For detailed configuration options, see the [Configuration Guide](configuration.md).
 
-- Detect your operating system
-- Use the appropriate package manager (Homebrew on macOS, apt/yum/dnf on Linux)
-- Provide instructions for starting Tailscale
+## Next Steps
 
-## Provision a Remote Host
-
-Provision a remote host with Docker, Tailscale, and Portainer:
-
-```bash
-hal provision bellerophon
-```
-
-This will:
-
-- Connect to the host via SSH (prompts for username and password)
-- Install Docker if not already installed
-- Install Tailscale if not already installed
-- Install Portainer Agent (or Portainer CE with `--portainer-host` flag)
-- Handle all sudo prompts interactively
-
-**Install Portainer CE instead of Agent:**
-
-```bash
-hal provision bellerophon --portainer-host
-```
-
-This installs the full Portainer CE with web UI instead of just the agent.
+- **Install platform tools**: See [Cluster Setup Guide](cluster-setup.md) for installing Docker, Tailscale, and SMB mounts
+- **Initialize cluster**: See [Cluster Setup Guide](cluster-setup.md) for K3s cluster setup
+- **Install services**: See [CLI Commands Reference](generated/cli-commands.md) for `halvor install` command

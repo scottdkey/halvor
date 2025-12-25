@@ -207,7 +207,7 @@ pub fn list_apps() {
     println!("\nUsage:");
     println!("  halvor install <app>                  # Install on current system");
     println!("  halvor install <app> -H <hostname>    # Install on remote host");
-    println!("  halvor install <app> --helm           # Install as Helm chart (for Kubernetes)");
+    println!("\nNote: Helm charts are automatically detected. No --helm flag needed.");
 }
 
 fn print_app(app: &AppDefinition) {

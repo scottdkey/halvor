@@ -60,9 +60,6 @@ pub enum Commands {
         /// List all available apps
         #[arg(long)]
         list: bool,
-        /// Install as Helm chart (for Kubernetes)
-        #[arg(long)]
-        helm: bool,
     },
     /// Uninstall a service from a host or halvor itself
     Uninstall {

@@ -29,14 +29,14 @@ This will:
    TAILNET_BASE="ts.net"
 
    # Host configurations
-   HOST_bellerophon_IP="10.10.10.14"
-   HOST_bellerophon_TAILSCALE="bellerophon"
+   HOST_FRIGG_IP="10.10.10.10"
+   HOST_FRIGG_HOSTNAME="frigg.ts.net"
 
    # SSH host configurations (for setup-ssh-hosts.sh)
    SSH_MAPLE_HOST="10.10.10.130"
    SSH_MAPLE_USER="skey"
-   SSH_BELLEROPHON_HOST="10.10.10.14"
-   SSH_BELLEROPHON_USER="username"
+   SSH_FRIGG_HOST="10.10.10.10"
+   SSH_FRIGG_USER="skey"
    ```
 
 ## Managing Configuration
@@ -64,7 +64,7 @@ hal config init
 For NPM automation, add these to your `.env` file:
 
 ```bash
-NPM_URL="https://bellerophon:81"  # Optional, defaults to https://{hostname}:81
+NPM_URL="https://frigg:81"  # Optional, defaults to https://{hostname}:81
 NPM_USERNAME="admin@example.com"
 NPM_PASSWORD="your-password"
 ```

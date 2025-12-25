@@ -62,9 +62,9 @@ When deploying via Portainer, you **must** set the `USER` environment variable:
    - Example: `USER=username`
 4. This determines the path: `/home/<your-username>/config/vpn`
 
-## Using `hal vpn deploy`
+## Using `halvor vpn deploy`
 
-The `hal vpn deploy` command automatically:
+The `halvor vpn deploy` command automatically:
 
 - Creates `/home/<user>/config/vpn` directory
 - Copies `auth.txt` and `ca-montreal.ovpn` from your local `openvpn/` directory
@@ -73,7 +73,7 @@ The `hal vpn deploy` command automatically:
 You can override the username by setting `VPN_USER` environment variable:
 
 ```bash
-VPN_USER=username hal vpn deploy <hostname>
+VPN_USER=username halvor vpn deploy <hostname>
 ```
 
 ## Troubleshooting

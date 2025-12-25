@@ -321,11 +321,11 @@ pub fn setup_cluster(
         primary
     );
     println!(
-        "  • Get kubeconfig:          halvor k3s kubeconfig -H {} --merge",
+        "  • Access cluster:          kubectl commands work on {}",
         primary
     );
-    println!("  • Deploy SMB storage:      halvor install smb-storage --helm");
-    println!("  • Deploy services:        halvor install <service> --helm");
+    println!("  • Deploy SMB storage:      halvor install smb-storage -H <hostname>");
+    println!("  • Deploy services:        halvor install <service> -H <hostname>");
     println!();
 
     Ok(())

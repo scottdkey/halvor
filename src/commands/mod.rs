@@ -65,8 +65,8 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
         List { verbose } => {
             list::handle_list(hostname.as_deref(), verbose)?;
         }
-        Install { app, list, helm } => {
-            install::handle_install(hostname.as_deref(), app.as_deref(), list, helm)?;
+        Install { app, list } => {
+            install::handle_install(hostname.as_deref(), app.as_deref(), list)?;
         }
         Uninstall { service } => {
             if let Some(service) = service {

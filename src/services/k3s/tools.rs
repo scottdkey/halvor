@@ -64,10 +64,12 @@ pub fn check_and_install_halvor<E: CommandExecutor>(exec: &E) -> Result<()> {
     let remote_arch = match arch_str.as_str() {
         "x86_64" | "amd64" => "amd64",
         "aarch64" | "arm64" => "arm64",
-        _ => anyhow::bail!(
-            "Unsupported architecture: '{}' (from 'uname -m'). Expected: x86_64, amd64, aarch64, or arm64",
-            arch_str
-        ),
+        _ => {
+            anyhow::bail!(
+                "Unsupported architecture: '{}' (from 'uname -m'). Expected: x86_64, amd64, aarch64, or arm64",
+                arch_str
+            );
+        }
     };
 
     // Get OS using uname -s (operating system name)
@@ -106,10 +108,12 @@ pub fn check_and_install_halvor<E: CommandExecutor>(exec: &E) -> Result<()> {
     let remote_os = match os_str.as_str() {
         "Linux" => "linux",
         "Darwin" => "darwin",
-        _ => anyhow::bail!(
-            "Unsupported OS: '{}' (from 'uname -s'). Expected: Linux or Darwin",
-            os_str
-        ),
+        _ => {
+            anyhow::bail!(
+                "Unsupported OS: '{}' (from 'uname -s'). Expected: Linux or Darwin",
+                os_str
+            );
+        }
     };
 
     // Check for musl (Alpine)

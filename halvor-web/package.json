@@ -2,6 +2,9 @@
   "name": "halvor-web",
   "version": "0.0.6",
   "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",

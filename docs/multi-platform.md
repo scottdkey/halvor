@@ -50,44 +50,84 @@ This single annotation makes the function available in:
 
 ## Platform-Specific Builds
 
-### Swift (iOS/macOS)
+### CLI Binaries
+
 ```bash
-make build-ios    # iOS
-make build-mac    # macOS
+# Build for current platform (auto-detects OS)
+halvor build cli
+
+# Build for specific platforms
+halvor build cli --platforms apple
+halvor build cli --platforms linux
+halvor build cli --platforms windows
+halvor build cli --platforms apple,linux,windows
+```
+
+### Swift (iOS/macOS)
+
+```bash
+# Build iOS app
+halvor build ios
+
+# Build macOS app
+halvor build mac
 ```
 
 ### Android
+
 ```bash
-make android-jni-build  # Build JNI libraries
-make android-build      # Build Android library
+# Build Android library and app
+halvor build android
 ```
 
-### Web
-```bash
-make web-wasm-build  # Build WASM module
-make web-build       # Build Svelte app
-```
+### Web (WASM + SvelteKit)
 
-### All Platforms
 ```bash
-make build-all-platforms
+# Build web application
+halvor build web
 ```
 
 ## Development Workflows
 
-### Swift Development
+### CLI Development
+
 ```bash
-make dev-ios   # iOS with simulator
-make dev-mac   # macOS app
+# Development mode with auto-rebuild
+halvor dev cli
+# or
+make dev
+```
+
+### Swift Development
+
+```bash
+# macOS development with hot reload
+halvor dev mac
+
+# iOS simulator
+halvor dev ios
 ```
 
 ### Web Development
+
 ```bash
-make web-dev   # Docker dev mode with hot reload
+# Docker-based development (recommended)
+halvor dev web
+
+# Bare-metal development (Rust server + Svelte dev)
+halvor dev web --bare-metal
+
+# Production mode
+halvor dev web --prod
 ```
 
 ### Android Development
-Build JNI once, then use Android Studio for app development.
+
+Build JNI once, then use Android Studio for app development:
+
+```bash
+halvor build android
+```
 
 ## Generated Files
 
@@ -96,4 +136,21 @@ Build JNI once, then use Android Studio for app development.
 - **TypeScript**: `halvor-web/src/lib/halvor-ffi/generated-bindings.ts`
 
 All generated files are automatically included in their respective build systems.
+
+## Adding FFI-Exported Functions
+
+1. Implement function in service module
+2. Annotate with `#[multi_platform_export]`
+3. Rebuild platform bindings:
+   - Swift: `cd halvor-swift && ./build.sh`
+   - Android: `halvor build android`
+   - Web: `halvor build web`
+
+## Platform Support
+
+- **macOS**: Full support for all platforms (CLI, iOS, macOS, Android, Web)
+- **Linux**: CLI and Web development (iOS/macOS builds not available)
+- **Windows**: CLI only (via WSL recommended)
+
+For detailed build instructions, see the [Development Guide](development.md).
 

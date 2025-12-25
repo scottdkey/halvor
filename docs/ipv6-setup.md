@@ -13,7 +13,7 @@ routes. This requires configuration at both the Docker daemon and network levels
 
 ## Step 1: Enable IPv6 in Docker Daemon
 
-On the Docker host (`bellerophon`), configure the Docker daemon to enable IPv6:
+On the Docker host, configure the Docker daemon to enable IPv6:
 
 ### Edit Docker daemon configuration
 

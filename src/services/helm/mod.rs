@@ -132,6 +132,44 @@ fn values_to_set_flags(values: &HashMap<String, String>) -> Vec<String> {
     flags
 }
 
+/// Check if Kubernetes cluster is accessible
+fn check_cluster_available<E: CommandExecutor>(exec: &E) -> Result<()> {
+    // Try kubectl first (if kubeconfig is set up)
+    let kubectl_check = exec.execute_shell("kubectl cluster-info --request-timeout=5s 2>&1");
+    
+    if let Ok(output) = kubectl_check {
+        if output.status.success() {
+            // Cluster is accessible via kubectl
+            return Ok(());
+        }
+    }
+    
+    // Try k3s kubectl (k3s provides kubectl via k3s kubectl)
+    let k3s_kubectl_check = exec.execute_shell("sudo k3s kubectl cluster-info --request-timeout=5s 2>&1");
+    
+    if let Ok(output) = k3s_kubectl_check {
+        if output.status.success() {
+            // Cluster is accessible via k3s kubectl
+            return Ok(());
+        }
+    }
+    
+    // Check if k3s is installed but cluster might not be initialized
+    let k3s_check = exec.execute_shell("k3s --version 2>&1 || echo 'not_installed'");
+    if let Ok(k3s_output) = k3s_check {
+        let k3s_str = String::from_utf8_lossy(&k3s_output.stdout);
+        if k3s_str.contains("not_installed") {
+            anyhow::bail!(
+                "K3s is not installed. Please initialize a cluster first:\n  halvor init -H <hostname>"
+            );
+        }
+    }
+    
+    anyhow::bail!(
+        "Kubernetes cluster is not accessible. Please ensure:\n  - K3s cluster is initialized (halvor init -H <hostname>)\n  - Cluster is running and healthy\n  - You're connecting to the correct host"
+    )
+}
+
 /// Install a Helm chart
 pub fn install_chart(
     hostname: &str,
@@ -153,6 +191,12 @@ pub fn install_chart(
     println!("Chart: {}", chart);
     println!("Release: {}", release_name);
     println!("Namespace: {}", ns);
+    println!();
+
+    // Validate cluster is available before proceeding
+    println!("Checking cluster availability...");
+    check_cluster_available(&exec)?;
+    println!("✓ Cluster is accessible");
     println!();
 
     // Try to find chart locally first, then fall back to GitHub

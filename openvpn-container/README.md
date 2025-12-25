@@ -59,12 +59,8 @@ The build script automatically:
 Deploy to Kubernetes using Helm:
 
 ```bash
-halvor install pia-vpn --helm
+halvor install pia-vpn -H <cluster-node>
 ```
 
-Or install directly:
-
-```bash
-halvor helm install pia-vpn
-```
+The CLI automatically detects that pia-vpn is a Helm chart and deploys it to the Kubernetes cluster.
 

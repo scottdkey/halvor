@@ -1,6 +1,6 @@
 # GitHub Actions Workflows
 
-This document describes the CI/CD workflows for the HAL project.
+This document describes the CI/CD workflows for the halvor project.
 
 ## Workflows
 
@@ -14,11 +14,11 @@ This document describes the CI/CD workflows for the HAL project.
 
 **Jobs:**
 
-1. **build-rust-cli-linux**: Builds the `hal` CLI tool for Linux platforms:
+1. **build-rust-cli-linux**: Builds the `halvor` CLI tool for Linux platforms:
    - Linux (x86_64, aarch64) - GNU and musl variants
    - Uploads binaries as artifacts for use in other workflows
 
-2. **build-rust-cli-macos**: Builds the `hal` CLI tool for macOS platforms:
+2. **build-rust-cli-macos**: Builds the `halvor` CLI tool for macOS platforms:
    - macOS (x86_64, aarch64)
    - Runs on `macos-14` runners
 
@@ -47,11 +47,11 @@ This document describes the CI/CD workflows for the HAL project.
 
 ### Download Rust CLI Binary
 
-After a workflow run, you can download the `hal` binary from the workflow artifacts:
+After a workflow run, you can download the `halvor` binary from the workflow artifacts:
 
 1. Go to the Actions tab in GitHub
 2. Select the workflow run
-3. Download the artifact for your platform (e.g., `hal-x86_64-unknown-linux-gnu`)
+3. Download the artifact for your platform (e.g., `halvor-x86_64-unknown-linux-gnu`)
 4. Extract and use the binary
 
 ### Using the Docker Image
