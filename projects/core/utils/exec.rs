@@ -493,8 +493,8 @@ impl Executor {
                 })?;
                 // First, try to get actual Tailscale hostname from local Tailscale status
                 use crate::services::tailscale::get_peer_tailscale_hostname;
-                let target_host =
-                    if let Ok(Some(ts_hostname)) = get_peer_tailscale_hostname(hostname_val) {
+                let target_host = {
+                    let raw_host = if let Ok(Some(ts_hostname)) = get_peer_tailscale_hostname(hostname_val) {
                         // Found actual Tailscale hostname - use it
                         ts_hostname
                     } else if hostname_val.contains('.') {
@@ -504,6 +504,9 @@ impl Executor {
                         // Construct from tailnet base
                         format!("{}.{}", hostname_val, config._tailnet_base)
                     };
+                    // Strip trailing dot (DNS absolute notation) which causes SSH resolution issues
+                    raw_host.trim_end_matches('.').to_string()
+                };
                 // Get username from SSH config, or prompt user
                 let username = get_ssh_config_username(&target_host)
                     .or_else(|| get_ssh_config_username(hostname))

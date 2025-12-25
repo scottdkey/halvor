@@ -200,22 +200,26 @@ fn auto_detect_primary_node(config: &config::EnvConfig, target_host: &str) -> Re
             .with_context(|| format!("Failed to get config for {}", primary))?;
 
         // Get Tailscale hostname from config (preferred) or construct it
-        let server_addr: String = if let Some(ts_hostname) = &host_config.hostname {
-            // Use configured Tailscale hostname
-            if ts_hostname.contains('.') {
-                ts_hostname.clone()
+        let server_addr: String = {
+            let raw_addr = if let Some(ts_hostname) = &host_config.hostname {
+                // Use configured Tailscale hostname
+                if ts_hostname.contains('.') {
+                    ts_hostname.clone()
+                } else {
+                    // Construct full hostname from tailnet base
+                    format!("{}.{}", ts_hostname, config._tailnet_base)
+                }
+            } else if let Some(ts_ip) = &host_config.ip {
+                // Fallback to IP if no hostname
+                ts_ip.clone()
             } else {
-                // Construct full hostname from tailnet base
-                format!("{}.{}", ts_hostname, config._tailnet_base)
-            }
-        } else if let Some(ts_ip) = &host_config.ip {
-            // Fallback to IP if no hostname
-            ts_ip.clone()
-        } else {
-            anyhow::bail!(
-                "No Tailscale hostname or IP configured for {} in config",
-                primary
-            );
+                anyhow::bail!(
+                    "No Tailscale hostname or IP configured for {} in config",
+                    primary
+                );
+            };
+            // Strip trailing dot (DNS absolute notation) which causes SSH resolution issues
+            raw_addr.trim_end_matches('.').to_string()
         };
 
         println!("Using server address from config: {}", server_addr);

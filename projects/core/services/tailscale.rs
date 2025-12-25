@@ -390,7 +390,8 @@ pub fn get_tailscale_hostname_remote<E: CommandExecutor>(exec: &E) -> Result<Opt
         if let Ok(status_json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
             if let Some(dns_name) = status_json.get("Self").and_then(|s| s.get("DNSName")) {
                 if let Some(hostname) = dns_name.as_str() {
-                    return Ok(Some(hostname.to_string()));
+                    // Strip trailing dot (DNS absolute notation) which causes SSH resolution issues
+                    return Ok(Some(hostname.trim_end_matches('.').to_string()));
                 }
             }
         }
@@ -408,13 +409,14 @@ pub fn get_tailscale_hostname() -> Result<Option<String>> {
 
     if let Some(output) = output {
         if output.status.success() {
-            if let Ok(status_json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
-                if let Some(dns_name) = status_json.get("Self").and_then(|s| s.get("DNSName")) {
-                    if let Some(hostname) = dns_name.as_str() {
-                        return Ok(Some(hostname.to_string()));
-                    }
+        if let Ok(status_json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+            if let Some(dns_name) = status_json.get("Self").and_then(|s| s.get("DNSName")) {
+                if let Some(hostname) = dns_name.as_str() {
+                    // Strip trailing dot (DNS absolute notation) which causes SSH resolution issues
+                    return Ok(Some(hostname.trim_end_matches('.').to_string()));
                 }
             }
+        }
         }
     }
 
@@ -439,9 +441,11 @@ pub fn get_peer_tailscale_hostname(peer_name: &str) -> Result<Option<String>> {
     // Check Self first (in case we're looking up our own hostname)
     if let Some(self_data) = status_json.get("Self") {
         if let Some(dns_name) = self_data.get("DNSName").and_then(|v| v.as_str()) {
+            // Strip trailing dot (DNS absolute notation) which causes SSH resolution issues
+            let hostname = dns_name.trim_end_matches('.');
             // Check if it matches (either full DNSName or short name)
-            if dns_name == peer_name || dns_name.starts_with(&format!("{}.", peer_name)) {
-                return Ok(Some(dns_name.to_string()));
+            if hostname == peer_name || hostname.starts_with(&format!("{}.", peer_name)) {
+                return Ok(Some(hostname.to_string()));
             }
         }
     }
@@ -451,9 +455,11 @@ pub fn get_peer_tailscale_hostname(peer_name: &str) -> Result<Option<String>> {
         if let Some(peers) = peer_map.as_object() {
             for (_, peer_data) in peers {
                 if let Some(dns_name) = peer_data.get("DNSName").and_then(|v| v.as_str()) {
+                    // Strip trailing dot (DNS absolute notation) which causes SSH resolution issues
+                    let hostname = dns_name.trim_end_matches('.');
                     // Match full DNSName or short name (before first dot)
-                    if dns_name == peer_name || dns_name.starts_with(&format!("{}.", peer_name)) {
-                        return Ok(Some(dns_name.to_string()));
+                    if hostname == peer_name || hostname.starts_with(&format!("{}.", peer_name)) {
+                        return Ok(Some(hostname.to_string()));
                     }
                 }
             }

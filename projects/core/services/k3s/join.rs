@@ -194,13 +194,14 @@ pub fn join_cluster(
     println!("Resolving Tailscale hostname for server {}...", server);
 
     // Check if server is already a Tailscale hostname (ends with .ts.net)
-    let server_addr = if server.ends_with(".ts.net") {
-        println!("  ✓ Server is already a Tailscale hostname: {}", server);
-        server.to_string()
-    } else {
-        // First, try to get Tailscale hostname from local Tailscale CLI
-        // This queries the local machine's Tailscale status to find the peer
-        let server_tailscale_hostname = match tailscale::get_peer_tailscale_hostname(server) {
+    let server_addr = {
+        let raw_addr = if server.ends_with(".ts.net") || server.ends_with(".ts.net.") {
+            println!("  ✓ Server is already a Tailscale hostname: {}", server);
+            server.to_string()
+        } else {
+            // First, try to get Tailscale hostname from local Tailscale CLI
+            // This queries the local machine's Tailscale status to find the peer
+            let server_tailscale_hostname = match tailscale::get_peer_tailscale_hostname(server) {
             Ok(Some(hostname)) => {
                 println!("  ✓ Found Tailscale hostname via local CLI: {}", hostname);
                 Some(hostname)
@@ -288,23 +289,26 @@ pub fn join_cluster(
                     Some(constructed_hostname)
                 }
             }
-        };
+            };
 
-        if let Some(ref ts_hostname) = server_tailscale_hostname {
-            println!("  ✓ Using Tailscale hostname for server: {}", ts_hostname);
-            ts_hostname.clone()
-        } else {
-            // Fallback: construct hostname from tailnet base
-            println!(
-                "  Could not get Tailscale hostname from CLI, constructing from tailnet base..."
-            );
-            let constructed_hostname = format!("{}.{}", server, config._tailnet_base);
-            println!(
-                "  ✓ Using constructed Tailscale hostname: {}",
+            if let Some(ref ts_hostname) = server_tailscale_hostname {
+                println!("  ✓ Using Tailscale hostname for server: {}", ts_hostname);
+                ts_hostname.clone()
+            } else {
+                // Fallback: construct hostname from tailnet base
+                println!(
+                    "  Could not get Tailscale hostname from CLI, constructing from tailnet base..."
+                );
+                let constructed_hostname = format!("{}.{}", server, config._tailnet_base);
+                println!(
+                    "  ✓ Using constructed Tailscale hostname: {}",
+                    constructed_hostname
+                );
                 constructed_hostname
-            );
-            constructed_hostname
-        }
+            }
+        };
+        // Strip trailing dot (DNS absolute notation) which causes SSH resolution issues
+        raw_addr.trim_end_matches('.').to_string()
     };
 
     println!();
