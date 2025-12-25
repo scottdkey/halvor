@@ -675,8 +675,21 @@ impl CommandExecutor for Executor {
                     }
                     #[cfg(windows)]
                     {
-                        use std::os::windows::process::ExitStatusExt;
-                        std::process::ExitStatus::from_raw(0)
+                        // On Windows, create exit status by running a command that succeeds
+                        std::process::Command::new("cmd")
+                            .args(["/C", "exit", "0"])
+                            .status()
+                            .unwrap_or_else(|_| {
+                                // If cmd fails, try to create via a successful process
+                                std::process::Command::new("echo")
+                                    .status()
+                                    .unwrap_or_else(|_| {
+                                        // Last resort: use a dummy command
+                                        let mut cmd = std::process::Command::new("cmd");
+                                        cmd.args(["/C", "echo", "ok"]);
+                                        cmd.status().unwrap()
+                                    })
+                            })
                     }
                     #[cfg(not(any(unix, windows)))]
                     {
@@ -733,8 +746,21 @@ impl CommandExecutor for Executor {
                     }
                     #[cfg(windows)]
                     {
-                        use std::os::windows::process::ExitStatusExt;
-                        std::process::ExitStatus::from_raw(0)
+                        // On Windows, create exit status by running a command that succeeds
+                        std::process::Command::new("cmd")
+                            .args(["/C", "exit", "0"])
+                            .status()
+                            .unwrap_or_else(|_| {
+                                // If cmd fails, try to create via a successful process
+                                std::process::Command::new("echo")
+                                    .status()
+                                    .unwrap_or_else(|_| {
+                                        // Last resort: use a dummy command
+                                        let mut cmd = std::process::Command::new("cmd");
+                                        cmd.args(["/C", "echo", "ok"]);
+                                        cmd.status().unwrap()
+                                    })
+                            })
                     }
                     #[cfg(not(any(unix, windows)))]
                     {
