@@ -233,37 +233,40 @@ pub fn list_tailscale_devices() -> Result<Vec<TailscaleDevice>> {
     let mut devices = Vec::new();
 
     // Add current node (Self) first
+    // Check if Self exists AND is not null (tailscale returns null when not authenticated)
     if let Some(self_data) = status_json.get("Self") {
-        let name = self_data
-            .get("DNSName")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
+        if !self_data.is_null() {
+            let name = self_data
+                .get("DNSName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
 
-        let ip = self_data
-            .get("TailscaleIPs")
-            .and_then(|v| v.as_array())
-            .and_then(|arr| arr.iter().find(|v| {
-                // Prefer IPv4 (starts with 100.)
-                if let Some(ip_str) = v.as_str() {
-                    ip_str.starts_with("100.")
-                } else {
-                    false
-                }
-            }))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| {
-                // Fallback to first IP if no IPv4 found
-                self_data
-                    .get("TailscaleIPs")
-                    .and_then(|v| v.as_array())
-                    .and_then(|arr| arr.first())
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            });
+            let ip = self_data
+                .get("TailscaleIPs")
+                .and_then(|v| v.as_array())
+                .and_then(|arr| arr.iter().find(|v| {
+                    // Prefer IPv4 (starts with 100.)
+                    if let Some(ip_str) = v.as_str() {
+                        ip_str.starts_with("100.")
+                    } else {
+                        false
+                    }
+                }))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    // Fallback to first IP if no IPv4 found
+                    self_data
+                        .get("TailscaleIPs")
+                        .and_then(|v| v.as_array())
+                        .and_then(|arr| arr.first())
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                });
 
-        devices.push(TailscaleDevice { name, ip });
+            devices.push(TailscaleDevice { name, ip });
+        }
     }
 
     // Parse Tailscale status JSON format for peers
@@ -372,25 +375,28 @@ pub fn show_tailscale_status(hostname: &str, config: &EnvConfig) -> Result<()> {
     // Get current node info
     let mut current_node_name = "unknown".to_string();
     let mut current_node_ip: Option<String> = None;
-    
+
+    // Check if Self exists AND is not null (tailscale returns null when not authenticated)
     if let Some(self_data) = status_json.get("Self") {
-        if let Some(dns_name) = self_data.get("DNSName").and_then(|v| v.as_str()) {
-            current_node_name = dns_name.trim_end_matches('.').to_string();
-        }
-        if let Some(ips) = self_data.get("TailscaleIPs").and_then(|v| v.as_array()) {
-            // Prefer IPv4
-            if let Some(ip) = ips.iter().find_map(|v| {
-                v.as_str().and_then(|s| {
-                    if s.starts_with("100.") {
-                        Some(s.to_string())
-                    } else {
-                        None
-                    }
-                })
-            }) {
-                current_node_ip = Some(ip);
-            } else if let Some(ip) = ips.first().and_then(|v| v.as_str()) {
-                current_node_ip = Some(ip.to_string());
+        if !self_data.is_null() {
+            if let Some(dns_name) = self_data.get("DNSName").and_then(|v| v.as_str()) {
+                current_node_name = dns_name.trim_end_matches('.').to_string();
+            }
+            if let Some(ips) = self_data.get("TailscaleIPs").and_then(|v| v.as_array()) {
+                // Prefer IPv4
+                if let Some(ip) = ips.iter().find_map(|v| {
+                    v.as_str().and_then(|s| {
+                        if s.starts_with("100.") {
+                            Some(s.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                }) {
+                    current_node_ip = Some(ip);
+                } else if let Some(ip) = ips.first().and_then(|v| v.as_str()) {
+                    current_node_ip = Some(ip.to_string());
+                }
             }
         }
     }
@@ -496,12 +502,15 @@ pub fn get_tailscale_ip_remote<E: CommandExecutor>(exec: &E) -> Result<Option<St
     if status_output.status.success() {
         if let Ok(status_json) = serde_json::from_slice::<serde_json::Value>(&status_output.stdout)
         {
+            // Check if Self exists AND is not null (tailscale returns null when not authenticated)
             if let Some(self_data) = status_json.get("Self") {
-                if let Some(ips) = self_data.get("TailscaleIPs").and_then(|v| v.as_array()) {
-                    // Find IPv4 address (starts with 100.)
-                    if let Some(ip) = ips.iter().find_map(|v| v.as_str()) {
-                        if ip.starts_with("100.") {
-                            return Ok(Some(ip.to_string()));
+                if !self_data.is_null() {
+                    if let Some(ips) = self_data.get("TailscaleIPs").and_then(|v| v.as_array()) {
+                        // Find IPv4 address (starts with 100.)
+                        if let Some(ip) = ips.iter().find_map(|v| v.as_str()) {
+                            if ip.starts_with("100.") {
+                                return Ok(Some(ip.to_string()));
+                            }
                         }
                     }
                 }
@@ -567,23 +576,24 @@ pub fn get_tailscale_ip_with_fallback<E: CommandExecutor>(
         // Try to extract IP from status JSON
         if let Ok(status_json) = serde_json::from_slice::<serde_json::Value>(&status_output.stdout)
         {
+            // Check if Self exists AND is not null (tailscale returns null when not authenticated)
             if let Some(self_data) = status_json.get("Self") {
-                if let Some(ips) = self_data.get("TailscaleIPs").and_then(|v| v.as_array()) {
-                    if let Some(ip) = ips.iter().find_map(|v| v.as_str()) {
-                        if ip.starts_with("100.") {
-                            println!("✓ Tailscale is running with IP: {}", ip);
-                            return Ok(ip.to_string());
+                if !self_data.is_null() {
+                    if let Some(ips) = self_data.get("TailscaleIPs").and_then(|v| v.as_array()) {
+                        if let Some(ip) = ips.iter().find_map(|v| v.as_str()) {
+                            if ip.starts_with("100.") {
+                                println!("✓ Tailscale is running with IP: {}", ip);
+                                return Ok(ip.to_string());
+                            }
                         }
                     }
                 }
             }
         }
-        println!("✓ Tailscale is running (detected via status command)");
-        return Ok("100.0.0.0".to_string()); // Placeholder - status works but couldn't extract IP
     }
 
     anyhow::bail!(
-        "Tailscale is not running or not accessible. Please ensure Tailscale is running with 'sudo tailscale up'"
+        "Tailscale is not running or not authenticated. Please ensure Tailscale is running and authenticated with 'sudo tailscale up'"
     )
 }
 
@@ -593,10 +603,15 @@ pub fn get_tailscale_hostname_remote<E: CommandExecutor>(exec: &E) -> Result<Opt
 
     if output.status.success() {
         if let Ok(status_json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
-            if let Some(dns_name) = status_json.get("Self").and_then(|s| s.get("DNSName")) {
-                if let Some(hostname) = dns_name.as_str() {
-                    // Strip trailing dot (DNS absolute notation) which causes SSH resolution issues
-                    return Ok(Some(hostname.trim_end_matches('.').to_string()));
+            // Check if Self exists AND is not null (tailscale returns null when not authenticated)
+            if let Some(self_data) = status_json.get("Self") {
+                if !self_data.is_null() {
+                    if let Some(dns_name) = self_data.get("DNSName") {
+                        if let Some(hostname) = dns_name.as_str() {
+                            // Strip trailing dot (DNS absolute notation) which causes SSH resolution issues
+                            return Ok(Some(hostname.trim_end_matches('.').to_string()));
+                        }
+                    }
                 }
             }
         }
@@ -614,14 +629,19 @@ pub fn get_tailscale_hostname() -> Result<Option<String>> {
 
     if let Some(output) = output {
         if output.status.success() {
-        if let Ok(status_json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
-            if let Some(dns_name) = status_json.get("Self").and_then(|s| s.get("DNSName")) {
-                if let Some(hostname) = dns_name.as_str() {
-                    // Strip trailing dot (DNS absolute notation) which causes SSH resolution issues
-                    return Ok(Some(hostname.trim_end_matches('.').to_string()));
+            if let Ok(status_json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                // Check if Self exists AND is not null (tailscale returns null when not authenticated)
+                if let Some(self_data) = status_json.get("Self") {
+                    if !self_data.is_null() {
+                        if let Some(dns_name) = self_data.get("DNSName") {
+                            if let Some(hostname) = dns_name.as_str() {
+                                // Strip trailing dot (DNS absolute notation) which causes SSH resolution issues
+                                return Ok(Some(hostname.trim_end_matches('.').to_string()));
+                            }
+                        }
+                    }
                 }
             }
-        }
         }
     }
 
@@ -644,13 +664,16 @@ pub fn get_peer_tailscale_hostname(peer_name: &str) -> Result<Option<String>> {
         serde_json::from_slice(&output.stdout).context("Failed to parse tailscale status JSON")?;
 
     // Check Self first (in case we're looking up our own hostname)
+    // Check if Self exists AND is not null (tailscale returns null when not authenticated)
     if let Some(self_data) = status_json.get("Self") {
-        if let Some(dns_name) = self_data.get("DNSName").and_then(|v| v.as_str()) {
-            // Strip trailing dot (DNS absolute notation) which causes SSH resolution issues
-            let hostname = dns_name.trim_end_matches('.');
-            // Check if it matches (either full DNSName or short name)
-            if hostname == peer_name || hostname.starts_with(&format!("{}.", peer_name)) {
-                return Ok(Some(hostname.to_string()));
+        if !self_data.is_null() {
+            if let Some(dns_name) = self_data.get("DNSName").and_then(|v| v.as_str()) {
+                // Strip trailing dot (DNS absolute notation) which causes SSH resolution issues
+                let hostname = dns_name.trim_end_matches('.');
+                // Check if it matches (either full DNSName or short name)
+                if hostname == peer_name || hostname.starts_with(&format!("{}.", peer_name)) {
+                    return Ok(Some(hostname.to_string()));
+                }
             }
         }
     }

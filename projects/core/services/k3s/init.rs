@@ -295,18 +295,14 @@ pub fn init_control_plane(
         println!("✓ Tailscale is installed");
     }
     
-    // Check if Tailscale is running and connected
-    let tailscale_status = exec
-        .execute_shell("tailscale status --json 2>/dev/null || echo 'not_running'")
-        .ok();
-    
-    let is_tailscale_running = tailscale_status
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| !s.contains("not_running") && !s.trim().is_empty())
-        .unwrap_or(false);
-    
-    if !is_tailscale_running {
-        println!("⚠️  Warning: Tailscale may not be running or connected.");
+    // Check if Tailscale is running and connected by checking for valid IP
+    println!("Checking Tailscale connection status...");
+    let tailscale_ip_check = tailscale::get_tailscale_ip_remote(&exec).ok().flatten();
+
+    let is_tailscale_connected = tailscale_ip_check.is_some();
+
+    if !is_tailscale_connected {
+        println!("⚠️  Warning: Tailscale is not running or not authenticated.");
         println!("   Please ensure Tailscale is running and authenticated before continuing.");
         println!("   Run: sudo tailscale up");
         if !yes {
@@ -320,7 +316,7 @@ pub fn init_control_plane(
             }
         }
     } else {
-        println!("✓ Tailscale is running");
+        println!("✓ Tailscale is running and connected (IP: {})", tailscale_ip_check.unwrap());
     }
 
     // Ensure halvor is installed first (the glue that enables remote operations)
@@ -738,9 +734,9 @@ Requires=network-online.target
 
         let is_active = if let Some(output) = &status_output {
             let status_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            let success = output.status.success();
-            // systemctl is-active returns "active" if running, non-zero exit if not
-            success && status_str == "active"
+            // systemctl is-active returns "active" or "activating" if running/starting
+            // Accept both states since "activating" means the service is starting up
+            status_str == "active" || status_str == "activating"
         } else {
             false
         };
