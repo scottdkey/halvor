@@ -1028,3 +1028,120 @@ Requires=network-online.target
 
     Ok(())
 }
+
+/// Prepare a node for K3s cluster (without installing K3s)
+/// Sets up Tailscale, halvor agent, kubectl, and helm
+pub fn prepare_node(hostname: &str, config: &EnvConfig) -> Result<()> {
+    let exec = Executor::new(hostname, config)?;
+    let is_local = exec.is_local();
+
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("Preparing Node for K3s Cluster");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+
+    if is_local {
+        println!("Target: localhost ({})", hostname);
+    } else {
+        println!("Target: {} (remote)", hostname);
+    }
+    println!();
+
+    // Get Tailscale IP and hostname for cluster communication
+    println!("Getting Tailscale IP for cluster communication...");
+    let tailscale_ip = tailscale::get_tailscale_ip_with_fallback(&exec, hostname, config)?;
+
+    let tailscale_hostname = tailscale::get_tailscale_hostname_remote(&exec)
+        .ok()
+        .flatten();
+
+    println!("✓ Using Tailscale IP: {}", tailscale_ip);
+    if let Some(ref ts_hostname) = tailscale_hostname {
+        println!("✓ Using Tailscale hostname: {}", ts_hostname);
+    }
+
+    // Ensure Tailscale is installed and running (required for cluster communication)
+    println!();
+    println!("Checking for Tailscale (required for cluster communication)...");
+    if !tailscale::is_tailscale_installed(&exec) {
+        println!("Tailscale not found. Installing Tailscale...");
+        if hostname == "localhost" {
+            tailscale::install_tailscale()?;
+        } else {
+            tailscale::install_tailscale_on_host(hostname, config)?;
+        }
+    } else {
+        println!("✓ Tailscale is installed");
+    }
+    
+    // Check if Tailscale is running and connected by checking for valid IP
+    println!("Checking Tailscale connection status...");
+    let tailscale_ip_check = tailscale::get_tailscale_ip_remote(&exec).ok().flatten();
+
+    let is_tailscale_connected = tailscale_ip_check.is_some();
+
+    if !is_tailscale_connected {
+        println!("⚠️  Warning: Tailscale is not running or not authenticated.");
+        println!("   Please ensure Tailscale is running and authenticated before continuing.");
+        println!("   Run: sudo tailscale up");
+    } else {
+        println!("✓ Tailscale is running and connected (IP: {})", tailscale_ip_check.unwrap());
+    }
+
+    // Ensure halvor is installed first (the glue that enables remote operations)
+    println!();
+    println!("Checking for halvor (required for remote operations)...");
+    tools::check_and_install_halvor(&exec)?;
+
+    // Ensure kubectl and helm are installed
+    println!();
+    println!("Checking for required tools...");
+    tools::check_and_install_kubectl(&exec)?;
+    tools::check_and_install_helm(&exec)?;
+
+    // Setup halvor agent service on the node
+    let service_exists = exec.file_exists("/etc/systemd/system/halvor-agent.service").unwrap_or(false);
+    let service_active = exec
+        .execute_shell("systemctl is-active halvor-agent.service 2>/dev/null || echo inactive")
+        .ok()
+        .and_then(|o| {
+            String::from_utf8(o.stdout).ok().map(|s| s.trim() == "active")
+        })
+        .unwrap_or(false);
+
+    if service_exists && service_active {
+        println!("✓ Halvor agent service is already configured and running");
+        println!();
+    } else {
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!("Setting up halvor agent service");
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!();
+        
+        let web_port = if std::env::var("HALVOR_WEB_DIR").is_ok() {
+            Some(13000)
+        } else {
+            None
+        };
+        
+        if let Err(e) = agent_service::setup_agent_service(&exec, web_port) {
+            eprintln!("⚠️  Warning: Failed to setup halvor agent service: {}", e);
+            eprintln!("   You can set it up manually later with: halvor agent start --port 13500 --daemon");
+        } else {
+            println!("✓ Halvor agent service is running on {}", hostname);
+            println!("  Agent API: port 13500 (over Tailscale)");
+            if web_port.is_some() {
+                println!("  Web UI: port 13000 (over Tailscale)");
+            }
+        }
+        println!();
+    }
+
+    println!("✓ Node preparation complete!");
+    println!();
+    println!("The node is ready for K3s cluster operations.");
+    println!("You can now initialize a cluster or join this node to an existing cluster.");
+    println!();
+
+    Ok(())
+}

@@ -22,4 +22,5 @@ pub use init::{init_control_plane, prepare_node};
 pub use join::join_cluster;
 pub use maintenance::regenerate_certificates;
 pub use status::{get_cluster_join_info, show_status};
+pub use utils::parse_node_token;
 pub use verify::verify_ha_cluster;

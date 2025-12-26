@@ -1584,13 +1584,15 @@ fn handle_kubeconfig_command(setup: bool, hostname: Option<&str>) -> Result<()> 
         println!();
 
         // Print K3S_TOKEN if available
-        if let Some(token) = join_token {
+        if let Some(ref token) = join_token {
+            // Parse token to ensure it's in the correct format (extract just the token part)
+            let parsed_token = crate::services::k3s::parse_node_token(token);
             println!("Field 2: K3S_TOKEN");
             println!("  Type: Concealed (password/secret)");
             println!("  Value: (copy content between markers below)");
             println!();
             println!("╔════════════════════ START K3S_TOKEN ══════════════════════╗");
-            println!("{}", token);
+            println!("{}", parsed_token);
             println!("╚════════════════════ END K3S_TOKEN ════════════════════════╝");
             println!();
         }
@@ -1665,7 +1667,9 @@ fn handle_kubeconfig_command(setup: bool, hostname: Option<&str>) -> Result<()> 
             // Update K3S_TOKEN field if available
             if let Some(ref token) = join_token {
                 println!("  Updating K3S_TOKEN field...");
-                let token_escaped = token.replace("\\", "\\\\").replace("\"", "\\\"");
+                // Parse token to ensure it's in the correct format (extract just the token part)
+                let parsed_token = crate::services::k3s::parse_node_token(token);
+                let token_escaped = parsed_token.replace("\\", "\\\\").replace("\"", "\\\"");
                 let update_token_cmd = format!(
                     "op item edit '{}' --vault '{}' 'K3S_TOKEN[concealed]={}'",
                     item_name, vault_name, token_escaped

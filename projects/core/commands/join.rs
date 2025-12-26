@@ -44,7 +44,7 @@ pub fn handle_join(
 
     // If join_target is "localhost", resolve it to the actual hostname for better logging/UX
     // This makes messages like "Joining baulder to cluster" instead of "Joining localhost"
-    let display_hostname = if join_target == "localhost" {
+    let _display_hostname = if join_target == "localhost" {
         crate::config::service::get_current_hostname().unwrap_or_else(|_| "localhost".to_string())
     } else {
         join_target.to_string()

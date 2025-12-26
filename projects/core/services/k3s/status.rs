@@ -113,7 +113,8 @@ pub fn get_cluster_join_info(hostname: &str, config: &EnvConfig) -> Result<(Stri
     // Try environment variable first (from 1Password/direnv)
     let token = if let Ok(env_token) = std::env::var("K3S_TOKEN") {
         if !env_token.trim().is_empty() {
-            env_token
+            // Parse token in case it's in full format (K<node-id>::server:<token>)
+            crate::services::k3s::utils::parse_node_token(&env_token)
         } else {
             // Environment variable is empty, try reading from server
             let token_tmp = "/tmp/k3s_cluster_token";
