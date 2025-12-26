@@ -44,26 +44,49 @@ pub fn handle_join(
 
     // If join_target is "localhost", resolve it to the actual hostname for better logging/UX
     // This makes messages like "Joining baulder to cluster" instead of "Joining localhost"
-    let _display_hostname = if join_target == "localhost" {
-        crate::config::service::get_current_hostname().unwrap_or_else(|_| "localhost".to_string())
+    // Also try to find it in config to get the normalized hostname
+    let resolved_hostname = if join_target == "localhost" {
+        // First try to get current hostname and find it in config
+        if let Ok(current_hostname) = crate::config::service::get_current_hostname() {
+            // Try to find normalized hostname in config
+            if let Some(normalized) = crate::config::service::find_hostname_in_config(&current_hostname, &config) {
+                normalized
+            } else {
+                // Not in config, use current hostname as-is
+                current_hostname
+            }
+        } else {
+            "localhost".to_string()
+        }
     } else {
         join_target.to_string()
     };
     
     // Validate join target is in config (unless it's localhost)
-    if join_target != "localhost" {
-        if crate::config::service::find_hostname_in_config(join_target, &config).is_none() {
+    // Use resolved_hostname for validation if it was resolved from localhost
+    let target_host_for_validation = if join_target == "localhost" {
+        &resolved_hostname
+    } else {
+        join_target
+    };
+    
+    if target_host_for_validation != "localhost" {
+        if crate::config::service::find_hostname_in_config(target_host_for_validation, &config).is_none() {
             anyhow::bail!(
                 "Target host '{}' not found in config.\n\nAdd to .env:\n  HOST_{}_IP=\"<ip-address>\"\n  HOST_{}_HOSTNAME=\"<hostname>\"\n\nOr run the command locally on {} without -H flag.",
-                join_target,
-                join_target.to_uppercase(),
-                join_target.to_uppercase(),
-                join_target
+                target_host_for_validation,
+                target_host_for_validation.to_uppercase(),
+                target_host_for_validation.to_uppercase(),
+                target_host_for_validation
             );
         }
     }
     
-    let target_host = join_target; // For auto-detection logic
+    let target_host = if join_target == "localhost" {
+        &resolved_hostname
+    } else {
+        join_target
+    }; // For auto-detection logic
 
     // Get server address from argument or KUBE_CONFIG
     let server_addr = if let Some(s) = server {
@@ -103,7 +126,8 @@ pub fn handle_join(
         fetched_token
     };
 
-    k3s::join_cluster(join_target, &server_addr, &cluster_token, control_plane, &config)?;
+    // Use resolved hostname instead of "localhost" for better UX and logging
+    k3s::join_cluster(&resolved_hostname, &server_addr, &cluster_token, control_plane, &config)?;
     Ok(())
 }
 

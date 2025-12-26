@@ -20,7 +20,20 @@ pub fn verify_cluster_join_with_local_kubectl_and_config(
 
     // Use pre-fetched kubeconfig if provided, otherwise fetch it
     if let Some(ref content) = kubeconfig_content {
-        // Write the pre-fetched kubeconfig to local filesystem
+        // Process the kubeconfig to ensure it points to the primary server
+        // This is critical - the kubeconfig must point to frigg, not baulder
+        let processed_content = match super::kubeconfig::process_kubeconfig_for_primary(content, primary_hostname, config) {
+            Ok(processed) => {
+                println!("  ✓ Processed kubeconfig to ensure it points to primary server");
+                processed
+            }
+            Err(e) => {
+                println!("  ⚠ Failed to process kubeconfig: {}. Using as-is (may cause connection issues)", e);
+                content.clone()
+            }
+        };
+        
+        // Write the processed kubeconfig to local filesystem
         let home = std::env::var("HOME")
             .ok()
             .unwrap_or_else(|| ".".to_string());
@@ -37,11 +50,25 @@ pub fn verify_cluster_join_with_local_kubectl_and_config(
                     merged.push('\n');
                 }
                 merged.push_str("---\n");
-                merged.push_str(content);
+                merged.push_str(&processed_content);
                 std::fs::write(&kube_config_path, merged)?;
+            } else {
+                // File already has k3s - verify it points to the correct server
+                // If not, replace the k3s section with our processed version
+                if let Ok((existing_server, _)) = super::kubeconfig::extract_server_and_token_from_kubeconfig(&existing) {
+                    let normalized_existing = crate::config::service::normalize_hostname(&existing_server);
+                    let normalized_primary = crate::config::service::normalize_hostname(primary_hostname);
+                    if normalized_existing != normalized_primary && existing_server != primary_hostname {
+                        println!("  ⚠ Existing kubeconfig points to wrong server ({}), replacing with corrected version", existing_server);
+                        // Replace the k3s section - this is a simple approach
+                        // In a more sophisticated implementation, we'd parse and replace just the cluster section
+                        std::fs::write(&kube_config_path, &processed_content)
+                            .context("Failed to write corrected kubeconfig")?;
+                    }
+                }
             }
         } else {
-            std::fs::write(&kube_config_path, content).context("Failed to write kubeconfig")?;
+            std::fs::write(&kube_config_path, &processed_content).context("Failed to write kubeconfig")?;
         }
         println!("  ✓ Using pre-fetched kubeconfig");
     } else {
@@ -150,6 +177,12 @@ fn verify_cluster_join_once<E: CommandExecutor>(
         println!("[1/3] Checking kubectl access to cluster...");
     }
 
+    // Get kubeconfig path early so we can use it in all commands
+    let home = std::env::var("HOME")
+        .ok()
+        .unwrap_or_else(|| ".".to_string());
+    let kube_config_path = format!("{}/.kube/config", home);
+
     // First check if kubectl exists using check_command_exists (more reliable)
     let kubectl_exists = exec.check_command_exists("kubectl").unwrap_or(false);
 
@@ -162,8 +195,10 @@ fn verify_cluster_join_once<E: CommandExecutor>(
 
     // Then verify kubectl works by checking version
     // Note: kubectl version --client doesn't require kubeconfig, so it's safe to check
+    // But we'll still set KUBECONFIG to avoid any issues
+    let kubeconfig_env = format!("KUBECONFIG='{}'", kube_config_path);
     let kubectl_version_output = exec
-        .execute_shell("kubectl version --client")
+        .execute_shell(&format!("{} kubectl version --client", kubeconfig_env))
         .ok();
 
     let (kubectl_works, error_details) = if let Some(ref out) = kubectl_version_output {
@@ -193,79 +228,175 @@ fn verify_cluster_join_once<E: CommandExecutor>(
     }
 
     // Step 2: Check if we can connect to the cluster
-    if attempt == 1 {
-        println!("[2/3] Verifying cluster connectivity...");
-    }
+    // If we have a node executor, skip cluster-info check entirely and go straight to node check
+    // This uses the same method as halvor status (sudo k3s kubectl) which works reliably
+    let is_cert_error = if node_exec.is_some() {
+        // We have a node executor, so we'll use local k3s kubectl which doesn't need cluster-info check
+        if attempt == 1 {
+            println!("[2/3] Verifying cluster connectivity...");
+            println!("  ⚠ Skipping cluster-info check (will verify via local k3s kubectl on joining node, same as halvor status)");
+        }
+        false // Not a cert error, we're just skipping this check
+    } else {
+        // No node executor, try cluster-info check (but don't fail on DNS/cert errors)
+        if attempt == 1 {
+            println!("[2/3] Verifying cluster connectivity...");
+        }
 
-    // First check if kubeconfig exists and is readable
-    let home = std::env::var("HOME")
-        .ok()
-        .unwrap_or_else(|| ".".to_string());
-    let kube_config_path = format!("{}/.kube/config", home);
+        // First check if kubeconfig exists and is readable
+        if !std::path::Path::new(&kube_config_path).exists() {
+            anyhow::bail!(
+                "Kubeconfig file does not exist at {} (attempt {}). Please ensure kubeconfig is set up.",
+                kube_config_path,
+                attempt
+            );
+        }
 
-    if !std::path::Path::new(&kube_config_path).exists() {
-        anyhow::bail!(
-            "Kubeconfig file does not exist at {} (attempt {}). Please ensure kubeconfig is set up.",
-            kube_config_path,
-            attempt
-        );
-    }
+        // Try to get cluster info - this will fail if kubeconfig is invalid or cluster is unreachable
+        // Use KUBECONFIG environment variable to ensure we use ~/.kube/config instead of /etc/rancher/k3s/k3s.yaml
+        let kubeconfig_env = format!("KUBECONFIG='{}'", kube_config_path);
+        let cluster_info_output = exec.execute_shell(&format!("{} kubectl cluster-info 2>&1", kubeconfig_env)).ok();
 
-    // Try to get cluster info - this will fail if kubeconfig is invalid or cluster is unreachable
-    let cluster_info_output = exec.execute_shell("kubectl cluster-info 2>&1").ok();
+        let (cluster_info, cluster_error, cluster_unreachable, cert_error) =
+            if let Some(ref out) = cluster_info_output {
+                let info = String::from_utf8(out.stdout.clone())
+                    .ok()
+                    .unwrap_or_else(|| "cluster_unreachable".to_string());
+                let error = String::from_utf8(out.stderr.clone())
+                    .ok()
+                    .unwrap_or_else(|| String::new());
+                
+                // Check if this is a certificate error or DNS error (not a real connectivity issue)
+                // DNS errors like "no such host" are common when ~/.kube/config has hostnames that can't be resolved
+                // But the node might still be in the cluster (we'll verify via node list)
+                let cert_error = error.contains("certificate signed by unknown authority")
+                    || error.contains("x509: certificate")
+                    || error.contains("tls: failed to verify certificate")
+                    || error.contains("no such host")
+                    || error.contains("lookup");
+                
+                // Only treat as unreachable if it's NOT a certificate/DNS error
+                // Certificate/DNS errors mean we can't verify connectivity this way, but the node might still be joined
+                // We'll verify via node list instead
+                let unreachable = !cert_error && (
+                    !out.status.success()
+                    || info.contains("cluster_unreachable")
+                    || info.contains("Unable to connect")
+                    || info.contains("The connection to the server")
+                    || (error.contains("Unable to connect") && !cert_error)
+                );
+                (info, error, unreachable, cert_error)
+            } else {
+                (
+                    "cluster_unreachable".to_string(),
+                    "Command execution failed".to_string(),
+                    true,
+                    false,
+                )
+            };
 
-    let (cluster_info, cluster_error, cluster_unreachable) =
-        if let Some(ref out) = cluster_info_output {
-            let info = String::from_utf8(out.stdout.clone())
-                .ok()
-                .unwrap_or_else(|| "cluster_unreachable".to_string());
-            let error = String::from_utf8(out.stderr.clone())
-                .ok()
-                .unwrap_or_else(|| String::new());
-            let unreachable = !out.status.success()
-                || info.contains("cluster_unreachable")
-                || info.contains("Unable to connect")
-                || info.contains("The connection to the server")
-                || error.contains("Unable to connect");
-            (info, error, unreachable)
-        } else {
-            (
-                "cluster_unreachable".to_string(),
-                "Command execution failed".to_string(),
-                true,
-            )
-        };
+        if cluster_unreachable {
+            let error_msg = if !cluster_error.trim().is_empty() {
+                cluster_error.trim()
+            } else if !cluster_info.trim().is_empty() {
+                cluster_info.trim()
+            } else {
+                "Unknown error"
+            };
 
-    if cluster_unreachable {
-        let error_msg = if !cluster_error.trim().is_empty() {
-            cluster_error.trim()
-        } else if !cluster_info.trim().is_empty() {
-            cluster_info.trim()
-        } else {
-            "Unknown error"
-        };
+            anyhow::bail!(
+                "Cannot connect to cluster (attempt {}). Error: {}. Cluster may still be initializing or kubeconfig may be invalid.",
+                attempt,
+                error_msg
+            );
+        }
 
-        anyhow::bail!(
-            "Cannot connect to cluster (attempt {}). Error: {}. Cluster may still be initializing or kubeconfig may be invalid.",
-            attempt,
-            error_msg
-        );
-    }
-
-    if attempt == 1 {
-        println!("  ✓ Cluster is reachable");
-    }
+        if attempt == 1 {
+            if cert_error {
+                println!("  ⚠ Cluster connectivity check failed due to certificate/DNS error (this is OK, will verify via node list)");
+            } else {
+                println!("  ✓ Cluster is reachable");
+            }
+        }
+        
+        cert_error
+    };
 
     // Step 3: Verify node appears in cluster and is Ready
     if attempt == 1 {
         println!("[3/3] Checking node status in cluster...");
     }
 
-    let node_output = exec
-        .execute_shell("kubectl get nodes -o json 2>&1")
-        .ok()
-        .and_then(|out| String::from_utf8(out.stdout).ok())
-        .unwrap_or_else(|| "kubectl_failed".to_string());
+    // Try multiple methods to get nodes, similar to how halvor status works:
+    // 1. First try: Use local k3s kubectl on the joining node - this uses /etc/rancher/k3s/k3s.yaml with correct certs
+    // 2. Fallback: Use kubectl with ~/.kube/config (with --insecure-skip-tls-verify if cert errors)
+    let node_output = if let Some(node_exec) = node_exec {
+        // Try using local k3s kubectl on the joining node (same method as halvor status)
+        let tmp_file = "/tmp/k3s_verify_nodes";
+        let k3s_kubectl_result = node_exec.execute_shell_interactive(&format!(
+            "bash -c 'sudo k3s kubectl get nodes -o json > {} 2>&1 || echo \"k3s_kubectl_failed\" > {}'",
+            tmp_file, tmp_file
+        ));
+        
+        if k3s_kubectl_result.is_ok() {
+            if let Ok(output) = node_exec.read_file(tmp_file) {
+                if !output.trim().is_empty() && !output.contains("k3s_kubectl_failed") {
+                    if attempt == 1 {
+                        println!("  ✓ Using local k3s kubectl (same method as halvor status)");
+                    }
+                    output
+                } else {
+                    // Fall back to regular kubectl
+                    let kubeconfig_env = format!("KUBECONFIG='{}'", kube_config_path);
+                    let node_cmd = if is_cert_error {
+                        format!("{} kubectl get nodes -o json --insecure-skip-tls-verify 2>&1", kubeconfig_env)
+                    } else {
+                        format!("{} kubectl get nodes -o json 2>&1", kubeconfig_env)
+                    };
+                    exec.execute_shell(&node_cmd)
+                        .ok()
+                        .and_then(|out| String::from_utf8(out.stdout).ok())
+                        .unwrap_or_else(|| "kubectl_failed".to_string())
+                }
+            } else {
+                // Fall back to regular kubectl
+                let kubeconfig_env = format!("KUBECONFIG='{}'", kube_config_path);
+                let node_cmd = if is_cert_error {
+                    format!("{} kubectl get nodes -o json --insecure-skip-tls-verify 2>&1", kubeconfig_env)
+                } else {
+                    format!("{} kubectl get nodes -o json 2>&1", kubeconfig_env)
+                };
+                exec.execute_shell(&node_cmd)
+                    .ok()
+                    .and_then(|out| String::from_utf8(out.stdout).ok())
+                    .unwrap_or_else(|| "kubectl_failed".to_string())
+            }
+        } else {
+            // Fall back to regular kubectl
+            let kubeconfig_env = format!("KUBECONFIG='{}'", kube_config_path);
+            let node_cmd = if is_cert_error {
+                format!("{} kubectl get nodes -o json --insecure-skip-tls-verify 2>&1", kubeconfig_env)
+            } else {
+                format!("{} kubectl get nodes -o json 2>&1", kubeconfig_env)
+            };
+            exec.execute_shell(&node_cmd)
+                .ok()
+                .and_then(|out| String::from_utf8(out.stdout).ok())
+                .unwrap_or_else(|| "kubectl_failed".to_string())
+        }
+    } else {
+        // No node executor available, use regular kubectl
+        let kubeconfig_env = format!("KUBECONFIG='{}'", kube_config_path);
+        let node_cmd = if is_cert_error {
+            format!("{} kubectl get nodes -o json --insecure-skip-tls-verify 2>&1", kubeconfig_env)
+        } else {
+            format!("{} kubectl get nodes -o json 2>&1", kubeconfig_env)
+        };
+        exec.execute_shell(&node_cmd)
+            .ok()
+            .and_then(|out| String::from_utf8(out.stdout).ok())
+            .unwrap_or_else(|| "kubectl_failed".to_string())
+    };
 
     if node_output.trim().is_empty() || node_output.contains("kubectl_failed") {
         anyhow::bail!(

@@ -29,21 +29,59 @@ pub fn join_cluster(
     let primary_hostname =
         find_hostname_from_server(server, config).unwrap_or_else(|| server.to_string());
 
-    // Fetch kubeconfig from primary BEFORE connecting to remote node
-    // This way we have it in memory for verification later
+    // Fetch kubeconfig - try KUBE_CONFIG environment variable first (from 1Password), 
+    // but if not available or parsing fails, fetch directly from primary node
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("Preparing to join cluster...");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!();
+    
+    let kubeconfig_content = if let Ok(kubeconfig_env) = std::env::var("KUBE_CONFIG") {
+        // Try to use kubeconfig from environment variable (1Password)
+        println!("KUBE_CONFIG environment variable found, attempting to use it...");
+        
+        // Process it to ensure it points to the primary server (not the joining node)
+        match kubeconfig::process_kubeconfig_for_primary(&kubeconfig_env, &primary_hostname, config) {
+            Ok(processed) => {
+                println!("✓ Successfully processed kubeconfig from KUBE_CONFIG");
+                
+                // Verify the processed kubeconfig points to the primary server
+                if let Ok((server_host, _)) = kubeconfig::extract_server_and_token_from_kubeconfig(&processed) {
+                    let normalized_server = crate::config::service::normalize_hostname(&server_host);
+                    let normalized_primary = crate::config::service::normalize_hostname(&primary_hostname);
+                    
+                    if normalized_server == normalized_primary || server_host == primary_hostname {
+                        println!("✓ Kubeconfig correctly points to primary server: {}", server_host);
+                    } else {
+                        println!("⚠ Warning: Processed kubeconfig server ({}) doesn't match primary ({}).", server_host, primary_hostname);
+                        println!("  This may cause connection issues.");
+                    }
+                }
+                
+                processed
+            }
+            Err(e) => {
+                // If parsing fails, fall back to fetching from primary node
+                println!("⚠ Failed to parse kubeconfig from KUBE_CONFIG: {}", e);
+                println!("  Falling back to fetching kubeconfig directly from {}...", primary_hostname);
+                kubeconfig::fetch_kubeconfig_content(&primary_hostname, config)
+                    .context("Failed to fetch kubeconfig from primary node after KUBE_CONFIG parsing failed")?
+            }
+        }
+    } else {
+        // No KUBE_CONFIG set - fetch directly from primary node (no 1Password required)
     println!(
-        "Fetching kubeconfig from primary node ({})...",
+            "KUBE_CONFIG not set, fetching kubeconfig directly from primary node ({})...",
         primary_hostname
     );
-    let kubeconfig_content = kubeconfig::fetch_kubeconfig_content(&primary_hostname, config)
+        println!("  (This requires SSH access to {})", primary_hostname);
+        let kubeconfig = kubeconfig::fetch_kubeconfig_content(&primary_hostname, config)
         .context(
-            "Failed to fetch kubeconfig from primary node. Ensure the cluster is initialized.",
+                "Failed to fetch kubeconfig from primary node. Ensure the cluster is initialized and SSH access is available.",
         )?;
     println!("✓ Kubeconfig fetched and ready for verification");
+        kubeconfig
+    };
     println!();
 
     // Now connect to the remote node
@@ -339,17 +377,36 @@ pub fn join_cluster(
         false
     };
 
+    // Always clean up existing installation to ensure fresh start with correct configuration
+    // This is especially important when switching from hostname to IP address
+    if k3s_binary_exists || k3s_service_running {
     if k3s_binary_exists && k3s_service_running {
         println!("✓ K3s is already installed and running");
-        println!("  Checking if node needs to be reconfigured...");
-        // Node might be part of a different cluster, so we'll still proceed with cleanup
-        // to ensure it joins the correct cluster
-        println!("  Cleaning up existing installation to ensure correct cluster join...");
-        cleanup::cleanup_existing_k3s(&exec)?;
+            println!("  Cleaning up existing installation to ensure correct configuration...");
     } else if k3s_binary_exists {
         println!("⚠ K3s binary found but service is not running");
         println!("  Cleaning up existing installation...");
+        } else {
+            println!("⚠ K3s service found but binary missing");
+            println!("  Cleaning up existing installation...");
+        }
         cleanup::cleanup_existing_k3s(&exec)?;
+        
+        // Double-check that service file is removed
+        println!("  Verifying service file removal...");
+        let service_check = exec.execute_shell("test -f /etc/systemd/system/k3s.service && echo exists || echo removed").ok();
+        if let Some(check) = service_check {
+            let status_str = String::from_utf8_lossy(&check.stdout).to_string();
+            let status = status_str.trim();
+            if status == "exists" {
+                println!("  ⚠ Service file still exists, forcing removal...");
+                let _ = exec.execute_shell("sudo rm -f /etc/systemd/system/k3s.service /etc/systemd/system/k3s-agent.service");
+                let _ = exec.execute_shell("sudo rm -rf /etc/systemd/system/k3s.service.d");
+                let _ = exec.execute_shell("sudo systemctl daemon-reload");
+            } else {
+                println!("  ✓ Service file removed");
+            }
+        }
     } else {
         println!("✓ K3s is not installed - will install as part of join process");
     }
@@ -515,6 +572,68 @@ _sudo() {
         );
     }
 
+    // Get Tailscale IP for the server (frigg) - use IP instead of hostname for systemd services
+    // Systemd services can't resolve Tailscale hostnames, so we must use the IP address
+    // Check for IP in environment variable first (from 1Password), then try to resolve dynamically
+    println!("Getting Tailscale IP for server {} (needed for systemd service DNS resolution)...", server_addr);
+    let server_addr_for_k3s = {
+        // First, check for IP in environment variable (from 1Password)
+        // Format: HOST_<HOSTNAME>_IP (e.g., HOST_FRIGG_IP)
+        let hostname_upper = server.to_uppercase().replace("-", "_");
+        let env_var_name = format!("HOST_{}_IP", hostname_upper);
+        
+        if let Ok(ip_from_env) = std::env::var(&env_var_name) {
+            let ip = ip_from_env.trim();
+            if !ip.is_empty() {
+                println!("  ✓ Found server IP from {} environment variable: {}", env_var_name, ip);
+                println!("  ✓ Using server IP address for K3s join (systemd services can't resolve Tailscale hostnames)");
+                ip.to_string()
+            } else {
+                // Empty env var, try to resolve dynamically
+                println!("  {} is empty, resolving server IP dynamically...", env_var_name);
+                let server_exec = Executor::new(&server_addr, config).ok();
+                if let Some(ref exec) = server_exec {
+                    match tailscale::get_tailscale_ip_with_fallback(exec, &server_addr, config) {
+                        Ok(ip) => {
+                            println!("  ✓ Found server Tailscale IP: {}", ip);
+                            println!("  ✓ Using server IP address for K3s join (systemd services can't resolve Tailscale hostnames)");
+                            ip
+                        }
+                        Err(e) => {
+                            println!("  ⚠ Could not get server Tailscale IP: {}", e);
+                            println!("  Will use hostname (may fail if systemd can't resolve DNS)");
+                            server_addr.clone()
+                        }
+                    }
+                } else {
+                    println!("  ⚠ Could not create executor for server, will use hostname");
+                    server_addr.clone()
+                }
+            }
+        } else {
+            // Env var not set, try to resolve dynamically
+            println!("  {} not set, resolving server IP dynamically...", env_var_name);
+            let server_exec = Executor::new(&server_addr, config).ok();
+            if let Some(ref exec) = server_exec {
+                match tailscale::get_tailscale_ip_with_fallback(exec, &server_addr, config) {
+                    Ok(ip) => {
+                        println!("  ✓ Found server Tailscale IP: {}", ip);
+                        println!("  ✓ Using server IP address for K3s join (systemd services can't resolve Tailscale hostnames)");
+                        ip
+                    }
+                    Err(e) => {
+                        println!("  ⚠ Could not get server Tailscale IP: {}", e);
+                        println!("  Will use hostname (may fail if systemd can't resolve DNS)");
+                        server_addr.clone()
+                    }
+                }
+            } else {
+                println!("  ⚠ Could not create executor for server, will use hostname");
+                server_addr.clone()
+            }
+        }
+    };
+
     // Build install command
     // For control plane nodes joining, we need to use --server flag
     // For agent nodes, we also use --server flag
@@ -527,12 +646,12 @@ _sudo() {
         if control_plane {
             format!(
                 "{} server --server=https://{}:6443 --token={} --disable=traefik --write-kubeconfig-mode=0644 {} {}",
-                remote_script_path, server_addr, token, advertise_addr, tls_sans
+                remote_script_path, server_addr_for_k3s, token, advertise_addr, tls_sans
             )
         } else {
             format!(
                 "{} agent --server=https://{}:6443 --token={} {}",
-                remote_script_path, server_addr, token, tls_sans
+                remote_script_path, server_addr_for_k3s, token, tls_sans
             )
         }
     } else {
@@ -540,18 +659,19 @@ _sudo() {
         if control_plane {
             format!(
                 "sudo {} server --server=https://{}:6443 --token={} --disable=traefik --write-kubeconfig-mode=0644 {} {}",
-                remote_script_path, server_addr, token, advertise_addr, tls_sans
+                remote_script_path, server_addr_for_k3s, token, advertise_addr, tls_sans
             )
         } else {
             format!(
                 "sudo {} agent --server=https://{}:6443 --token={} {}",
-                remote_script_path, server_addr, token, tls_sans
+                remote_script_path, server_addr_for_k3s, token, tls_sans
             )
         }
     };
 
     println!("Join command details:");
-    println!("  Server address: {}", server_addr);
+    println!("  Server hostname: {}", server_addr);
+    println!("  Server IP (for K3s): {}", server_addr_for_k3s);
     println!(
         "  Token: {}...{}",
         &token[..8.min(token.len())],
@@ -588,14 +708,12 @@ _sudo() {
     println!("[K3s Install Output End]");
     println!();
 
-    // Check if service was skipped (check this regardless of install_result)
-    let service_skipped = exec
-        .read_file(install_output_file)
-        .ok()
-        .map(|output| {
-            output.contains("No change detected") && output.contains("skipping service start")
-        })
-        .unwrap_or(false);
+    // Check install output for various conditions (check this regardless of install_result)
+    let install_output = exec.read_file(install_output_file).ok().unwrap_or_default();
+    let service_skipped = install_output.contains("No change detected") && install_output.contains("skipping service start");
+    let service_failed = install_output.contains("Job for k3s.service failed") 
+        || install_output.contains("control process exited with error code")
+        || install_output.contains("Failed to start k3s.service");
 
     match install_result {
         Ok(()) => {
@@ -605,9 +723,168 @@ _sudo() {
                 println!("⚠ K3s reported 'No change detected so skipping service start'");
             }
 
+            // Check if service failed during installation
+            if service_failed {
+                println!("⚠ K3s service failed to start during installation!");
+                println!("  Analyzing failure...");
+                
+                // Get detailed service status and logs immediately
+                let status_tmp = "/tmp/k3s_join_failure_status";
+                let _ = exec.execute_shell_interactive(&format!(
+                    "bash -c 'sudo systemctl status k3s.service --no-pager -l 2>&1 | head -40 > {} 2>&1 || echo \"Unable to get status\" > {}'",
+                    status_tmp, status_tmp
+                ));
+                
+                let log_tmp = "/tmp/k3s_join_failure_logs";
+                let _ = exec.execute_shell_interactive(&format!(
+                    "bash -c 'sudo journalctl -u k3s.service --no-pager -n 50 2>&1 > {} 2>&1 || echo \"Unable to get logs\" > {}'",
+                    log_tmp, log_tmp
+                ));
+                
+                if let Ok(status_text) = exec.read_file(status_tmp) {
+                    if !status_text.trim().is_empty() && !status_text.contains("Unable to get status") {
+                        println!("  Service status:");
+                        for line in status_text.lines().take(20) {
+                            println!("    {}", line);
+                        }
+                    }
+                }
+                
+                if let Ok(log_text) = exec.read_file(log_tmp) {
+                    if !log_text.trim().is_empty() && !log_text.contains("Unable to get logs") {
+                        println!("  Recent service logs:");
+                        for line in log_text.lines().take(30) {
+                            println!("    {}", line);
+                        }
+                    }
+                }
+                
+                // Try to detect common issues
+                let mut common_issues = Vec::new();
+                if install_output.contains("bind: address already in use") || install_output.contains("port") {
+                    common_issues.push("Port conflict - another service may be using K3s ports");
+                }
+                if install_output.contains("permission denied") || install_output.contains("Permission denied") {
+                    common_issues.push("Permission issue - check file/directory permissions");
+                }
+                if install_output.contains("network") || install_output.contains("Network") {
+                    common_issues.push("Network issue - check Tailscale connectivity and firewall");
+                }
+                if install_output.contains("containerd") {
+                    common_issues.push("Containerd issue - may need to clean up leftover processes");
+                }
+                
+                if !common_issues.is_empty() {
+                    println!("  Possible issues detected:");
+                    for issue in &common_issues {
+                        println!("    - {}", issue);
+                    }
+                }
+                
+                // Try to recover: reset failed state and try starting again
+                println!();
+                println!("  Attempting to recover...");
+                let _ = exec.execute_shell("sudo systemctl reset-failed k3s.service 2>/dev/null || true");
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                
+                // Check if Tailscale is ready (common cause of failures)
+                let tailscale_ready = exec.execute_shell("systemctl is-active tailscale 2>/dev/null")
+                    .ok()
+                    .and_then(|o| String::from_utf8(o.stdout).ok())
+                    .map(|s| s.trim() == "active")
+                    .unwrap_or(false);
+                
+                if !tailscale_ready {
+                    println!("  ⚠ Tailscale service is not active - this may be causing the failure");
+                    println!("     K3s requires Tailscale for cluster communication");
+                }
+            }
+
+            // CRITICAL: Verify and fix service file to use IP address (not hostname)
+            // Systemd services can't resolve Tailscale hostnames, so we MUST use IP address
+            println!("Verifying service file uses IP address (required for systemd DNS resolution)...");
+            let service_name = if control_plane { "k3s" } else { "k3s-agent" };
+            let service_file_path = format!("/etc/systemd/system/{}.service", service_name);
+            
+            let service_file_check = exec.execute_shell(&format!("sudo cat {} 2>/dev/null || echo 'no_service_file'", service_file_path)).ok();
+            if let Some(service_content) = service_file_check {
+                let content = String::from_utf8_lossy(&service_content.stdout);
+                
+                // Check if service file has hostname (ts.net) instead of IP
+                let needs_fix = if server_addr.contains("ts.net") {
+                    content.contains(&format!("https://{}:6443", server_addr))
+                } else {
+                    false
+                };
+                
+                if needs_fix {
+                    println!("  ⚠ Service file contains hostname '{}' - systemd can't resolve this!", server_addr);
+                    println!("  Fixing to use IP address: {}", server_addr_for_k3s);
+                    
+                    // Replace ALL occurrences of the hostname with IP
+                    let mut fixed_content = content.to_string();
+                    fixed_content = fixed_content.replace(&format!("https://{}:6443", server_addr), &format!("https://{}:6443", server_addr_for_k3s));
+                    fixed_content = fixed_content.replace(&format!("--server=https://{}:6443", server_addr), &format!("--server=https://{}:6443", server_addr_for_k3s));
+                    
+                    // Write the fixed service file
+                    exec.write_file(&service_file_path, fixed_content.as_bytes())
+                        .context("Failed to update service file with IP address")?;
+                    
+                    // Reload systemd
+                    exec.execute_shell("sudo systemctl daemon-reload")
+                        .context("Failed to reload systemd after service file update")?;
+                    
+                    println!("  ✓ Service file updated with IP address");
+                    
+                    // Stop and restart the service to apply the fix
+                    println!("  Restarting service to apply IP address fix...");
+                    let _ = exec.execute_shell(&format!("sudo systemctl stop {}.service 2>/dev/null || true", service_name));
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    let _ = exec.execute_shell(&format!("sudo systemctl start {}.service", service_name));
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    println!("  ✓ Service restarted with IP address");
+                } else if content.contains(&format!("https://{}:6443", server_addr_for_k3s)) {
+                    println!("  ✓ Service file correctly uses IP address: {}", server_addr_for_k3s);
+                } else {
+                    println!("  ⚠ Could not verify service file content - may need manual check");
+                }
+            } else {
+                println!("  ⚠ Service file not found - may not be created yet");
+            }
+
+            // If K3s skipped service start, we MUST manually start/restart it
+            // This is critical - the service won't start automatically if K3s thinks nothing changed
+            if service_skipped {
+                println!("⚠ K3s skipped service start - this means the service file already existed.");
+                println!("  Forcing service restart to ensure it uses the correct configuration...");
+                let service_name = if control_plane { "k3s" } else { "k3s-agent" };
+                
+                // Stop the service first (in case it's in a bad state or using old config)
+                println!("  Stopping service (if running)...");
+                let _ = exec.execute_shell(&format!("sudo systemctl stop {}.service 2>/dev/null || true", service_name));
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                
+                // Reload systemd to ensure we have the latest service file
+                println!("  Reloading systemd...");
+                let _ = exec.execute_shell("sudo systemctl daemon-reload");
+                
+                // Start the service
+                println!("  Starting service with updated configuration...");
+                let start_result = exec.execute_shell(&format!("sudo systemctl start {}.service", service_name));
+                if start_result.is_err() {
+                    println!("  ⚠ Failed to start service");
+                } else {
+                    println!("  ✓ Service start command executed");
+                }
+                
+                // Wait for service to start
+                println!("  Waiting for service to initialize...");
+                std::thread::sleep(std::time::Duration::from_secs(15));
+            } else {
             // Wait a moment for the service to start
             println!("Waiting for K3s service to start...");
             std::thread::sleep(std::time::Duration::from_secs(10));
+            }
 
             // Verify the service actually started
             println!("Verifying K3s service is running...");
@@ -633,30 +910,138 @@ _sudo() {
                 }
             };
 
-            if service_status != "active" && service_status != "activating" {
+            // Check service status more carefully - "activating" might mean it's starting or failing
+            if service_status == "activating" {
+                // Wait a bit longer and check again - it might be starting
+                println!("  Service is activating, waiting a bit longer...");
+                std::thread::sleep(std::time::Duration::from_secs(10));
+                
+                // Check again
+                let service_status_retry = exec.execute_shell("systemctl is-active k3s 2>/dev/null")
+                    .ok()
+                    .and_then(|out| String::from_utf8(out.stdout).ok())
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_else(|| "inactive".to_string());
+                
+                if service_status_retry == "active" {
+                    println!("  ✓ Service is now active");
+                } else {
+                    // Still not active - check if it failed
+                    let service_failed_check = exec.execute_shell("systemctl is-failed k3s 2>/dev/null")
+                        .ok()
+                        .and_then(|out| String::from_utf8(out.stdout).ok())
+                        .map(|s| s.trim() == "failed")
+                        .unwrap_or(false);
+                    
+                    if service_failed_check {
+                        println!("  ⚠ Service has FAILED - checking logs for error...");
+                        // Get the actual error from logs
+                        let error_logs = exec.execute_shell("sudo journalctl -u k3s -n 30 --no-pager 2>&1").ok();
+                        if let Some(logs) = error_logs {
+                            let log_text = String::from_utf8_lossy(&logs.stdout);
+                            println!("  Recent error logs:");
+                            for line in log_text.lines().take(20) {
+                                let line_lower = line.to_lowercase();
+                                if line_lower.contains("error") || line_lower.contains("fail") || line_lower.contains("fatal") || line_lower.contains("dial tcp") || line_lower.contains("no such host") {
+                                    println!("    {}", line);
+                                }
+                            }
+                        }
+                        
+                        // Also check the service file to see what command it's running
+                        println!("  Checking service file command...");
+                        let service_file_cmd = exec.execute_shell("sudo grep ExecStart /etc/systemd/system/k3s.service 2>/dev/null || echo 'not_found'").ok();
+                        if let Some(cmd) = service_file_cmd {
+                            let cmd_text = String::from_utf8_lossy(&cmd.stdout);
+                            println!("    Service command: {}", cmd_text.trim());
+                            
+                            // Check if it still has hostname
+                            if cmd_text.contains(&format!("https://{}:6443", server_addr)) && server_addr.contains("ts.net") {
+                                println!("    ⚠ Service file STILL has hostname! Fixing now...");
+                                // Read full service file
+                                let full_service = exec.execute_shell("sudo cat /etc/systemd/system/k3s.service 2>/dev/null").ok();
+                                if let Some(service_content) = full_service {
+                                    let content = String::from_utf8_lossy(&service_content.stdout);
+                                    let fixed = content.replace(&format!("https://{}:6443", server_addr), &format!("https://{}:6443", server_addr_for_k3s));
+                                    exec.write_file("/etc/systemd/system/k3s.service", fixed.as_bytes())
+                                        .context("Failed to fix service file")?;
+                                    exec.execute_shell("sudo systemctl daemon-reload")
+                                        .context("Failed to reload systemd")?;
+                                    println!("    ✓ Service file fixed - restarting...");
+                                    let _ = exec.execute_shell("sudo systemctl restart k3s.service");
+                                    std::thread::sleep(std::time::Duration::from_secs(10));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Final check - is service active now?
+            let final_status = exec.execute_shell("systemctl is-active k3s 2>/dev/null")
+                .ok()
+                .and_then(|out| String::from_utf8(out.stdout).ok())
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|| "inactive".to_string());
+            
+            if final_status != "active" && final_status != "activating" {
                 println!("⚠ K3s service is not running after installation!");
                 println!("  Status: {}", service_status);
-                println!("  Checking service logs...");
+                println!("  Checking service logs for connection errors...");
+
+                // Get detailed service status
+                let status_tmp = "/tmp/k3s_join_service_status";
+                let _ = exec.execute_shell_interactive(&format!(
+                    "bash -c 'sudo systemctl status k3s.service --no-pager -l 2>&1 | head -40 > {} 2>&1 || sudo systemctl status k3s-agent.service --no-pager -l 2>&1 | head -40 > {} 2>&1 || echo \"Unable to get status\" > {}'",
+                    status_tmp, status_tmp, status_tmp
+                ));
 
                 // Get recent service logs to diagnose the issue
                 let log_tmp = "/tmp/k3s_join_service_logs";
                 let _ = exec.execute_shell_interactive(&format!(
-                    "bash -c '(sudo journalctl -u k3s -n 30 2>&1 || sudo journalctl -u k3s-agent -n 30 2>&1 || echo \"Unable to get logs\") > {} 2>&1'",
+                    "bash -c '(sudo journalctl -u k3s -n 50 --no-pager 2>&1 || sudo journalctl -u k3s-agent -n 50 --no-pager 2>&1 || echo \"Unable to get logs\") > {} 2>&1'",
                     log_tmp
                 ));
-                if let Ok(log_text) = exec.read_file(log_tmp) {
-                    if !log_text.trim().is_empty() && !log_text.contains("Unable to get logs") {
-                        println!("  Recent service logs:");
-                        for line in log_text.lines().take(10) {
+                
+                if let Ok(status_text) = exec.read_file(status_tmp) {
+                    if !status_text.trim().is_empty() && !status_text.contains("Unable to get status") {
+                        println!("  Service status:");
+                        for line in status_text.lines().take(25) {
                             println!("    {}", line);
                         }
                     }
                 }
+                
+                if let Ok(log_text) = exec.read_file(log_tmp) {
+                    if !log_text.trim().is_empty() && !log_text.contains("Unable to get logs") {
+                        println!("  Recent service logs:");
+                        for line in log_text.lines().take(40) {
+                            println!("    {}", line);
+                        }
+                    }
+                }
+                
+                // Provide helpful troubleshooting steps
+                println!();
+                println!("  Troubleshooting steps:");
+                println!("    1. Check if Tailscale is running: systemctl status tailscale");
+                println!("    2. Check for port conflicts: sudo netstat -tulpn | grep -E ':(6443|10250|2379|2380)'");
+                println!("    3. Check for leftover processes: sudo ps aux | grep -E '(k3s|containerd)'");
+                println!("    4. Check data directory permissions: ls -la /var/lib/rancher/k3s/");
+                println!("    5. View full logs: sudo journalctl -u k3s -n 100 --no-pager");
 
                 anyhow::bail!(
                     "K3s installation command completed but service is not running. Status: {}\n\
-                     Please check the service logs to diagnose the issue:\n\
-                     ssh {} 'sudo journalctl -u k3s -n 50'",
+                     \n\
+                     Common causes:\n\
+                     - Tailscale not ready/connected\n\
+                     - Port conflicts (6443, 10250, etc.)\n\
+                     - Leftover containerd/k3s processes\n\
+                     - Data directory permission issues\n\
+                     - Network/firewall blocking cluster communication\n\
+                     \n\
+                     Check the logs above and run:\n\
+                     ssh {} 'sudo journalctl -u k3s -n 100 --no-pager'",
                     service_status,
                     hostname
                 );
@@ -689,13 +1074,20 @@ Requires=network-online.target
                 
                 // Reload systemd to pick up the override
                 let _ = exec.execute_shell("sudo systemctl daemon-reload");
-                
-                // Restart K3s service to apply the override
-                println!("Restarting K3s service to apply Tailscale dependency...");
-                let _ = exec.execute_shell(&format!("sudo systemctl restart {}.service", service_name));
-                std::thread::sleep(std::time::Duration::from_secs(5));
-                println!("✓ K3s service restarted with Tailscale dependency");
+                println!("✓ Tailscale dependency configured (override file only, doesn't affect main service file)");
             }
+            
+            // Fix kubeconfig permissions to ensure it's readable
+            // Even with --write-kubeconfig-mode=0644, we need to ensure the file is actually readable
+            println!("Fixing kubeconfig permissions...");
+            let kubeconfig_path = "/etc/rancher/k3s/k3s.yaml";
+            let _ = exec.execute_shell(&format!(
+                "sudo chmod 644 {} 2>/dev/null || echo 'kubeconfig_not_created_yet'",
+                kubeconfig_path
+            ));
+            // Also ensure the directory is accessible
+            let _ = exec.execute_shell("sudo chmod 755 /etc/rancher/k3s 2>/dev/null || true");
+            println!("✓ Kubeconfig permissions fixed");
             println!();
         }
         Err(e) => {
@@ -810,8 +1202,98 @@ Requires=network-online.target
     println!("Waiting for K3s service to initialize and join cluster...");
     std::thread::sleep(std::time::Duration::from_secs(15));
 
-    // Skip connection check - it was causing SSH connection issues
-    // The verification step will check if the node actually joined
+    // Check service status on the joining node BEFORE verification
+    // This helps diagnose issues early
+    println!();
+    println!("Checking K3s service status on {}...", hostname);
+    let service_name = if control_plane { "k3s" } else { "k3s-agent" };
+    let remote_service_status = exec.execute_shell(&format!(
+        "systemctl is-active {} 2>/dev/null || echo 'not_running'",
+        service_name
+    )).ok();
+    
+    let is_service_running = remote_service_status
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .map(|s| {
+            let status = s.trim();
+            status == "active" || status == "activating"
+        })
+        .unwrap_or(false);
+    
+    if !is_service_running {
+        println!("⚠ K3s service is NOT running on {}!", hostname);
+        println!("  This will prevent the node from joining the cluster.");
+        println!();
+        println!("  To diagnose the issue, run:");
+        println!("    ssh {} 'sudo systemctl status {} --no-pager -l'", hostname, service_name);
+        println!("    ssh {} 'sudo journalctl -u {} -n 100 --no-pager'", hostname, service_name);
+        println!();
+        println!("  Common issues:");
+        println!("    - Tailscale not ready/connected");
+        println!("    - Port conflicts (6443, 10250, etc.)");
+        println!("    - Invalid join token or server address");
+        println!("    - Network/firewall blocking cluster communication");
+        println!();
+        anyhow::bail!(
+            "K3s service is not running on {}. The node cannot join the cluster until the service is running.\n\
+             Check the service status and logs using the commands above.",
+            hostname
+        );
+    } else {
+        println!("  ✓ K3s service is running on {}", hostname);
+        
+        // Check recent logs for connection/join status
+        println!("  Checking service logs for cluster connection status...");
+        let recent_logs = exec.execute_shell(&format!(
+            "sudo journalctl -u {} -n 50 --no-pager 2>&1",
+            service_name
+        )).ok();
+        
+        if let Some(logs_out) = recent_logs {
+            let logs = String::from_utf8_lossy(&logs_out.stdout);
+            
+            // Check for connection errors to primary server
+            if logs.contains("no such host") || logs.contains("lookup") && logs.contains("failed") {
+                println!("  ⚠ CRITICAL: Service cannot resolve primary server hostname!");
+                println!("    This means the service file still has a hostname instead of IP address.");
+                println!("    Checking service file...");
+                
+                // Check and fix service file immediately
+                let service_file_check = exec.execute_shell(&format!("sudo cat /etc/systemd/system/{}.service 2>/dev/null || echo 'no_service_file'", service_name)).ok();
+                if let Some(service_content) = service_file_check {
+                    let content = String::from_utf8_lossy(&service_content.stdout);
+                    if content.contains(&format!("https://{}:6443", server_addr)) && server_addr.contains("ts.net") {
+                        println!("    ⚠ Service file has hostname '{}' - fixing to use IP: {}", server_addr, server_addr_for_k3s);
+                        let fixed_content = content.replace(&format!("https://{}:6443", server_addr), &format!("https://{}:6443", server_addr_for_k3s));
+                        exec.write_file(&format!("/etc/systemd/system/{}.service", service_name), fixed_content.as_bytes())
+                            .context("Failed to fix service file with IP address")?;
+                        exec.execute_shell("sudo systemctl daemon-reload")
+                            .context("Failed to reload systemd")?;
+                        println!("    ✓ Service file fixed - restarting service...");
+                        let _ = exec.execute_shell(&format!("sudo systemctl restart {}.service", service_name));
+                        std::thread::sleep(std::time::Duration::from_secs(10));
+                        println!("    ✓ Service restarted with IP address");
+                    }
+                }
+            }
+            
+            // Check for other errors
+            if logs.contains("error") || logs.contains("fail") || logs.contains("fatal") {
+                println!("  ⚠ Recent errors in service logs:");
+                for line in logs.lines().take(10) {
+                    let line_lower = line.to_lowercase();
+                    if line_lower.contains("error") || line_lower.contains("fail") || line_lower.contains("fatal") {
+                        println!("    {}", line);
+                    }
+                }
+            }
+            
+            // Check for successful connection indicators
+            if logs.contains("successfully") || logs.contains("joined") || logs.contains("ready") {
+                println!("  ✓ Service logs show positive connection indicators");
+            }
+        }
+    }
 
     // Verify the node successfully joined the cluster (with retries)
     println!();
@@ -819,15 +1301,6 @@ Requires=network-online.target
         "Verifying cluster membership on {} (this may take a few minutes)...",
         hostname
     );
-
-    // Ensure we're using the remote executor (not local)
-    if exec.is_local() {
-        anyhow::bail!(
-            "Internal error: Executor is local but should be remote for hostname '{}'. \
-             This indicates a configuration issue. Please ensure the host is configured in your .env file.",
-            hostname
-        );
-    }
 
     // Write the kubeconfig we fetched earlier to local filesystem
     println!();
@@ -839,36 +1312,292 @@ Requires=network-online.target
     std::fs::create_dir_all(&kube_dir).context("Failed to create ~/.kube directory")?;
     let kube_config_path = format!("{}/config", kube_dir);
 
+    // Verify the kubeconfig points to the primary server, not the joining node
+    // Extract server address from kubeconfig to verify it's correct
+    let mut final_kubeconfig = kubeconfig_content.clone();
+    if let Ok((server_host, _)) = kubeconfig::extract_server_and_token_from_kubeconfig(&kubeconfig_content) {
+        println!("  Kubeconfig server: {}", server_host);
+        
+        // Check if server points to joining node instead of primary
+        let joining_node_hostname = if is_local {
+            // Get local hostname
+            crate::config::service::get_current_hostname().unwrap_or_else(|_| hostname.to_string())
+        } else {
+            hostname.to_string()
+        };
+        
+        // Normalize hostnames for comparison
+        let normalized_server = crate::config::service::normalize_hostname(&server_host);
+        let normalized_joining = crate::config::service::normalize_hostname(&joining_node_hostname);
+        let normalized_primary = crate::config::service::normalize_hostname(&primary_hostname);
+        
+        // Check if server matches joining node (wrong) instead of primary (correct)
+        if normalized_server == normalized_joining || server_host == joining_node_hostname {
+            println!("  ⚠ Warning: Kubeconfig points to joining node ({}) instead of primary ({}).", server_host, primary_hostname);
+            println!("     Processing kubeconfig to fix server address...");
+            
+            // Re-process the kubeconfig to fix the server address (no SSH needed)
+            // This will extract the server from kubeconfig and replace it with the correct primary server
+            match kubeconfig::process_kubeconfig_for_primary(&final_kubeconfig, &primary_hostname, config) {
+                Ok(corrected_kubeconfig) => {
+                    // Verify the corrected kubeconfig
+                    if let Ok((corrected_server, _)) = kubeconfig::extract_server_and_token_from_kubeconfig(&corrected_kubeconfig) {
+                        let normalized_corrected = crate::config::service::normalize_hostname(&corrected_server);
+                        if normalized_corrected == normalized_primary || corrected_server == primary_hostname {
+                            println!("  ✓ Corrected kubeconfig points to primary: {}", corrected_server);
+                            // Use the corrected kubeconfig
+                            final_kubeconfig = corrected_kubeconfig;
+                        } else {
+                            println!("  ⚠ Corrected kubeconfig still has wrong server: {}", corrected_server);
+                            println!("     Will attempt to fix during final replacement step.");
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("  ⚠ Failed to process kubeconfig: {}", e);
+                    println!("     Will attempt to fix during final replacement step.");
+                }
+            }
+        } else if normalized_server == normalized_primary || server_host == primary_hostname {
+            println!("  ✓ Kubeconfig correctly points to primary server");
+        } else {
+            println!("  ⚠ Kubeconfig server ({}) doesn't match primary ({}) or joining node ({})", 
+                     server_host, primary_hostname, joining_node_hostname);
+        }
+    }
+
+    // Final pass: Replace any remaining baulder hostnames with primary server
+    // This catches any instances that might have been missed, including in merged content
+    let joining_node_hostname_for_replace = if is_local {
+        crate::config::service::get_current_hostname().unwrap_or_else(|_| hostname.to_string())
+    } else {
+        hostname.to_string()
+    };
+    
+    // Extract primary server address from kubeconfig - no SSH needed!
+    // The kubeconfig already contains the correct server address
+    let primary_server_url_final = if let Ok((server_host, _)) = kubeconfig::extract_server_and_token_from_kubeconfig(&final_kubeconfig) {
+        // Server host is just the hostname/IP, need to add https:// and :6443 if not present
+        if server_host.starts_with("https://") {
+            server_host
+        } else {
+            format!("https://{}:6443", server_host)
+        }
+    } else {
+        // Fallback: construct from server parameter
+        format!("https://{}:6443", server)
+    };
+    
+    // Extract just the hostname/IP part for replacement patterns
+    let primary_server_addr = primary_server_url_final
+        .strip_prefix("https://")
+        .or_else(|| primary_server_url_final.strip_prefix("http://"))
+        .and_then(|s| s.split(':').next())
+        .unwrap_or(&primary_server_url_final);
+    
+    // Replace any baulder hostnames in the final kubeconfig
+    // Try multiple patterns to catch all variations
+    let mut final_cleaned = final_kubeconfig.clone();
+    
+    // Get baulder's Tailscale hostname if available for more accurate matching
+    let baulder_tailscale_hostname = if is_local {
+        tailscale::get_tailscale_hostname_remote(&exec)
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    
+    let baulder_patterns: Vec<String> = vec![
+        format!("https://{}:6443", joining_node_hostname_for_replace),
+        format!("https://{}.bombay-pinecone.ts.net:6443", joining_node_hostname_for_replace),
+        format!("{}:6443", joining_node_hostname_for_replace),
+        format!("{}.bombay-pinecone.ts.net:6443", joining_node_hostname_for_replace),
+    ]
+    .into_iter()
+    .chain(baulder_tailscale_hostname.iter().map(|h| format!("https://{}:6443", h)))
+    .chain(baulder_tailscale_hostname.iter().map(|h| format!("{}:6443", h)))
+    .collect();
+    
+    let mut replacements_made = 0;
+    for pattern in &baulder_patterns {
+        if final_cleaned.contains(pattern) {
+            println!("  Replacing {} with {}", pattern, primary_server_url_final);
+            final_cleaned = final_cleaned.replace(pattern, &primary_server_url_final);
+            replacements_made += 1;
+        }
+    }
+    
+    if replacements_made > 0 {
+        println!("  ✓ Made {} replacement(s) to ensure kubeconfig points to primary server", replacements_made);
+    }
+    
+    // Process through kubeconfig processor one more time to ensure all server URLs are correct
+    // This handles multiple clusters/contexts that might exist in the kubeconfig
+    let final_processed = match kubeconfig::process_kubeconfig_for_primary(&final_cleaned, &primary_hostname, config) {
+        Ok(processed) => {
+            println!("  ✓ Processed kubeconfig through primary processor");
+            processed
+        }
+        Err(e) => {
+            println!("  ⚠ Failed to process kubeconfig through primary processor: {}", e);
+            println!("  Using manually processed version instead");
+            final_cleaned
+        }
+    };
+    
+    // The kubeconfig should point to the primary server (frigg), not the joining node (baulder)
     // Merge with existing config if it exists, otherwise write new
     if std::path::Path::new(&kube_config_path).exists() {
         println!("  Merging with existing kubeconfig at {}", kube_config_path);
         let existing = std::fs::read_to_string(&kube_config_path).unwrap_or_default();
-        if !existing.contains("k3s") {
-            let mut merged = existing;
+        
+        // Process existing config to replace any baulder references with frigg
+        let existing_processed = if !existing.is_empty() {
+            let mut existing_cleaned = existing.clone();
+            for pattern in &baulder_patterns {
+                if existing_cleaned.contains(pattern) {
+                    println!("  Replacing {} with {} in existing config", pattern, primary_server_url_final);
+                    existing_cleaned = existing_cleaned.replace(pattern, &primary_server_url_final);
+                }
+            }
+            existing_cleaned
+        } else {
+            existing
+        };
+        
+        if !existing_processed.contains("k3s") {
+            let mut merged = existing_processed;
             if !merged.ends_with('\n') {
                 merged.push('\n');
             }
             merged.push_str("---\n");
-            merged.push_str(&kubeconfig_content);
+            merged.push_str(&final_processed);
             std::fs::write(&kube_config_path, merged)?;
         } else {
-            println!("  Kubeconfig already contains k3s context, skipping merge");
+            // Existing config has k3s - replace the entire k3s section with our processed version
+            println!("  Existing k3s context found - replacing with corrected version");
+            // Try to find and replace the k3s cluster section
+            let mut merged = existing_processed;
+            // Replace any remaining baulder references in the merged content
+            for pattern in &baulder_patterns {
+                if merged.contains(pattern) {
+                    println!("  Replacing {} with {} in merged config", pattern, primary_server_url_final);
+                    merged = merged.replace(pattern, &primary_server_url_final);
+                }
+            }
+            std::fs::write(&kube_config_path, merged)?;
         }
     } else {
-        std::fs::write(&kube_config_path, &kubeconfig_content)
+        std::fs::write(&kube_config_path, &final_processed)
             .context("Failed to write kubeconfig")?;
     }
+    
+    // Verify what we actually wrote by reading the file back
+    let mut written_content = std::fs::read_to_string(&kube_config_path)
+        .context("Failed to read back written kubeconfig for verification")?;
+    
+    // Final pass: Replace ANY remaining baulder references in the entire file
+    let mut final_replacements = 0;
+    for pattern in &baulder_patterns {
+        if written_content.contains(pattern) {
+            println!("  Final pass: Replacing {} with {}", pattern, primary_server_url_final);
+            written_content = written_content.replace(pattern, &primary_server_url_final);
+            final_replacements += 1;
+        }
+    }
+    
+    // Also replace any variations we might have missed
+    let additional_patterns = vec![
+        format!("server: https://{}", joining_node_hostname_for_replace),
+        format!("server:https://{}", joining_node_hostname_for_replace),
+        format!("server: http://{}", joining_node_hostname_for_replace),
+        format!("server:http://{}", joining_node_hostname_for_replace),
+    ];
+    for pattern in &additional_patterns {
+        if written_content.contains(pattern) {
+            let replacement = format!("server: {}", primary_server_url_final);
+            println!("  Final pass: Replacing {} with {}", pattern, replacement);
+            written_content = written_content.replace(pattern, &replacement);
+            final_replacements += 1;
+        }
+    }
+    
+    if final_replacements > 0 {
+        println!("  ✓ Made {} additional replacement(s) in final pass", final_replacements);
+        std::fs::write(&kube_config_path, &written_content)
+            .context("Failed to write final corrected kubeconfig")?;
+    }
+    
+    // Extract server from the actual written file (might be merged)
+    if let Ok((written_server, _)) = kubeconfig::extract_server_and_token_from_kubeconfig(&written_content) {
+        println!("  Final kubeconfig server (from file): {}", written_server);
+        let normalized_written = crate::config::service::normalize_hostname(&written_server);
+        let normalized_primary = crate::config::service::normalize_hostname(&primary_hostname);
+        
+        // Use the primary server address extracted from kubeconfig
+        let primary_server_address = primary_server_addr;
+        
+        // Check if server matches primary (could be hostname or IP)
+        let server_matches = normalized_written == normalized_primary 
+            || written_server == primary_hostname
+            || written_server == primary_server_address
+            || written_server.contains(&normalized_primary)
+            || written_server.contains(primary_server_address);
+        
+        if server_matches {
+            println!("  ✓ Verified: Written kubeconfig points to primary server");
+        } else {
+            println!("  ⚠ Warning: Written kubeconfig server ({}) doesn't match primary ({})", written_server, primary_hostname);
+            println!("  Attempting to fix kubeconfig by replacing server URL...");
+            
+            // Try to fix it by replacing the server URL in the file
+            // Replace both the full URL and just the hostname part
+            let fixed_content = written_content
+                .replace(&written_server, &primary_server_url_final)
+                .replace(&format!("https://{}:6443", written_server), &primary_server_url_final)
+                .replace(&format!("http://{}:6443", written_server), &primary_server_url_final);
+            
+            // Also try to process it through the kubeconfig processor
+            let fixed_processed = kubeconfig::process_kubeconfig_for_primary(&fixed_content, &primary_hostname, config)
+                .unwrap_or(fixed_content);
+            
+            std::fs::write(&kube_config_path, &fixed_processed)
+                .context("Failed to write fixed kubeconfig")?;
+            
+            // Verify again
+            if let Ok((fixed_server, _)) = kubeconfig::extract_server_and_token_from_kubeconfig(&fixed_processed) {
+                println!("  Fixed kubeconfig server: {}", fixed_server);
+                let fixed_normalized = crate::config::service::normalize_hostname(&fixed_server);
+                if fixed_normalized == normalized_primary || fixed_server == primary_hostname {
+                    println!("  ✓ Fixed kubeconfig now points to primary server");
+                } else {
+                    println!("  ⚠ Still incorrect after fix attempt. Server: {}, Expected: {}", fixed_server, primary_hostname);
+                }
+            }
+        }
+    } else {
+        println!("  ⚠ Warning: Could not extract server from written kubeconfig");
+    }
+    
     println!("✓ Kubeconfig set up at {}", kube_config_path);
 
     // Verify the node successfully joined the cluster using local kubectl
+    // Pass the final processed kubeconfig to verification (not the original)
+    // This ensures verification uses the corrected version that points to frigg, not baulder
     println!();
     println!("Verifying cluster membership using local kubectl (this may take a few minutes)...");
+    
+    // Read the final corrected kubeconfig from the file we just wrote
+    let final_kubeconfig_for_verification = std::fs::read_to_string(&kube_config_path)
+        .context("Failed to read corrected kubeconfig for verification")?;
+    
     let verification_result = verify::verify_cluster_join_with_local_kubectl_and_config(
         &primary_hostname,
         hostname,
         control_plane,
         config,
-        Some(kubeconfig_content.clone()),
+        Some(final_kubeconfig_for_verification), // Use the corrected version from the file
     );
 
     // If verification failed and service was skipped, offer to restart
@@ -1091,28 +1820,49 @@ fn check_and_remove_from_existing_cluster<E: CommandExecutor>(
     // Try to drain and delete the node (if it's a control plane or worker)
     println!("  Draining node {} from cluster...", node_name);
     let drain_cmd = format!(
-        "sudo k3s kubectl drain {} --ignore-daemonsets --delete-emptydir-data --force --grace-period=30 2>&1 || echo 'drain_failed'",
+        "timeout 120 sudo k3s kubectl drain {} --ignore-daemonsets --delete-emptydir-data --force --grace-period=30 2>&1 || echo 'drain_failed'",
         node_name
     );
-    let drain_output = exec.execute_shell_interactive(&drain_cmd);
-    if let Ok(()) = drain_output {
+    let drain_output = exec.execute_shell(&drain_cmd);
+    if let Ok(output) = drain_output {
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        if output_str.contains("drained") || output.status.success() {
         println!("  ✓ Node drained successfully");
     } else {
         println!("  ⚠ Could not drain node (may not be in cluster or already removed)");
+            if !output_str.trim().is_empty() && !output_str.contains("drain_failed") {
+                println!("    Output: {}", output_str.trim());
+            }
+        }
+    } else {
+        println!("  ⚠ Could not drain node (command failed)");
     }
 
     // Delete the node from the cluster
     println!("  Deleting node {} from cluster...", node_name);
     let delete_cmd = format!(
-        "sudo k3s kubectl delete node {} 2>&1 || echo 'delete_failed'",
+        "timeout 30 sudo k3s kubectl delete node {} 2>&1 || echo 'delete_failed'",
         node_name
     );
-    let delete_output = exec.execute_shell_interactive(&delete_cmd);
-    if let Ok(()) = delete_output {
+    let delete_output = exec.execute_shell(&delete_cmd);
+    if let Ok(output) = delete_output {
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        if output_str.contains("deleted") || output.status.success() {
         println!("  ✓ Node deleted from cluster");
     } else {
         println!("  ⚠ Could not delete node (may not be in cluster or already removed)");
+            if !output_str.trim().is_empty() {
+                println!("    Output: {}", output_str.trim());
+            }
+        }
+    } else {
+        println!("  ⚠ Could not delete node (command failed)");
     }
+
+    // Immediately stop K3s service after node deletion to prevent hanging
+    println!("  Stopping K3s service...");
+    let _ = exec.execute_shell("sudo systemctl stop k3s.service 2>/dev/null || sudo systemctl stop k3s-agent.service 2>/dev/null || true");
+    let _ = exec.execute_shell("sudo pkill -9 k3s 2>/dev/null || true");
 
     // Wait a moment for cleanup
     std::thread::sleep(std::time::Duration::from_secs(2));
