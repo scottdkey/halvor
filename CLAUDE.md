@@ -107,7 +107,7 @@ make install
 Install individual platform dependencies:
 ```bash
 make install-rust          # Rust toolchain (all platforms)
-make install-rust-targets  # Cross-compilation targets (all platforms)
+make install-rust-targets  # Rust targets (all platforms)
 make install-swift         # Xcode/Swift dependencies (macOS only)
 make install-android       # Android NDK/Java (optional on Linux)
 make install-web           # Node.js, wasm-pack (all platforms)
@@ -119,18 +119,13 @@ make install-tools         # Docker, direnv, 1Password CLI, Fastlane (all platfo
 - Ruby/Fastlane are automatically skipped on Linux (macOS only, for iOS/macOS builds)
 - Java 17 (OpenJDK) is automatically installed via system package manager
 - Node.js 24 LTS is installed via NVM (Node Version Manager) for all platforms
-- Cross-compilation toolchains (`gcc-aarch64-linux-gnu`, `musl-tools`) are automatically installed on Debian/Ubuntu
+- Toolchains (`gcc-aarch64-linux-gnu`, `musl-tools`) are automatically installed on Debian/Ubuntu
 - All Rust-based CLI and Web features work natively on Linux
-- Linux can cross-compile to all Linux architectures (x86_64, aarch64, gnu, musl)
+- Linux can build for all Linux architectures (x86_64, aarch64, gnu, musl)
 
-### Cross-Compilation Setup
+### Multi-Platform Builds
 
-**TL;DR:**
-- **Local development**: `halvor build cli` detects your OS and builds native targets
-- **Production releases**: Use GitHub Actions (builds all platforms natively)
-- **Cross-platform**: Use `--platforms apple,linux,windows` (not recommended, see below)
-
-**Default Behavior:**
+**Local Development:**
 ```bash
 halvor build cli  # Auto-detects your OS and builds native targets
                   # macOS: aarch64 + x86_64 (darwin)
@@ -138,58 +133,13 @@ halvor build cli  # Auto-detects your OS and builds native targets
                   # Windows: x86_64 + aarch64 (msvc)
 ```
 
-**Why not cross-compile locally?**
-Cross-compilation from macOS to Linux/Windows is complicated:
-- Requires Docker + `cross` tool
-- `cross` can have Docker connection issues
-- C dependencies (ring, zstd-sys) cause build failures
-- Much slower than native builds
-
-**Recommended**: Use GitHub Actions for multi-platform builds. It's simpler and more reliable.
-
-**Recommended Approach: Use GitHub Actions**
-
-The project has GitHub Actions workflows that build on native runners:
+**Production Releases:**
+The project uses GitHub Actions workflows that build on native runners:
 - `.github/workflows/build-linux.yml` - Builds Linux binaries on Ubuntu
 - `.github/workflows/build-macos.yml` - Builds macOS binaries on macOS
 - `.github/workflows/build-windows.yml` - Builds Windows binaries on Windows
 
-This is the **simplest and most reliable** approach. No cross-compilation needed - each platform builds natively.
-
-**Local Cross-Compilation (Not Recommended)**
-
-Cross-compiling from macOS to Linux/Windows is technically possible but unreliable:
-
-1. **Install dependencies**:
-   ```bash
-   make install  # Installs cross and all targets
-   ```
-
-2. **Ensure Docker is running**:
-   ```bash
-   docker ps  # Should work without errors
-   ```
-
-3. **Attempt build** (may fail):
-   ```bash
-   halvor build cli --platforms linux,windows
-   ```
-
-**Common Issues:**
-- `cross` may fail to connect to Docker
-- C dependencies (ring, zstd-sys) often fail to compile
-- Windows targets have limited `cross` support
-- Builds are much slower than native compilation
-- **RUSTFLAGS environment variable**: If you have `RUSTFLAGS` set in `~/.zshrc` or `~/.bashrc`, it will break `cross`. The build system automatically clears this variable.
-
-**Cross.toml Configuration:**
-The project includes a `Cross.toml` that explicitly specifies Docker images for each target. If cross-compilation fails, the images may need to be pulled first:
-```bash
-docker pull ghcr.io/cross-rs/x86_64-unknown-linux-gnu:latest
-```
-
-**Better Alternative:**
-Use GitHub Actions workflows which build natively on each platform. Much more reliable and faster.
+Each platform builds natively - no cross-compilation needed. This is the simplest and most reliable approach.
 
 ## Architecture
 
@@ -243,28 +193,24 @@ Tables are defined in `projects/core/db/generated/`. Modify these carefully as t
 
 ## Build System
 
-### Cross-Compilation
+### Multi-Platform Builds
 
-The build system supports full cross-compilation across all platforms:
+The build system supports building for multiple platforms:
 
 - **Native builds**: Uses `cargo build --target <target>` for same-OS builds
-- **Cross-OS compilation**: Automatically uses `cross` tool (Docker-based) for cross-OS builds (e.g., macOS -> Linux/Windows)
-- **Automatic detection**: The build system automatically detects when `cross` is needed and uses it
-
-**Prerequisites for cross-compilation:**
-- Install `cross`: `cargo install cross --git https://github.com/cross-rs/cross` or `brew install cross` (macOS)
-- Docker must be running (required by `cross`)
+- **Cross-platform builds**: Handled via GitHub Actions workflows (each platform builds natively)
 
 Supported targets:
 - Linux: x86_64-gnu, x86_64-musl, aarch64-gnu, aarch64-musl
 - macOS: x86_64-darwin, aarch64-darwin
 - Windows: x86_64-windows-msvc, aarch64-windows-msvc
 
-**Example**: Building from macOS for Linux:
+**Example**: Building locally (native targets only):
 ```bash
-halvor build cli --platforms linux  # Automatically uses 'cross' for Linux targets
-halvor build cli --platforms apple,linux,windows  # Builds all platforms
+halvor build cli  # Builds for current platform's native targets
 ```
+
+For cross-platform builds, use GitHub Actions workflows which build natively on each platform.
 
 ### CI/CD Workflows
 

@@ -316,13 +316,12 @@ All installable apps are defined in `src/services/apps.rs`:
 
 ## Build System Architecture
 
-### Cross-Compilation
+### Multi-Platform Builds
 
-The build system supports full cross-compilation:
+The build system supports building for multiple platforms:
 
-- **Native builds**: Uses `cargo build --target <target>`
-- **Cross-OS compilation**: Automatically uses `cross` tool (Docker-based)
-- **Automatic detection**: Detects when `cross` is needed
+- **Native builds**: Uses `cargo build --target <target>` for same-OS builds
+- **Cross-platform builds**: Handled via GitHub Actions workflows (each platform builds natively)
 
 ### CI/CD Workflows
 

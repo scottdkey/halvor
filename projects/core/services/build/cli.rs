@@ -1,4 +1,4 @@
-// CLI binary build with simple cross-compilation support
+// CLI binary build for native targets only
 use crate::services::build::common::{execute_command_output, get_binary_path};
 use crate::services::build::github::push_cli_to_github;
 use anyhow::{Context, Result};
@@ -7,11 +7,11 @@ use std::path::PathBuf;
 use std::process::Command;
 
 /// Platform targets mapping
-/// All platforms support cross-compilation via 'cross' tool (requires Docker)
+/// Only native targets are built locally - cross-platform builds use GitHub Actions
 const PLATFORM_TARGETS: &[(&str, &[&str])] = &[
     // Apple/macOS targets
     ("apple", &["aarch64-apple-darwin", "x86_64-apple-darwin"]),
-    // Linux targets (cross-compile from any platform using 'cross')
+    // Linux targets
     (
         "linux",
         &[
@@ -30,7 +30,7 @@ const PLATFORM_TARGETS: &[(&str, &[&str])] = &[
 /// Build CLI binary for current platform and push to experimental release
 pub fn build_and_push_experimental() -> Result<()> {
     use std::env::consts::{ARCH, OS};
-    
+
     // Detect current platform
     let current_target = match (OS, ARCH) {
         ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
@@ -40,23 +40,26 @@ pub fn build_and_push_experimental() -> Result<()> {
         ("windows", "x86_64") => "x86_64-pc-windows-msvc",
         _ => anyhow::bail!("Unsupported platform: {} {}", OS, ARCH),
     };
-    
+
     println!("Building halvor for current platform: {}", current_target);
     println!("This will be pushed to the 'experimental' GitHub release\n");
-    
+
     // Build for current target
     let binary_path = build_target(current_target)?
         .context(format!("Failed to build for target: {}", current_target))?;
-    
+
     println!("✓ Build successful: {}", binary_path.display());
-    
+
     // Push to experimental release
     println!("\n📤 Pushing to GitHub 'experimental' release...");
-    push_cli_to_github(&[(current_target.to_string(), binary_path)], Some("experimental"))?;
-    
+    push_cli_to_github(
+        &[(current_target.to_string(), binary_path)],
+        Some("experimental"),
+    )?;
+
     println!("\n✓ Successfully pushed to experimental release!");
     println!("  Download URL: https://github.com/scottdkey/halvor/releases/tag/experimental");
-    
+
     Ok(())
 }
 
@@ -267,8 +270,7 @@ fn install_target(target: &str) -> Result<()> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!(
             "Failed to install target {}: {}\n\
-            Note: For cross-compilation, 'cross' uses Docker containers with pre-installed toolchains.\n\
-            Ensure Docker is running and the target is available for your Rust toolchain.",
+            Ensure the target is available for your Rust toolchain.",
             target,
             stderr
         );
@@ -306,9 +308,8 @@ pub fn build_target(target: &str) -> Result<Option<PathBuf>> {
 
     let is_cross = target != host_target;
 
-    // Determine if we need to use 'cross' for cross-compilation
-    // Use 'cross' for cross-OS compilation (e.g., macOS -> Linux/Windows)
-    // Use 'cargo' for native builds or same-OS cross-arch builds
+    // Determine if we're cross-compiling to a different OS
+    // Cross-OS compilation is handled via GitHub Actions, not locally
     use std::env::consts::OS;
     let host_os = OS;
     let target_os = if target.contains("linux") {

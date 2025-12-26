@@ -9,7 +9,7 @@ help:
 	@echo "Installation:"
 	@echo "  make install              - Install all dependencies (Rust, Swift, Android, Web)"
 	@echo "  make install-rust         - Install Rust toolchain"
-	@echo "  make install-rust-targets - Install all Rust cross-compilation targets"
+	@echo "  make install-rust-targets - Install all Rust targets"
 	@echo "  make install-swift        - Install Swift/Xcode dependencies"
 	@echo "  make install-android      - Install Android dependencies"
 	@echo "  make install-web          - Install Web dependencies (Node.js, wasm-pack)"
@@ -83,20 +83,20 @@ install-rust-targets: install-rust
 	rustup target add armv7-linux-androideabi || true; \
 	rustup target add i686-linux-android || true; \
 	rustup target add x86_64-linux-android || true; \
-	echo "Installing Linux targets (for cross-compilation)..."; \
+	echo "Installing Linux targets..."; \
 	rustup target add x86_64-unknown-linux-gnu || true; \
 	rustup target add aarch64-unknown-linux-gnu || true; \
 	rustup target add x86_64-unknown-linux-musl || true; \
 	rustup target add aarch64-unknown-linux-musl || true; \
 	if [ "$$OS" = "Linux" ]; then \
-		echo "Installing Linux cross-compilation toolchains..."; \
+		echo "Installing Linux toolchains..."; \
 		if command -v apt-get >/dev/null 2>&1; then \
-			sudo apt-get install -y gcc-aarch64-linux-gnu gcc-x86-64-linux-gnu musl-tools || echo "⚠️  Failed to install cross-compilation toolchains"; \
+			sudo apt-get install -y gcc-aarch64-linux-gnu gcc-x86-64-linux-gnu musl-tools || echo "⚠️  Failed to install toolchains"; \
 		else \
-			echo "ℹ️  Cross-compilation toolchains must be installed manually on non-Debian systems"; \
+			echo "ℹ️  Toolchains must be installed manually on non-Debian systems"; \
 		fi; \
 	fi; \
-	echo "Installing Windows targets (for cross-compilation)..."; \
+	echo "Installing Windows targets..."; \
 	rustup target add x86_64-pc-windows-msvc || true; \
 	rustup target add aarch64-pc-windows-msvc || true; \
 	echo "Installing WASM target..."; \
@@ -156,15 +156,19 @@ install-rust-deps: install-rust
 	else \
 		echo "✓ C compiler found: $$(cc --version 2>&1 | head -1 || gcc --version 2>&1 | head -1)"; \
 	fi; \
-	echo "Installing cross for cross-compilation..."; \
+	echo "Checking for 'cross' tool (not needed, will remove if found)..."; \
 	if command -v cross >/dev/null 2>&1; then \
-		echo "Upgrading cross to latest version..."; \
-		cargo install cross --force || echo "⚠️  Failed to upgrade cross"; \
+		echo "  ⚠️  Found 'cross' tool installed. Removing it (not needed for this project)..."; \
+		cargo uninstall cross 2>/dev/null || echo "  ⚠️  Failed to uninstall cross via cargo. You may need to remove it manually: cargo uninstall cross"; \
+		if command -v cross >/dev/null 2>&1; then \
+			echo "  ⚠️  'cross' is still installed. It may have been installed via a package manager."; \
+			echo "      This project does not use 'cross' - you can safely ignore this or remove it manually."; \
+		else \
+			echo "  ✓ 'cross' removed successfully"; \
+		fi; \
 	else \
-		echo "Installing cross..."; \
-		cargo install cross || echo "⚠️  Failed to install cross"; \
+		echo "  ✓ 'cross' not installed (as expected)"; \
 	fi; \
-	echo "✓ cross installed: $$(cross --version 2>&1 | head -1)"; \
 	echo "Fetching dependencies for main crate..."; \
 	cargo fetch || echo "⚠️  Failed to fetch main crate dependencies"; \
 	if [ -d "projects/ios/halvor-ffi" ]; then \
