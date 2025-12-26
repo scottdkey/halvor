@@ -1549,27 +1549,154 @@ fn handle_kubeconfig_command(setup: bool, hostname: Option<&str>) -> Result<()> 
         // Fetch kubeconfig first (this prints status messages)
         let kubeconfig_content = kubeconfig::fetch_kubeconfig_content(&primary_hostname, &config)?;
 
+        // Fetch K3s join token
+        println!();
+        println!("  Fetching K3s join token...");
+        let join_token = match crate::services::k3s::get_cluster_join_info(&primary_hostname, &config) {
+            Ok((_, token)) => {
+                println!("  ✓ Join token fetched");
+                Some(token)
+            }
+            Err(e) => {
+                println!("  ⚠ Failed to fetch join token: {}", e);
+                println!("  You can add K3S_TOKEN to 1Password manually later if needed");
+                None
+            }
+        };
+
         // Now print the formatted output with clear markers
         println!();
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!("K3s Kubeconfig for 1Password");
+        println!("K3s Configuration for 1Password");
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         println!();
-        println!("📋 COPY EVERYTHING BETWEEN THE MARKERS BELOW TO 1PASSWORD");
+        println!("📋 ADD THESE FIELDS TO YOUR 1PASSWORD VAULT");
         println!();
-        println!("In your 1Password vault, create/edit an item with:");
-        println!("  Field name: KUBE_CONFIG");
-        println!("  Field type: Concealed (password/secret)");
-        println!("  Value: <paste the content below>");
+
+        // Print KUBE_CONFIG
+        println!("Field 1: KUBE_CONFIG");
+        println!("  Type: Concealed (password/secret)");
+        println!("  Value: (copy content between markers below)");
         println!();
-        println!("╔════════════════════ START COPYING HERE ════════════════════╗");
+        println!("╔════════════════════ START KUBE_CONFIG ════════════════════╗");
         println!("{}", kubeconfig_content);
-        println!("╚════════════════════ STOP COPYING HERE ════════════════════╝");
+        println!("╚════════════════════ END KUBE_CONFIG ═════════════════════╝");
         println!();
+
+        // Print K3S_TOKEN if available
+        if let Some(token) = join_token {
+            println!("Field 2: K3S_TOKEN");
+            println!("  Type: Concealed (password/secret)");
+            println!("  Value: (copy content between markers below)");
+            println!();
+            println!("╔════════════════════ START K3S_TOKEN ══════════════════════╗");
+            println!("{}", token);
+            println!("╚════════════════════ END K3S_TOKEN ════════════════════════╝");
+            println!();
+        }
+
         println!("After adding to 1Password:");
-        println!("  1. Make sure your .envrc or environment loads KUBE_CONFIG from 1Password");
+        println!("  1. Make sure your .envrc or environment loads these from 1Password");
         println!("  2. Run: halvor config kubeconfig --setup");
         println!("     (This will configure kubectl to use the 'halvor' context)");
+        println!();
+        println!("Usage:");
+        println!("  • KUBE_CONFIG: Used for kubectl access and auto-detecting server in join commands");
+        println!("  • K3S_TOKEN: Used for joining new nodes to the cluster");
+        println!();
+
+        // Prompt user to automatically update 1Password
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!();
+        print!("Would you like to automatically update these values in 1Password? [y/N]: ");
+        std::io::stdout().flush().context("Failed to flush stdout")?;
+
+        let mut input = String::new();
+        std::io::stdin()
+            .read_line(&mut input)
+            .context("Failed to read user input")?;
+
+        if input.trim().eq_ignore_ascii_case("y") || input.trim().eq_ignore_ascii_case("yes") {
+            println!();
+            println!("Updating 1Password vault...");
+
+            // Check if op CLI is available
+            if !local::check_command_exists("op") {
+                println!("⚠ 1Password CLI (op) not found. Please install it:");
+                println!("   macOS: brew install --cask 1password-cli");
+                println!("   Linux: See https://developer.1password.com/docs/cli/get-started/");
+                return Ok(());
+            }
+
+            // Check if signed in
+            let whoami = local::execute_shell("op whoami 2>&1");
+            if whoami.is_err() || !whoami.as_ref().unwrap().status.success() {
+                println!("⚠ Not signed in to 1Password CLI. Please sign in first:");
+                println!("   eval $(op signin)");
+                return Ok(());
+            }
+
+            // Get vault and item name from environment or use defaults
+            let vault_name = std::env::var("OP_VAULT").unwrap_or_else(|_| "automations".to_string());
+            let item_name = std::env::var("OP_ITEM").unwrap_or_else(|_| "halvor".to_string());
+
+            // Update KUBE_CONFIG field
+            println!("  Updating KUBE_CONFIG field...");
+            let kube_config_escaped = kubeconfig_content.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n");
+            let update_kube_cmd = format!(
+                "op item edit '{}' --vault '{}' 'KUBE_CONFIG[concealed]={}'",
+                item_name, vault_name, kube_config_escaped
+            );
+
+            match local::execute_shell(&update_kube_cmd) {
+                Ok(output) => {
+                    if output.status.success() {
+                        println!("  ✓ KUBE_CONFIG updated");
+                    } else {
+                        let error = String::from_utf8_lossy(&output.stderr);
+                        println!("  ⚠ Failed to update KUBE_CONFIG: {}", error);
+                    }
+                }
+                Err(e) => {
+                    println!("  ⚠ Failed to update KUBE_CONFIG: {}", e);
+                }
+            }
+
+            // Update K3S_TOKEN field if available
+            if let Some(ref token) = join_token {
+                println!("  Updating K3S_TOKEN field...");
+                let token_escaped = token.replace("\\", "\\\\").replace("\"", "\\\"");
+                let update_token_cmd = format!(
+                    "op item edit '{}' --vault '{}' 'K3S_TOKEN[concealed]={}'",
+                    item_name, vault_name, token_escaped
+                );
+
+                match local::execute_shell(&update_token_cmd) {
+                    Ok(output) => {
+                        if output.status.success() {
+                            println!("  ✓ K3S_TOKEN updated");
+                        } else {
+                            let error = String::from_utf8_lossy(&output.stderr);
+                            println!("  ⚠ Failed to update K3S_TOKEN: {}", error);
+                        }
+                    }
+                    Err(e) => {
+                        println!("  ⚠ Failed to update K3S_TOKEN: {}", e);
+                    }
+                }
+            }
+
+            println!();
+            println!("✓ 1Password vault updated!");
+            println!();
+            println!("Next steps:");
+            println!("  1. Reload your environment: direnv allow (or restart your shell)");
+            println!("  2. Verify: echo $KUBE_CONFIG | head -5");
+            println!("  3. Setup kubectl: halvor config kubeconfig --setup");
+        } else {
+            println!();
+            println!("Skipped automatic update. You can manually copy the values above to 1Password.");
+        }
         println!();
     }
 

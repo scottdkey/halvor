@@ -18,7 +18,7 @@ mod utils;
 mod verify;
 
 // Re-export public functions from modules
-pub use init::init_control_plane;
+pub use init::{init_control_plane, prepare_node};
 pub use join::join_cluster;
 pub use maintenance::regenerate_certificates;
 pub use status::{get_cluster_join_info, show_status};

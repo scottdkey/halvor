@@ -81,7 +81,7 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
         } => {
             update::handle_update(hostname.as_deref(), app.as_deref(), experimental, force)?;
         }
-        Init { token, yes } => {
+        Init { token, yes, skip_k3s } => {
             // Detect current machine's hostname if not provided
             let halvor_dir = crate::config::find_halvor_dir()?;
             let config = crate::config::load_env_config(&halvor_dir)?;
@@ -106,7 +106,7 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
                     }
                 }
             };
-            init::handle_init(&target_host, token.as_deref(), yes)?;
+            init::handle_init(&target_host, token.as_deref(), yes, skip_k3s)?;
         }
         Config {
             verbose,

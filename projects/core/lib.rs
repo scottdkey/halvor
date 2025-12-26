@@ -108,7 +108,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::generate::GenerateCommands,
     },
-    /// Initialize K3s cluster (primary control plane node)
+    /// Initialize K3s cluster (primary control plane node) or prepare a node for joining
     Init {
         /// Token for cluster join (generated if not provided)
         #[arg(long)]
@@ -116,6 +116,9 @@ pub enum Commands {
         /// Skip confirmation prompts
         #[arg(long, short = 'y')]
         yes: bool,
+        /// Skip K3s initialization - only install tools and configure node (useful for nodes that will join an existing cluster)
+        #[arg(long)]
+        skip_k3s: bool,
     },
     /// Join a node to the K3s cluster
     Join {

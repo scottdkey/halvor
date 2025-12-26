@@ -615,29 +615,19 @@ _sudo() {
             // Try checking k3s service first, then k3s-agent
             let service_status = {
                 // Try k3s service first
-                let k3s_check = exec.execute_shell("systemctl is-active k3s 2>/dev/null || echo inactive").ok();
-                let is_k3s_active = k3s_check
-                    .map(|out| {
-                        out.status.success()
-                            && String::from_utf8_lossy(&out.stdout).trim() == "active"
-                    })
-                    .unwrap_or(false);
+                let k3s_status = exec.execute_shell("systemctl is-active k3s 2>/dev/null")
+                    .ok()
+                    .and_then(|out| String::from_utf8(out.stdout).ok())
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_else(|| "inactive".to_string());
 
-                if is_k3s_active {
-                    "active".to_string()
+                if k3s_status == "active" || k3s_status == "activating" {
+                    k3s_status
                 } else {
                     // Try k3s-agent
-                    let agent_check = exec
-                        .execute_shell("systemctl is-active k3s-agent 2>/dev/null || echo inactive")
-                        .ok();
-                    agent_check
-                        .and_then(|out| {
-                            if out.status.success() {
-                                String::from_utf8(out.stdout).ok()
-                            } else {
-                                None
-                            }
-                        })
+                    exec.execute_shell("systemctl is-active k3s-agent 2>/dev/null")
+                        .ok()
+                        .and_then(|out| String::from_utf8(out.stdout).ok())
                         .map(|s| s.trim().to_string())
                         .unwrap_or_else(|| "not_running".to_string())
                 }

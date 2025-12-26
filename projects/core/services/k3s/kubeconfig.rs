@@ -4,6 +4,7 @@ use crate::config::EnvConfig;
 use crate::services::tailscale;
 use crate::utils::exec::{CommandExecutor, Executor, local};
 use anyhow::{Context, Result};
+use yaml_rust::YamlLoader;
 
 /// Fetch kubeconfig content from environment variable (1Password) or primary node
 /// Returns the kubeconfig content as a string, with localhost/127.0.0.1 replaced with Tailscale address
@@ -181,4 +182,57 @@ pub fn get_kubeconfig(
     }
 
     Ok(())
+}
+
+/// Extract server URL and token from kubeconfig
+/// Returns (server_hostname, token)
+pub fn extract_server_and_token_from_kubeconfig(kubeconfig_content: &str) -> Result<(String, String)> {
+    // Clean up the kubeconfig content - remove trailing '=' characters that 1Password might add
+    // These appear on multi-line values and break YAML parsing
+    let cleaned_content = kubeconfig_content
+        .lines()
+        .map(|line| line.trim_end_matches('='))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Parse the kubeconfig YAML
+    let docs = YamlLoader::load_from_str(&cleaned_content)
+        .context("Failed to parse kubeconfig YAML")?;
+
+    let doc = docs
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("Empty kubeconfig"))?;
+
+    // Extract server URL from clusters[0].cluster.server
+    let server = doc["clusters"][0]["cluster"]["server"]
+        .as_str()
+        .ok_or_else(|| {
+            // Provide helpful debugging info
+            let clusters = &doc["clusters"];
+            anyhow::anyhow!(
+                "No server found in kubeconfig clusters. Clusters structure: {:?}",
+                clusters
+            )
+        })?;
+
+    // Extract token from users[0].user.token
+    let token = doc["users"][0]["user"]["token"]
+        .as_str()
+        .or_else(|| {
+            // Also try client-certificate-data if token is not present
+            doc["users"][0]["user"]["client-certificate-data"].as_str()
+        })
+        .ok_or_else(|| anyhow::anyhow!("No token or client-certificate-data found in kubeconfig users"))?
+        .to_string();
+
+    // Parse server URL to extract hostname (remove https:// and port)
+    let server_host = server
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .split(':')
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("Invalid server URL in kubeconfig"))?
+        .to_string();
+
+    Ok((server_host, token))
 }

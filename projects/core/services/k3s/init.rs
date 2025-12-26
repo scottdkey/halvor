@@ -12,13 +12,13 @@ use std::io::{self, Write};
 /// Returns the full node-token format (K<node-id>::server:<token>)
 fn check_existing_cluster<E: CommandExecutor>(exec: &E) -> Result<Option<String>> {
     // Check if K3s service is running - use sudo since systemctl requires it
-    // Use tee to capture output while showing it
+    // Capture output to temp file (don't use tee to avoid showing output to user)
     let status_tmp = format!("/tmp/halvor_k3s_status_check_{}", std::process::id());
     use crate::utils::ssh::shell_escape;
     let escaped_tmp = shell_escape(&status_tmp);
-    let status_cmd = format!("sudo systemctl is-active k3s 2>&1 | tee {} || sudo systemctl is-active k3s-agent 2>&1 | tee {} || echo 'inactive' | tee {}", escaped_tmp, escaped_tmp, escaped_tmp);
-    
-    let _ = exec.execute_shell_interactive(&status_cmd);
+    let status_cmd = format!("sudo systemctl is-active k3s 2>&1 > {} || sudo systemctl is-active k3s-agent 2>&1 > {} || echo 'inactive' > {}", escaped_tmp, escaped_tmp, escaped_tmp);
+
+    let _ = exec.execute_shell(&status_cmd);
     
     let k3s_running = exec
         .read_file(&status_tmp)
@@ -40,9 +40,9 @@ fn check_existing_cluster<E: CommandExecutor>(exec: &E) -> Result<Option<String>
     // Use sudo to check since the file is owned by root
     let token_check_tmp = format!("/tmp/halvor_k3s_token_check_{}", std::process::id());
     let escaped_token_tmp = shell_escape(&token_check_tmp);
-    let token_check_cmd = format!("sudo test -f /var/lib/rancher/k3s/server/node-token 2>&1 && echo 'exists' | tee {} || echo 'not_exists' | tee {}", escaped_token_tmp, escaped_token_tmp);
-    
-    let _ = exec.execute_shell_interactive(&token_check_cmd);
+    let token_check_cmd = format!("sudo test -f /var/lib/rancher/k3s/server/node-token 2>&1 && echo 'exists' > {} || echo 'not_exists' > {}", escaped_token_tmp, escaped_token_tmp);
+
+    let _ = exec.execute_shell(&token_check_cmd);
     
     let has_node_token = exec
         .read_file(&token_check_tmp)

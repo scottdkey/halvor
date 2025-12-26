@@ -26,12 +26,17 @@ pub async fn dev_cli() -> Result<()> {
 
     // Run cargo watch to rebuild on changes
     println!("🔄 Watching for changes... (Press Ctrl+C to stop)");
-    println!("💡 The CLI will automatically rebuild and run when you make changes");
+    println!("💡 The CLI will automatically rebuild when you make changes");
+    println!("📦 Building to: target/release/halvor");
 
     // Note: cargo watch will run until interrupted (Ctrl+C)
     // We use spawn() and wait so it runs in the foreground
     let mut child = Command::new("cargo")
-        .args(["watch", "-x", "run --bin halvor"])
+        .args([
+            "watch",
+            "-x",
+            "build --release --bin halvor --manifest-path projects/core/Cargo.toml",
+        ])
         .spawn()
         .context("Failed to start cargo watch. Make sure cargo-watch is installed: cargo install cargo-watch")?;
 

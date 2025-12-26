@@ -32,7 +32,7 @@ pub fn setup_agent_service<E: CommandExecutor>(exec: &E, web_port: Option<u16>) 
             return Ok(());
         } else {
             println!("⚠️  Service is configured but not running, attempting to start...");
-            let start_result = exec.execute_shell("systemctl start halvor-agent.service");
+            let start_result = exec.execute_shell("sudo systemctl start halvor-agent.service");
             if start_result.is_ok() && start_result.unwrap().status.success() {
                 println!("✓ Started halvor agent service");
                 return Ok(());
@@ -148,15 +148,15 @@ WantedBy=multi-user.target
     println!("✓ Service file created: {}", service_file);
 
     // Reload systemd
-    exec.execute_shell("systemctl daemon-reload")
+    exec.execute_shell("sudo systemctl daemon-reload")
         .context("Failed to reload systemd")?;
 
     // Enable service
-    exec.execute_shell("systemctl enable halvor-agent.service")
+    exec.execute_shell("sudo systemctl enable halvor-agent.service")
         .context("Failed to enable halvor-agent service")?;
 
     // Start service
-    exec.execute_shell("systemctl start halvor-agent.service")
+    exec.execute_shell("sudo systemctl start halvor-agent.service")
         .context("Failed to start halvor-agent service")?;
 
     println!("✓ Halvor agent service enabled and started");

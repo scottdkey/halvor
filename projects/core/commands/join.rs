@@ -41,6 +41,14 @@ pub fn handle_join(
         // Default to localhost (when running on the target machine itself)
         "localhost"
     };
+
+    // If join_target is "localhost", resolve it to the actual hostname for better logging/UX
+    // This makes messages like "Joining baulder to cluster" instead of "Joining localhost"
+    let display_hostname = if join_target == "localhost" {
+        crate::config::service::get_current_hostname().unwrap_or_else(|_| "localhost".to_string())
+    } else {
+        join_target.to_string()
+    };
     
     // Validate join target is in config (unless it's localhost)
     if join_target != "localhost" {
@@ -57,8 +65,9 @@ pub fn handle_join(
     
     let target_host = join_target; // For auto-detection logic
 
-    // Auto-detect server if not provided
+    // Get server address from argument or KUBE_CONFIG
     let server_addr = if let Some(s) = server {
+        // Server provided via argument
         // Validate server is in config or is a valid Tailscale hostname/IP
         if !s.ends_with(".ts.net") && !s.parse::<std::net::IpAddr>().is_ok() {
             // Not a Tailscale hostname or IP, check if it's in config
@@ -68,23 +77,30 @@ pub fn handle_join(
         }
         s
     } else {
-        auto_detect_primary_node(&config, target_host)?
+        // No server provided - try to extract from KUBE_CONFIG or auto-detect
+        if let Ok(kubeconfig_content) = std::env::var("KUBE_CONFIG") {
+            println!("Extracting cluster server from KUBE_CONFIG environment variable...");
+            let (extracted_server, _) = crate::services::k3s::kubeconfig::extract_server_and_token_from_kubeconfig(&kubeconfig_content)
+                .context("Failed to extract server from KUBE_CONFIG. Ensure KUBE_CONFIG is set in 1Password.")?;
+            println!("Using cluster server from kubeconfig: {}", extracted_server);
+            extracted_server
+        } else {
+            // Try to auto-detect from local cluster
+            auto_detect_primary_node(&config, target_host)?
+        }
     };
 
-    // If token not provided, get it from environment or server
+    // Get join token - try argument, then K3S_TOKEN env var, then fetch from server
     let cluster_token = if let Some(t) = token {
         t
+    } else if let Ok(env_token) = std::env::var("K3S_TOKEN") {
+        println!("Using cluster join token from K3S_TOKEN environment variable");
+        env_token
     } else {
-        // Try environment variable first (from 1Password)
-        if let Ok(env_token) = std::env::var("K3S_TOKEN") {
-            println!("Using cluster token from K3S_TOKEN environment variable");
-            env_token
-        } else {
-            // Fallback to getting from server node
-            println!("Fetching cluster token from {}...", server_addr);
-            let (_, fetched_token) = k3s::get_cluster_join_info(&server_addr, &config)?;
-            fetched_token
-        }
+        // Fetch token from server node
+        println!("Fetching cluster join token from {}...", server_addr);
+        let (_, fetched_token) = k3s::get_cluster_join_info(&server_addr, &config)?;
+        fetched_token
     };
 
     k3s::join_cluster(join_target, &server_addr, &cluster_token, control_plane, &config)?;
