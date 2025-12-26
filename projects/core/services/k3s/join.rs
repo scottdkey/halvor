@@ -506,8 +506,8 @@ _sudo() {
     exec.write_file(remote_script_path, patched_script.as_bytes())
         .context("Failed to write K3s install script to remote host")?;
 
-    // Make script executable using execute_simple (same approach as Helm)
-    let chmod_output = exec.execute_simple("chmod", &["+x", remote_script_path])?;
+    // Make script executable
+    let chmod_output = exec.execute_shell(&format!("chmod +x {}", remote_script_path))?;
     if !chmod_output.status.success() {
         anyhow::bail!(
             "Failed to make K3s install script executable: {}",
@@ -615,7 +615,7 @@ _sudo() {
             // Try checking k3s service first, then k3s-agent
             let service_status = {
                 // Try k3s service first
-                let k3s_check = exec.execute_simple("systemctl", &["is-active", "k3s"]).ok();
+                let k3s_check = exec.execute_shell("systemctl is-active k3s 2>/dev/null || echo inactive").ok();
                 let is_k3s_active = k3s_check
                     .map(|out| {
                         out.status.success()
@@ -628,7 +628,7 @@ _sudo() {
                 } else {
                     // Try k3s-agent
                     let agent_check = exec
-                        .execute_simple("systemctl", &["is-active", "k3s-agent"])
+                        .execute_shell("systemctl is-active k3s-agent 2>/dev/null || echo inactive")
                         .ok();
                     agent_check
                         .and_then(|out| {

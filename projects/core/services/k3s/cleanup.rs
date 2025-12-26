@@ -118,32 +118,51 @@ pub fn cleanup_existing_k3s_with_prompt<E: CommandExecutor>(
         }
     }
 
-    // Clean up K3s data directories to ensure fresh start
+    // Clean up K3s completely to ensure fresh start
     // This is critical to avoid "bootstrap data already found and encrypted with different token" errors
-    println!("Cleaning up K3s data directories...");
-    
-    // Remove SMB failover service dependency if it exists (we no longer use it)
-    println!("Removing SMB failover service dependency...");
-    let _ = exec.execute_shell("sudo rm -rf /etc/systemd/system/k3s.service.d/20-smb-failover.conf 2>/dev/null || true");
-    let _ = exec.execute_shell("sudo systemctl daemon-reload 2>/dev/null || true");
-    
-    // Remove all K3s data directories thoroughly
+    println!("Cleaning up K3s completely...");
+
+    // First, try to use the official K3s uninstall script if it exists
+    let uninstall_result = exec.execute_shell("test -f /usr/local/bin/k3s-uninstall.sh && echo exists || echo missing");
+    let has_uninstall_script = uninstall_result
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("exists"))
+        .unwrap_or(false);
+
+    if has_uninstall_script {
+        println!("  Using official K3s uninstall script...");
+        let _ = exec.execute_shell_interactive("sudo /usr/local/bin/k3s-uninstall.sh 2>&1 || true");
+    } else {
+        println!("  No uninstall script found, manually cleaning up...");
+    }
+
+    // Ensure everything is cleaned up (even if uninstall script ran)
     let cleanup_cmd = r#"
         sudo systemctl stop k3s.service 2>/dev/null || true
         sudo systemctl stop k3s-agent.service 2>/dev/null || true
-        sudo systemctl stop k3s-smb-failover.service 2>/dev/null || true
         sudo pkill -9 k3s 2>/dev/null || true
         sudo pkill -9 containerd-shim 2>/dev/null || true
         sudo pkill -9 containerd 2>/dev/null || true
         sleep 3
-        # Clean up containerd namespaces and processes more aggressively
+        # Remove K3s binaries and scripts
+        sudo rm -f /usr/local/bin/k3s 2>/dev/null || true
+        sudo rm -f /usr/local/bin/k3s-killall.sh 2>/dev/null || true
+        sudo rm -f /usr/local/bin/k3s-uninstall.sh 2>/dev/null || true
+        sudo rm -f /usr/local/bin/k3s-agent-uninstall.sh 2>/dev/null || true
+        # Remove systemd service files
+        sudo rm -f /etc/systemd/system/k3s.service 2>/dev/null || true
+        sudo rm -f /etc/systemd/system/k3s-agent.service 2>/dev/null || true
+        sudo rm -rf /etc/systemd/system/k3s.service.d 2>/dev/null || true
+        sudo systemctl daemon-reload 2>/dev/null || true
+        # Clean up containerd namespaces and processes
         sudo find /run/containerd -name '*k3s*' -type f -delete 2>/dev/null || true
         sudo find /run/containerd -name '*k3s*' -type d -exec rm -rf {} + 2>/dev/null || true
+        # Remove K3s data directories
         sudo rm -rf /var/lib/rancher/k3s 2>/dev/null || true
         sudo rm -rf /etc/rancher/k3s 2>/dev/null || true
         sudo rm -rf /var/lib/rancher/k3s-storage 2>/dev/null || true
         sudo rm -rf /opt/k3s 2>/dev/null || true
-        # Also clean up any containerd data that might have K3s references
+        # Clean up any containerd data that might have K3s references
         sudo find /var/lib/containerd -name '*k3s*' -type d -exec rm -rf {} + 2>/dev/null || true
         # Clean up cgroup leftovers
         sudo systemctl reset-failed k3s.service 2>/dev/null || true
@@ -153,7 +172,7 @@ pub fn cleanup_existing_k3s_with_prompt<E: CommandExecutor>(
 
     // Wait a moment for cleanup to complete
     std::thread::sleep(std::time::Duration::from_secs(3));
-    println!("✓ Previous installation removed - ready for reinitialization");
+    println!("✓ Previous installation completely removed - ready for reinitialization");
 
     Ok(())
 }

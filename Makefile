@@ -50,8 +50,9 @@ install: install-rust install-rust-targets install-rust-deps install-swift insta
 install-cli:
 	@echo "Building and installing CLI to system..."
 	@cargo build --release --bin halvor --manifest-path projects/core/Cargo.toml
-	@cargo install --path projects/core --bin halvor --force
-	@echo "✓ CLI installed to system (available as 'halvor')"
+	@mkdir -p ~/.cargo/bin
+	@cp -f target/release/halvor ~/.cargo/bin/halvor
+	@echo "✓ CLI installed to ~/.cargo/bin/halvor (available as 'halvor')"
 
 # Install Rust toolchain
 install-rust:

@@ -150,28 +150,6 @@ impl SshConnection {
         args
     }
 
-    pub fn execute_simple(&self, program: &str, args: &[&str]) -> Result<Output> {
-        let mut ssh_args = self.build_ssh_args();
-
-        // Execute command directly without shell
-        ssh_args.push(program.to_string());
-        for arg in args {
-            ssh_args.push(arg.to_string());
-        }
-
-        let output = Command::new("ssh")
-            .args(&ssh_args)
-            .stdout(Stdio::inherit()) // Show stdout in real-time - ALL output must be visible
-            .stderr(Stdio::inherit()) // Show stderr so authentication prompts (like Tailscale SSH) are visible
-            .stdin(Stdio::null())
-            .output()
-            .with_context(|| format!("Failed to execute command: {}", program))?;
-
-        // Note: stdout/stderr are shown in real-time via inherit(), but we still get exit status
-        // If you need to parse output, use execute_shell_interactive or capture to a file
-        Ok(output)
-    }
-
     pub fn execute_shell(&self, command: &str) -> Result<Output> {
         // If command contains sudo and we have a password, inject it
         let final_command = if command.contains("sudo ") && self.sudo_password.is_some() {
@@ -208,14 +186,12 @@ impl SshConnection {
 
         let output = Command::new("ssh")
             .args(&ssh_args)
-            .stdout(Stdio::inherit()) // Show stdout in real-time - ALL output must be visible
-            .stderr(Stdio::inherit()) // Show stderr so authentication prompts (like Tailscale SSH) are visible
+            .stdout(Stdio::piped()) // Capture output so it can be parsed
+            .stderr(Stdio::piped())
             .stdin(Stdio::null())
             .output()
             .with_context(|| format!("Failed to execute shell command"))?;
 
-        // Note: stdout/stderr are shown in real-time via inherit(), but we still get exit status
-        // If you need to parse output, use execute_shell_interactive or capture to a file
         Ok(output)
     }
 
@@ -366,13 +342,13 @@ impl SshConnection {
     }
 
     pub fn check_command_exists(&self, command: &str) -> Result<bool> {
-        let output = self.execute_simple("command", &["-v", command])?;
+        let output = self.execute_shell(&format!("command -v {}", command))?;
         Ok(output.status.success())
     }
 
     pub fn is_linux(&self) -> Result<bool> {
         // For remote, we still need to check via command
-        let output = self.execute_simple("uname", &[])?;
+        let output = self.execute_shell("uname")?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         Ok(stdout.trim() != "Darwin")
     }
@@ -385,7 +361,7 @@ impl SshConnection {
         if !output.status.success() {
             anyhow::bail!("Failed to read file: {}", path);
         }
-        // Read from the captured temp file using execute_simple with piped output
+        // Read from the captured temp file with piped output
         // (this is an internal operation, so we can use piped for the temp file read)
         let mut ssh_args = self.build_ssh_args();
         ssh_args.push("cat".to_string());
@@ -479,7 +455,7 @@ impl SshConnection {
     }
 
     pub fn mkdir_p(&self, path: &str) -> Result<()> {
-        let output = self.execute_simple("mkdir", &["-p", path])?;
+        let output = self.execute_shell(&format!("mkdir -p {}", path))?;
         if !output.status.success() {
             anyhow::bail!("Failed to create directory: {}", path);
         }
@@ -487,12 +463,12 @@ impl SshConnection {
     }
 
     pub fn file_exists(&self, path: &str) -> Result<bool> {
-        let output = self.execute_simple("test", &["-f", path])?;
+        let output = self.execute_shell(&format!("test -f {}", path))?;
         Ok(output.status.success())
     }
 
     pub fn list_directory(&self, path: &str) -> Result<Vec<String>> {
-        let output = self.execute_simple("ls", &["-1", path])?;
+        let output = self.execute_shell(&format!("ls -1 {}", path))?;
         if !output.status.success() {
             return Ok(Vec::new());
         }
@@ -505,13 +481,13 @@ impl SshConnection {
     }
 
     pub fn is_directory(&self, path: &str) -> Result<bool> {
-        let output = self.execute_simple("test", &["-d", path])?;
+        let output = self.execute_shell(&format!("test -d {}", path))?;
         Ok(output.status.success())
     }
 
     #[cfg(unix)]
     pub fn get_uid(&self) -> Result<u32> {
-        let output = self.execute_simple("id", &["-u"])?;
+        let output = self.execute_shell("id -u")?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         stdout
             .trim()
@@ -521,7 +497,7 @@ impl SshConnection {
 
     #[cfg(unix)]
     pub fn get_gid(&self) -> Result<u32> {
-        let output = self.execute_simple("id", &["-g"])?;
+        let output = self.execute_shell("id -g")?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         stdout
             .trim()

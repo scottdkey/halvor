@@ -10,7 +10,8 @@ use anyhow::{Context, Result};
 /// 1. Tailscale is installed and running
 /// 2. K3s service depends on Tailscale
 /// 3. K3s uses Tailscale IP for cluster communication
-pub fn configure_tailscale_for_k3s(hostname: &str, config: &EnvConfig) -> Result<()> {
+#[allow(dead_code)]
+fn configure_tailscale_for_k3s(hostname: &str, config: &EnvConfig) -> Result<()> {
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("Configuring Tailscale integration for K3s cluster");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");

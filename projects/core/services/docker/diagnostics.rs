@@ -28,7 +28,7 @@ pub fn diagnose_docker<E: CommandExecutor>(exec: &E, hostname: &str) -> Result<(
 fn check_docker_installation<E: CommandExecutor>(exec: &E) -> Result<()> {
     println!("[1/8] Checking if Docker is installed...");
     if exec.check_command_exists("docker")? {
-        let version_output = exec.execute_simple("docker", &["--version"]);
+        let version_output = exec.execute_shell("docker --version");
         if let Ok(output) = version_output {
             let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
             println!("   ✓ Docker installed: {}", version);
@@ -49,7 +49,7 @@ fn check_docker_installation<E: CommandExecutor>(exec: &E) -> Result<()> {
 
 fn check_daemon_accessibility<E: CommandExecutor>(exec: &E) -> Result<()> {
     println!("[2/8] Checking Docker daemon accessibility...");
-    let docker_info = exec.execute_simple("docker", &["info"]);
+    let docker_info = exec.execute_shell("docker info");
     match docker_info {
         Ok(output) if output.status.success() => {
             println!("   ✓ Docker daemon is accessible");
@@ -63,7 +63,7 @@ fn check_daemon_accessibility<E: CommandExecutor>(exec: &E) -> Result<()> {
     }
 
     // Try with sudo
-    let sudo_docker_info = exec.execute_simple("sudo", &["docker", "info"]);
+    let sudo_docker_info = exec.execute_shell("sudo docker info");
     match sudo_docker_info {
         Ok(output) if output.status.success() => {
             println!("   ⚠ Docker works with sudo - permission issue detected");
@@ -78,7 +78,7 @@ fn check_daemon_accessibility<E: CommandExecutor>(exec: &E) -> Result<()> {
 fn check_service_status<E: CommandExecutor>(exec: &E) -> Result<()> {
     println!("[3/8] Checking Docker service status...");
     if exec.check_command_exists("systemctl")? {
-        let status_output = exec.execute_simple("systemctl", &["is-active", "docker"]);
+        let status_output = exec.execute_shell("systemctl is-active docker 2>/dev/null || echo inactive");
         if let Ok(output) = status_output {
             let status = String::from_utf8_lossy(&output.stdout).trim().to_string();
             match status.as_str() {
@@ -91,7 +91,7 @@ fn check_service_status<E: CommandExecutor>(exec: &E) -> Result<()> {
 
         // Get detailed status
         let detailed_status =
-            exec.execute_simple("systemctl", &["status", "docker", "--no-pager", "-l"]);
+            exec.execute_shell("systemctl status docker --no-pager -l");
         if let Ok(output) = detailed_status {
             let status_text = String::from_utf8_lossy(&output.stdout);
             // Look for key indicators
@@ -121,9 +121,8 @@ fn check_service_status<E: CommandExecutor>(exec: &E) -> Result<()> {
 fn check_service_logs<E: CommandExecutor>(exec: &E) -> Result<()> {
     println!("[4/8] Checking Docker service logs (last 20 lines)...");
     if exec.check_command_exists("journalctl")? {
-        let log_output = exec.execute_simple(
-            "journalctl",
-            &["-u", "docker.service", "-n", "20", "--no-pager"],
+        let log_output = exec.execute_shell(
+            "journalctl -u docker.service -n 20 --no-pager"
         );
         if let Ok(output) = log_output {
             let logs = String::from_utf8_lossy(&output.stdout);
@@ -189,13 +188,13 @@ fn check_socket_permissions<E: CommandExecutor>(exec: &E) -> Result<()> {
     if exec.file_exists(socket_path)? {
         println!("   ✓ Docker socket exists");
         // Try to get permissions (this might require sudo)
-        let stat_output = exec.execute_simple("stat", &["-c", "%a %U:%G", socket_path]);
+        let stat_output = exec.execute_shell(&format!("stat -c '%a %U:%G' {}", socket_path));
         if let Ok(output) = stat_output {
             let perms = String::from_utf8_lossy(&output.stdout).trim().to_string();
             println!("   → Socket permissions: {}", perms);
         } else {
             // Try with sudo
-            let sudo_stat = exec.execute_simple("sudo", &["stat", "-c", "%a %U:%G", socket_path]);
+            let sudo_stat = exec.execute_shell(&format!("sudo stat -c '%a %U:%G' {}", socket_path));
             if let Ok(output) = sudo_stat {
                 let perms = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 println!("   → Socket permissions: {}", perms);
@@ -230,7 +229,7 @@ fn check_user_permissions<E: CommandExecutor>(exec: &E) -> Result<()> {
             }
         } else {
             // Fallback to groups command
-            let groups_output = exec.execute_simple("groups", &[])?;
+            let groups_output = exec.execute_shell("groups")?;
             let groups = String::from_utf8_lossy(&groups_output.stdout);
             if groups.contains("docker") {
                 println!("   ✓ User is in docker group");
@@ -249,7 +248,7 @@ fn check_containerd<E: CommandExecutor>(exec: &E) -> Result<()> {
         println!("   ✓ containerd is installed");
 
         if exec.check_command_exists("systemctl")? {
-            let ctrd_status = exec.execute_simple("systemctl", &["is-active", "containerd"]);
+            let ctrd_status = exec.execute_shell("systemctl is-active containerd 2>/dev/null || echo inactive");
             if let Ok(output) = ctrd_status {
                 let status = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 match status.as_str() {
@@ -290,9 +289,8 @@ fn check_network_controller_errors<E: CommandExecutor>(exec: &E) -> Result<()> {
     println!();
 
     if exec.check_command_exists("journalctl")? {
-        let log_output = exec.execute_simple(
-            "journalctl",
-            &["-u", "docker.service", "-n", "50", "--no-pager"],
+        let log_output = exec.execute_shell(
+            "journalctl -u docker.service -n 50 --no-pager"
         );
         if let Ok(output) = log_output {
             let logs = String::from_utf8_lossy(&output.stdout);

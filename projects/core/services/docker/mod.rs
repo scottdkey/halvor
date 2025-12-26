@@ -15,7 +15,7 @@ pub fn is_docker_installed<E: CommandExecutor>(exec: &E) -> bool {
 /// Check if Docker daemon is running and start it if needed
 pub fn ensure_docker_running<E: CommandExecutor>(exec: &E) -> Result<()> {
     // Try to run a simple docker command to check if daemon is accessible
-    let check_output = exec.execute_simple("docker", &["info"]);
+    let check_output = exec.execute_shell("docker info");
 
     if let Ok(output) = check_output {
         if output.status.success() {
@@ -28,7 +28,7 @@ pub fn ensure_docker_running<E: CommandExecutor>(exec: &E) -> Result<()> {
 
     if exec.check_command_exists("systemctl")? {
         // Check if docker service exists
-        let status_output = exec.execute_simple("systemctl", &["is-active", "docker"]);
+        let status_output = exec.execute_shell("systemctl is-active docker 2>/dev/null || echo inactive");
         if let Ok(output) = status_output {
             let status = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if status == "inactive" || status == "failed" {
@@ -50,7 +50,7 @@ pub fn ensure_docker_running<E: CommandExecutor>(exec: &E) -> Result<()> {
     }
 
     // Verify Docker is now accessible
-    let verify_output = exec.execute_simple("docker", &["info"]);
+    let verify_output = exec.execute_shell("docker info");
     match verify_output {
         Ok(output) if output.status.success() => {
             println!("✓ Docker daemon is running");
@@ -59,7 +59,7 @@ pub fn ensure_docker_running<E: CommandExecutor>(exec: &E) -> Result<()> {
         _ => {
             // If still not accessible, it might be a permissions issue
             // Try with sudo to verify daemon is running
-            let sudo_check = exec.execute_simple("sudo", &["docker", "info"]);
+            let sudo_check = exec.execute_shell("sudo docker info");
             if let Ok(output) = sudo_check {
                 if output.status.success() {
                     println!("⚠ Docker daemon is running but user doesn't have access");
@@ -182,7 +182,7 @@ fn install_debian<E: CommandExecutor>(exec: &E) -> Result<()> {
     };
 
     // Get architecture
-    let arch_output = exec.execute_simple("dpkg", &["--print-architecture"])?;
+    let arch_output = exec.execute_shell("dpkg --print-architecture")?;
     let arch = String::from_utf8_lossy(&arch_output.stdout)
         .trim()
         .to_string();
@@ -228,13 +228,13 @@ fn install_ubuntu<E: CommandExecutor>(exec: &E) -> Result<()> {
     install_gpg_key(exec, "https://download.docker.com/linux/ubuntu/gpg")?;
 
     // Get codename
-    let codename_output = exec.execute_simple("lsb_release", &["-cs"])?;
+    let codename_output = exec.execute_shell("lsb_release -cs")?;
     let codename = String::from_utf8_lossy(&codename_output.stdout)
         .trim()
         .to_string();
 
     // Get architecture
-    let arch_output = exec.execute_simple("dpkg", &["--print-architecture"])?;
+    let arch_output = exec.execute_shell("dpkg --print-architecture")?;
     let arch = String::from_utf8_lossy(&arch_output.stdout)
         .trim()
         .to_string();
@@ -374,7 +374,7 @@ pub fn configure_permissions<E: CommandExecutor>(exec: &E) -> Result<()> {
                 .any(|line| line.starts_with("docker:") && line.contains(&username))
         } else {
             // Fallback to groups command if file read fails
-            let groups_output = exec.execute_simple("groups", &[])?;
+            let groups_output = exec.execute_shell("groups")?;
             let groups = String::from_utf8_lossy(&groups_output.stdout);
             groups.contains("docker")
         }
@@ -382,7 +382,7 @@ pub fn configure_permissions<E: CommandExecutor>(exec: &E) -> Result<()> {
     #[cfg(not(unix))]
     let in_group = {
         // On non-Unix, use groups command
-        let groups_output = exec.execute_simple("groups", &[])?;
+        let groups_output = exec.execute_shell("groups")?;
         let groups = String::from_utf8_lossy(&groups_output.stdout);
         groups.contains("docker")
     };
@@ -405,7 +405,7 @@ pub fn configure_permissions<E: CommandExecutor>(exec: &E) -> Result<()> {
     // If user was just added, they might need to use 'newgrp docker' or restart session
     // But we can try to verify with a simple command
     let test_output =
-        exec.execute_simple("docker", &["version", "--format", "{{.Server.Version}}"]);
+        exec.execute_shell("docker version --format '{{.Server.Version}}'");
     match test_output {
         Ok(output) if output.status.success() => {
             let _version = String::from_utf8_lossy(&output.stdout);
@@ -547,7 +547,7 @@ pub fn configure_ipv6<E: CommandExecutor>(exec: &E) -> Result<()> {
     std::thread::sleep(std::time::Duration::from_secs(3));
 
     // Verify Docker is running and IPv6 is enabled
-    let verify_output = exec.execute_simple("docker", &["info"]);
+    let verify_output = exec.execute_shell("docker info");
     match verify_output {
         Ok(output) => {
             let docker_info = String::from_utf8_lossy(&output.stdout);
@@ -606,7 +606,7 @@ fn update_daemon_json_rust<E: CommandExecutor>(exec: &E, ipv6_subnet: &str) -> R
 /// Stop all running Docker containers
 pub fn stop_all_containers<E: CommandExecutor>(exec: &E) -> Result<Vec<String>> {
     // Get running containers
-    let running_output = exec.execute_simple("docker", &["ps", "-q"])?;
+    let running_output = exec.execute_shell("docker ps -q")?;
     let running_containers = String::from_utf8_lossy(&running_output.stdout);
     let running_containers: Vec<&str> = running_containers
         .lines()
@@ -650,7 +650,7 @@ pub fn start_containers<E: CommandExecutor>(exec: &E, container_ids: &[String]) 
 /// Get all Docker volumes
 pub fn list_volumes<E: CommandExecutor>(exec: &E) -> Result<Vec<String>> {
     let volumes_output =
-        exec.execute_simple("docker", &["volume", "ls", "--format", "{{.Name}}"])?;
+        exec.execute_shell("docker volume ls --format '{{.Name}}'")?;
     let volumes_str = String::from_utf8_lossy(&volumes_output.stdout);
     let volumes: Vec<String> = volumes_str
         .lines()
@@ -687,10 +687,10 @@ pub fn backup_volume<E: CommandExecutor>(exec: &E, volume: &str, backup_dir: &st
 /// Restore a Docker volume
 pub fn restore_volume<E: CommandExecutor>(exec: &E, volume: &str, backup_dir: &str) -> Result<()> {
     // Check if volume exists, create if not
-    let inspect_output = exec.execute_simple("docker", &["volume", "inspect", volume])?;
+    let inspect_output = exec.execute_shell(&format!("docker volume inspect {}", volume))?;
     if !inspect_output.status.success() {
         // Volume doesn't exist, create it
-        let create_output = exec.execute_simple("docker", &["volume", "create", volume])?;
+        let create_output = exec.execute_shell(&format!("docker volume create {}", volume))?;
         if !create_output.status.success() {
             let sudo_create =
                 exec.execute_shell(&format!("sudo docker volume create {}", volume))?;
@@ -742,7 +742,7 @@ pub fn get_bind_mounts<E: CommandExecutor>(exec: &E, container: &str) -> Result<
 /// Get all containers
 pub fn list_containers<E: CommandExecutor>(exec: &E) -> Result<Vec<String>> {
     let containers_output =
-        exec.execute_simple("docker", &["ps", "-a", "--format", "{{.Names}}"])?;
+        exec.execute_shell("docker ps -a --format '{{.Names}}'")?;
     let containers_str = String::from_utf8_lossy(&containers_output.stdout);
     let containers: Vec<String> = containers_str
         .lines()
@@ -754,15 +754,8 @@ pub fn list_containers<E: CommandExecutor>(exec: &E) -> Result<Vec<String>> {
 
 /// Check if a container is running
 pub fn is_container_running<E: CommandExecutor>(exec: &E, container_name: &str) -> Result<bool> {
-    let output = exec.execute_simple(
-        "docker",
-        &[
-            "ps",
-            "--filter",
-            &format!("name={}", container_name),
-            "--format",
-            "{{.Names}}",
-        ],
+    let output = exec.execute_shell(
+        &format!("docker ps --filter 'name={}' --format '{{{{.Names}}}}'", container_name)
     )?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(stdout.trim().contains(container_name))
@@ -773,7 +766,7 @@ pub fn is_container_running<E: CommandExecutor>(exec: &E, container_name: &str) 
 pub fn get_compose_command<E: CommandExecutor>(exec: &E) -> Result<String> {
     // First try "docker compose version" to check if the plugin is available
     if exec.check_command_exists("docker")? {
-        let output = exec.execute_simple("docker", &["compose", "version"]);
+        let output = exec.execute_shell("docker compose version");
         if let Ok(output) = output {
             if output.status.success() {
                 return Ok("docker compose".to_string());
@@ -791,10 +784,10 @@ pub fn get_compose_command<E: CommandExecutor>(exec: &E) -> Result<String> {
 
 /// Stop a single container by name
 pub fn stop_container<E: CommandExecutor>(exec: &E, container_name: &str) -> Result<()> {
-    let output = exec.execute_simple("docker", &["stop", container_name])?;
+    let output = exec.execute_shell(&format!("docker stop {}", container_name))?;
     if !output.status.success() {
         // Try with sudo
-        let sudo_output = exec.execute_simple("sudo", &["docker", "stop", container_name])?;
+        let sudo_output = exec.execute_shell(&format!("sudo docker stop {}", container_name))?;
         if !sudo_output.status.success() {
             anyhow::bail!("Failed to stop container: {}", container_name);
         }
@@ -804,10 +797,10 @@ pub fn stop_container<E: CommandExecutor>(exec: &E, container_name: &str) -> Res
 
 /// Remove a single container by name
 pub fn remove_container<E: CommandExecutor>(exec: &E, container_name: &str) -> Result<()> {
-    let output = exec.execute_simple("docker", &["rm", container_name])?;
+    let output = exec.execute_shell(&format!("docker rm {}", container_name))?;
     if !output.status.success() {
         // Try with sudo
-        let sudo_output = exec.execute_simple("sudo", &["docker", "rm", container_name])?;
+        let sudo_output = exec.execute_shell(&format!("sudo docker rm {}", container_name))?;
         if !sudo_output.status.success() {
             anyhow::bail!("Failed to remove container: {}", container_name);
         }

@@ -16,6 +16,7 @@ use crate::utils::ssh;
 use anyhow::{Context, Result};
 
 /// Get target host (prefer Tailscale hostname, fallback to IP) from config
+#[allow(dead_code)]
 fn get_target_host(hostname: &str, config: &EnvConfig) -> Result<String> {
     let actual_hostname = crate::config::service::find_hostname_in_config(hostname, config)
         .ok_or_else(|| anyhow::anyhow!("Host '{}' not found in config", hostname))?;
@@ -49,6 +50,7 @@ fn get_target_host(hostname: &str, config: &EnvConfig) -> Result<String> {
 }
 
 /// Check sudo access on remote host
+#[allow(dead_code)]
 fn check_sudo_access<E: CommandExecutor>(exec: &E, is_remote: bool) -> Result<()> {
     if !exec.is_linux()? {
         println!("✓ macOS detected (Docker Desktop handles permissions)");
@@ -70,6 +72,7 @@ fn check_sudo_access<E: CommandExecutor>(exec: &E, is_remote: bool) -> Result<()
 }
 
 /// Check if SSH key authentication already works over Tailscale
+#[allow(dead_code)]
 fn check_ssh_key_auth(hostname: &str, config: &EnvConfig) -> Result<bool> {
     let exec = Executor::new(hostname, config)?;
     if exec.is_local() {
@@ -118,6 +121,7 @@ fn check_ssh_key_auth(hostname: &str, config: &EnvConfig) -> Result<bool> {
 }
 
 /// Provision a single node (SSH keys, sudo, Tailscale, SMB)
+#[allow(dead_code)]
 fn provision_node(
     hostname: &str,
     config: &EnvConfig,
@@ -185,6 +189,7 @@ fn provision_node(
 }
 
 /// Complete cluster setup
+#[allow(dead_code)]
 pub fn setup_cluster(
     primary: &str,
     additional_nodes: &[&str],

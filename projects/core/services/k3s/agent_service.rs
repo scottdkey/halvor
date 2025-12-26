@@ -167,6 +167,7 @@ WantedBy=multi-user.target
 }
 
 /// Check if halvor agent service is running
+#[allow(dead_code)]
 pub fn is_agent_service_running<E: CommandExecutor>(exec: &E) -> Result<bool> {
     let output = exec
         .execute_shell("systemctl is-active halvor-agent.service 2>/dev/null || echo inactive")?;

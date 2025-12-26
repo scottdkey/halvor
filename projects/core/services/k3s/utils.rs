@@ -6,7 +6,7 @@ use rand::RngCore;
 /// Generate a random hex token (64 characters = 32 bytes)
 /// Uses native Rust rand crate for reliable cross-platform token generation
 pub fn generate_cluster_token() -> Result<String> {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut token = String::with_capacity(64);
     for _ in 0..64 {
         let mut bytes = [0u8; 1];

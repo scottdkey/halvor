@@ -188,8 +188,8 @@ pub mod local {
         let output = Command::new("sh")
             .arg("-c")
             .arg(command)
-            .stdout(Stdio::inherit()) // Show stdout in real-time - ALL output must be visible
-            .stderr(Stdio::inherit()) // Show stderr in real-time - ALL output must be visible
+            .stdout(Stdio::piped()) // Capture output so it can be parsed
+            .stderr(Stdio::piped())
             .stdin(Stdio::null())
             .output()
             .with_context(|| format!("Failed to execute shell command: {}", command))?;
@@ -199,9 +199,6 @@ pub mod local {
 
 /// Trait for executing commands either locally or remotely
 pub trait CommandExecutor {
-    /// Execute a simple command
-    fn execute_simple(&self, program: &str, args: &[&str]) -> Result<Output>;
-
     /// Execute a shell command
     fn execute_shell(&self, command: &str) -> Result<Output>;
 
@@ -677,60 +674,6 @@ impl Executor {
 }
 
 impl CommandExecutor for Executor {
-    fn execute_simple(&self, program: &str, args: &[&str]) -> Result<Output> {
-        match self {
-            Executor::Local => local::execute(program, args),
-            Executor::Agent { client, .. } => {
-                // Convert args to Vec<String> for agent
-                let args_vec: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-                let output = client.execute_command(
-                    program,
-                    &args_vec.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-                )?;
-                // Convert agent output to Output format
-                // Create a successful exit status in a cross-platform way
-                let exit_status = {
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::process::ExitStatusExt;
-                        std::process::ExitStatus::from_raw(0)
-                    }
-                    #[cfg(windows)]
-                    {
-                        // On Windows, create exit status by running a command that succeeds
-                        std::process::Command::new("cmd")
-                            .args(["/C", "exit", "0"])
-                            .status()
-                            .unwrap_or_else(|_| {
-                                // If cmd fails, try to create via a successful process
-                                std::process::Command::new("echo")
-                                    .status()
-                                    .unwrap_or_else(|_| {
-                                        // Last resort: use a dummy command
-                                        let mut cmd = std::process::Command::new("cmd");
-                                        cmd.args(["/C", "echo", "ok"]);
-                                        cmd.status().unwrap()
-                                    })
-                            })
-                    }
-                    #[cfg(not(any(unix, windows)))]
-                    {
-                        // Fallback: use Command to get a successful exit status
-                        std::process::Command::new("true").status().unwrap_or_else(|_| {
-                            std::process::Command::new("cmd").args(["/C", "exit", "0"]).status().unwrap()
-                        })
-                    }
-                };
-                Ok(Output {
-                    status: exit_status,
-                    stdout: output.into_bytes(),
-                    stderr: Vec::new(),
-                })
-            }
-            Executor::Remote(exec) => exec.execute_simple(program, args),
-        }
-    }
-
     fn execute_shell(&self, command: &str) -> Result<Output> {
         match self {
             Executor::Local => local::execute_shell(command),
@@ -1121,10 +1064,6 @@ impl CommandExecutor for Executor {
 
 /// Remote command executor (SSH) - SshConnection already implements CommandExecutor
 impl CommandExecutor for SshConnection {
-    fn execute_simple(&self, program: &str, args: &[&str]) -> Result<Output> {
-        self.execute_simple(program, args)
-    }
-
     fn execute_shell(&self, command: &str) -> Result<Output> {
         self.execute_shell(command)
     }
@@ -1162,7 +1101,7 @@ impl CommandExecutor for SshConnection {
     }
 
     fn get_username(&self) -> Result<String> {
-        let output = self.execute_simple("whoami", &[])?;
+        let output = self.execute_shell("whoami")?;
         let username = String::from_utf8(output.stdout)?.trim().to_string();
         Ok(username)
     }

@@ -184,6 +184,7 @@ fn upload_assets(
 
 /// Format asset name for GitHub release
 /// Distinguishes between gnu and musl Linux targets
+#[allow(dead_code)]
 fn format_asset_name(target: &str, extension: &str) -> String {
     // Convert target to a readable format
     // Examples:

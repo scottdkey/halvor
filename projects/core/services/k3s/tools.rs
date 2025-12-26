@@ -27,7 +27,7 @@ pub fn check_and_install_halvor<E: CommandExecutor>(exec: &E) -> Result<()> {
     // But read_file uses tee internally, so we'll just capture directly
     let arch_str = if exec.is_local() {
         // For local, just run uname -m directly and capture output
-        let output = exec.execute_simple("uname", &["-m"])?;
+        let output = exec.execute_shell("uname -m")?;
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     } else {
         // For remote, use tee to capture while showing, then read the temp file
@@ -75,7 +75,7 @@ pub fn check_and_install_halvor<E: CommandExecutor>(exec: &E) -> Result<()> {
     // Get OS using uname -s (operating system name)
     let os_str = if exec.is_local() {
         // For local, just run uname -s directly and capture output
-        let output = exec.execute_simple("uname", &["-s"])?;
+        let output = exec.execute_shell("uname -s")?;
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     } else {
         // For remote, use tee to capture while showing, then read the temp file
@@ -466,9 +466,9 @@ pub fn check_and_install_helm<E: CommandExecutor>(exec: &E) -> Result<()> {
     exec.write_file(remote_script_path, script_content.as_bytes())
         .context("Failed to write Helm install script to remote host")?;
 
-    // Make script executable using execute_simple (passes arguments directly, avoids shell parsing)
+    // Make script executable
     println!("  Making script executable...");
-    let chmod_output = exec.execute_simple("chmod", &["+x", remote_script_path])?;
+    let chmod_output = exec.execute_shell(&format!("chmod +x {}", remote_script_path))?;
     if !chmod_output.status.success() {
         anyhow::bail!(
             "Failed to make Helm install script executable: {}",

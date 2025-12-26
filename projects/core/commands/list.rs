@@ -30,7 +30,7 @@ fn list_host_services(hostname: &str, _verbose: bool) -> Result<()> {
 
     // Check Docker
     let docker_check =
-        exec.execute_simple("docker", &["version", "--format", "{{.Server.Version}}"]);
+        exec.execute_shell("docker version --format '{{.Server.Version}}'");
     if let Ok(output) = docker_check {
         if output.status.success() {
             let version_str = String::from_utf8_lossy(&output.stdout);
@@ -63,13 +63,8 @@ fn list_host_services(hostname: &str, _verbose: bool) -> Result<()> {
     // List all running Docker containers
     println!();
     println!("Running Docker containers:");
-    let ps_output = exec.execute_simple(
-        "docker",
-        &[
-            "ps",
-            "--format",
-            "table {{.Names}}\t{{.Image}}\t{{.Status}}",
-        ],
+    let ps_output = exec.execute_shell(
+        "docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'"
     );
     if let Ok(output) = ps_output {
         if output.status.success() {

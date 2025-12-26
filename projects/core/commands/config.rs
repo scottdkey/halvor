@@ -58,6 +58,24 @@ pub enum ConfigCommands {
     },
     /// Show differences between .env and database configurations
     Diff,
+    /// Get kubeconfig for K3s cluster
+    Kubeconfig {
+        /// Set up local kubectl context (named 'halvor')
+        #[arg(long)]
+        setup: bool,
+        /// Primary control plane hostname (defaults to first k3s node in config)
+        #[arg(short = 'H', long)]
+        hostname: Option<String>,
+    },
+    /// Regenerate K3s certificates with Tailscale integration
+    Regenerate {
+        /// Target hostname (defaults to localhost)
+        #[arg(short = 'H', long)]
+        hostname: Option<String>,
+        /// Skip confirmation prompts
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
 }
 
 #[derive(clap::Subcommand, Clone)]

@@ -137,10 +137,4 @@ pub enum Commands {
         #[command(subcommand)]
         command: Option<commands::status::StatusCommands>,
     },
-    /// Configure Tailscale integration for K3s cluster
-    Configure {
-        /// Target hostname (default: localhost)
-        #[arg(value_name = "HOSTNAME")]
-        hostname: Option<String>,
-    },
 }

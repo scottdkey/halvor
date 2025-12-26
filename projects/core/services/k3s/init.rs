@@ -535,8 +535,9 @@ pub fn init_control_plane(
     exec.write_file(remote_script_path, patched_script.as_bytes())
         .context("Failed to write K3s install script to remote host")?;
 
-    // Make script executable using execute_simple (same approach as Helm)
-    let chmod_output = exec.execute_simple("chmod", &["+x", remote_script_path])?;
+    // Make script executable
+    let chmod_cmd = format!("chmod +x {}", remote_script_path);
+    let chmod_output = exec.execute_shell(&chmod_cmd)?;
     if !chmod_output.status.success() {
         anyhow::bail!(
             "Failed to make K3s install script executable: {}",
@@ -697,6 +698,23 @@ pub fn init_control_plane(
     println!();
     println!("✓ K3s installation command completed");
 
+    // Verify K3s service file exists before configuring
+    println!("Verifying K3s service installation...");
+    let service_check = exec.execute_shell("systemctl cat k3s.service 2>/dev/null | head -1 || echo 'NOT_FOUND'");
+    let service_exists = service_check
+        .ok()
+        .map(|o| !String::from_utf8_lossy(&o.stdout).contains("NOT_FOUND"))
+        .unwrap_or(false);
+
+    if !service_exists {
+        anyhow::bail!(
+            "K3s service file was not created by the install script.\n\
+             The install may have failed silently.\n\
+             Check the K3s install script output above for errors."
+        );
+    }
+    println!("✓ K3s service file found");
+
     // Configure K3s service to depend on Tailscale
     println!("Configuring K3s service to depend on Tailscale...");
     let service_override_dir = "/etc/systemd/system/k3s.service.d";
@@ -705,10 +723,10 @@ After=tailscale.service
 Wants=tailscale.service
 Requires=network-online.target
 "#;
-    
+
     // Create override directory
     let _ = exec.execute_shell(&format!("sudo mkdir -p {}", service_override_dir));
-    
+
     // Write override file
     let override_file = format!("{}/tailscale.conf", service_override_dir);
     if let Err(e) = exec.write_file(&override_file, override_content.as_bytes()) {
@@ -716,23 +734,31 @@ Requires=network-online.target
         println!("   K3s service may start before Tailscale is ready.");
     } else {
         println!("✓ Created systemd override to ensure K3s starts after Tailscale");
-        
+
         // Reload systemd to pick up the override
         let _ = exec.execute_shell("sudo systemctl daemon-reload");
+    }
+
+    // Enable and start K3s service explicitly
+    println!("Enabling and starting K3s service...");
+    let _ = exec.execute_shell("sudo systemctl enable k3s");
+    if let Err(e) = exec.execute_shell("sudo systemctl start k3s") {
+        println!("⚠️  Warning: Failed to start K3s service: {}", e);
+        println!("   The service may already be running or may start automatically.");
     }
 
     // Wait for service to start and verify it's running
     println!("Waiting for K3s service to start...");
     std::thread::sleep(std::time::Duration::from_secs(10));
 
-    // Verify K3s service is running
+    // Verify K3s service is running and fix token mismatch if needed
     println!("Verifying K3s service is running...");
     for attempt in 1..=6 {
-        // Use execute_simple to check service status directly (more reliable than temp files)
-        // Note: systemctl is-active doesn't require sudo, but may need it in some cases
-        let status_output = exec.execute_simple("systemctl", &["is-active", "k3s"]).ok();
+        // Use execute_shell to check service status
+        // systemctl is-active returns exit code 0 if active, non-zero otherwise
+        let status_output = exec.execute_shell("systemctl is-active k3s 2>/dev/null || echo 'inactive'");
 
-        let is_active = if let Some(output) = &status_output {
+        let is_active = if let Ok(output) = &status_output {
             let status_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
             // systemctl is-active returns "active" or "activating" if running/starting
             // Accept both states since "activating" means the service is starting up
@@ -777,6 +803,62 @@ Requires=network-online.target
                 details,
                 logs
             );
+        }
+    }
+
+    // Check for token mismatch between service file and actual token
+    // This prevents the "bootstrap data already found and encrypted with different token" error
+    println!("Verifying token consistency...");
+    let actual_token_check = exec
+        .execute_shell("sudo cat /var/lib/rancher/k3s/server/token 2>/dev/null")
+        .ok();
+
+    if let Some(token_output) = actual_token_check {
+        if token_output.status.success() {
+            let actual_token_raw = String::from_utf8_lossy(&token_output.stdout).trim().to_string();
+            // Extract just the token part (after ::server:)
+            let actual_token = parse_node_token(&actual_token_raw);
+
+            // Check if the service file has the same token
+            let service_token_check = exec
+                .execute_shell("sudo grep -oP \"'--token=\\K[^']+\" /etc/systemd/system/k3s.service 2>/dev/null || echo 'not_found'")
+                .ok();
+
+            if let Some(service_check) = service_token_check {
+                let service_token = String::from_utf8_lossy(&service_check.stdout).trim().to_string();
+
+                if service_token != "not_found" && service_token != actual_token {
+                    println!("⚠️  Detected token mismatch between service file and actual token!");
+                    println!("   Service token: {}", service_token);
+                    println!("   Actual token:  {}", actual_token);
+                    println!("   Updating service file to fix mismatch...");
+
+                    // Update the service file with the correct token
+                    let fix_cmd = format!(
+                        "sudo sed -i \"s/'--token=[^']*'/'--token={}'/\" /etc/systemd/system/k3s.service",
+                        actual_token
+                    );
+
+                    if let Err(e) = exec.execute_shell(&fix_cmd) {
+                        println!("⚠️  Warning: Failed to update service file: {}", e);
+                        println!("   You may need to manually update the token in /etc/systemd/system/k3s.service");
+                    } else {
+                        // Reload systemd and restart k3s with the correct token
+                        println!("Reloading systemd configuration...");
+                        let _ = exec.execute_shell("sudo systemctl daemon-reload");
+
+                        println!("Restarting K3s with correct token...");
+                        let _ = exec.execute_shell("sudo systemctl restart k3s");
+
+                        // Wait for service to stabilize
+                        std::thread::sleep(std::time::Duration::from_secs(10));
+
+                        println!("✓ Token mismatch fixed");
+                    }
+                } else {
+                    println!("✓ Token is consistent between service file and actual token");
+                }
+            }
         }
     }
 

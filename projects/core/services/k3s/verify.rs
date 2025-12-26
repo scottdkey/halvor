@@ -160,10 +160,10 @@ fn verify_cluster_join_once<E: CommandExecutor>(
         );
     }
 
-    // Then verify kubectl works by checking version using execute_simple (uses correct PATH)
+    // Then verify kubectl works by checking version
     // Note: kubectl version --client doesn't require kubeconfig, so it's safe to check
     let kubectl_version_output = exec
-        .execute_simple("kubectl", &["version", "--client"])
+        .execute_shell("kubectl version --client")
         .ok();
 
     let (kubectl_works, error_details) = if let Some(ref out) = kubectl_version_output {
@@ -391,9 +391,9 @@ fn verify_cluster_join_once<E: CommandExecutor>(
 
         // Check K3s service status on the node if we have access
         if let Some(exec) = node_exec {
-            // Try k3s service first, then k3s-agent, using execute_simple for reliability
+            // Try k3s service first, then k3s-agent
             let service_status = {
-                let k3s_check = exec.execute_simple("systemctl", &["is-active", "k3s"]).ok();
+                let k3s_check = exec.execute_shell("systemctl is-active k3s 2>/dev/null || echo inactive").ok();
                 let is_k3s_active = k3s_check
                     .map(|out| {
                         out.status.success()
@@ -406,7 +406,7 @@ fn verify_cluster_join_once<E: CommandExecutor>(
                 } else {
                     // Try k3s-agent
                     let agent_check = exec
-                        .execute_simple("systemctl", &["is-active", "k3s-agent"])
+                        .execute_shell("systemctl is-active k3s-agent 2>/dev/null || echo inactive")
                         .ok();
                     agent_check
                         .and_then(|out| {
@@ -476,6 +476,7 @@ fn verify_cluster_join_once<E: CommandExecutor>(
 
 /// Verify HA cluster health and failover capability
 /// Checks all nodes, etcd health, and verifies cluster can operate from any node
+#[allow(dead_code)]
 pub fn verify_ha_cluster(
     primary_hostname: &str,
     expected_nodes: &[&str],

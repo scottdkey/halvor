@@ -1121,6 +1121,8 @@ pub fn handle_config_command(
         "commit",
         "delete",
         "diff",
+        "kubeconfig",
+        "regenerate",
     ];
 
     // If arg is provided and it's not a known command, treat it as a hostname
@@ -1233,6 +1235,12 @@ pub fn handle_config_command(
         }
         ConfigCommands::Diff => {
             show_config_diff()?;
+        }
+        ConfigCommands::Kubeconfig { setup, hostname } => {
+            handle_kubeconfig_command(setup, hostname.as_deref())?;
+        }
+        ConfigCommands::Regenerate { hostname, yes } => {
+            handle_regenerate_command(hostname.as_deref(), yes)?;
         }
         ConfigCommands::Ip { .. }
         | ConfigCommands::Hostname { .. }
@@ -1427,6 +1435,158 @@ pub fn restore_database() -> Result<()> {
 
     println!("✓ Database restored from {}", backup_path.display());
     println!();
+
+    Ok(())
+}
+
+/// Handle kubeconfig command - print or setup kubectl context
+fn handle_kubeconfig_command(setup: bool, hostname: Option<&str>) -> Result<()> {
+    use crate::services::k3s::kubeconfig;
+    use crate::utils::exec::local;
+
+    let halvor_dir = find_halvor_dir()?;
+    let config = load_env_config(&halvor_dir)?;
+
+    // Determine primary hostname - use provided, or use first host in config
+    let primary_hostname = if let Some(h) = hostname {
+        h.to_string()
+    } else {
+        // Use first host in config
+        config.hosts.keys()
+            .next()
+            .map(|name| name.clone())
+            .ok_or_else(|| anyhow::anyhow!(
+                "No hosts found in configuration. Please specify hostname with -H or add a host to your config"
+            ))?
+    };
+
+    if setup {
+        // Setup local kubectl context
+        println!("Setting up kubectl context 'halvor'...");
+        println!();
+
+        // Check if kubectl exists
+        if !local::check_command_exists("kubectl") {
+            println!("  ✗ kubectl not found. Install kubectl first:");
+            println!("     macOS: brew install kubectl");
+            println!("     Linux: See https://kubernetes.io/docs/tasks/tools/");
+            return Ok(());
+        }
+
+        // Fetch kubeconfig
+        let mut kubeconfig_content = kubeconfig::fetch_kubeconfig_content(&primary_hostname, &config)?;
+
+        // Simple string replacement to rename context and cluster to 'halvor'
+        // This is more reliable than kubectl manipulation
+        kubeconfig_content = kubeconfig_content.replace("name: default", "name: halvor");
+        kubeconfig_content = kubeconfig_content.replace("cluster: default", "cluster: halvor");
+        kubeconfig_content = kubeconfig_content.replace("user: default", "user: halvor");
+        kubeconfig_content = kubeconfig_content.replace("current-context: default", "current-context: halvor");
+
+        // Create temp file for kubeconfig
+        let home = std::env::var("HOME").context("HOME environment variable not set")?;
+        let kube_dir = format!("{}/.kube", home);
+        std::fs::create_dir_all(&kube_dir).context("Failed to create ~/.kube directory")?;
+
+        let main_config = format!("{}/.kube/config", home);
+        let temp_config = format!("{}/.kube/halvor-temp.yaml", home);
+
+        // Write processed kubeconfig to temp file
+        std::fs::write(&temp_config, &kubeconfig_content)
+            .context("Failed to write temporary kubeconfig")?;
+
+        println!("  Configuring context 'halvor'...");
+
+        // Backup existing config if it exists
+        if std::path::Path::new(&main_config).exists() {
+            let backup = format!("{}.backup-{}", main_config, chrono::Utc::now().timestamp());
+            std::fs::copy(&main_config, &backup)
+                .context("Failed to backup existing kubeconfig")?;
+            println!("  Created backup at {}", backup);
+        }
+
+        // Merge configs - use kubectl config view with KUBECONFIG env var
+        let merge_cmd = format!(
+            "export KUBECONFIG='{}:{}' && kubectl config view --flatten > /tmp/kube-merged.yaml && mv /tmp/kube-merged.yaml '{}'",
+            main_config, temp_config, main_config
+        );
+
+        let merge_result = local::execute_shell(&merge_cmd);
+        if merge_result.is_err() {
+            // If merge fails and no existing config, just copy temp config
+            if !std::path::Path::new(&main_config).exists() {
+                std::fs::copy(&temp_config, &main_config)?;
+            }
+        }
+
+        // Set halvor as current context
+        local::execute_shell("kubectl config use-context halvor")?;
+
+        // Clean up temp file
+        if std::path::Path::new(&temp_config).exists() {
+            std::fs::remove_file(&temp_config)?;
+        }
+
+        println!("  ✓ Kubeconfig set up at {}", main_config);
+        println!("  ✓ Context 'halvor' added and set as current");
+
+        // Test connection
+        println!();
+        println!("Testing connection...");
+        let test_result = local::execute_shell("kubectl cluster-info");
+        if let Ok(output) = test_result {
+            if output.status.success() {
+                let info = String::from_utf8_lossy(&output.stdout);
+                println!("{}", info);
+                println!("✓ Successfully connected to halvor cluster");
+            } else {
+                println!("⚠ kubectl configured but connection test failed");
+                println!("  Make sure Tailscale is running and connected");
+            }
+        }
+    } else {
+        // Just print kubeconfig for 1Password
+        // Fetch kubeconfig first (this prints status messages)
+        let kubeconfig_content = kubeconfig::fetch_kubeconfig_content(&primary_hostname, &config)?;
+
+        // Now print the formatted output with clear markers
+        println!();
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!("K3s Kubeconfig for 1Password");
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!();
+        println!("📋 COPY EVERYTHING BETWEEN THE MARKERS BELOW TO 1PASSWORD");
+        println!();
+        println!("In your 1Password vault, create/edit an item with:");
+        println!("  Field name: KUBE_CONFIG");
+        println!("  Field type: Concealed (password/secret)");
+        println!("  Value: <paste the content below>");
+        println!();
+        println!("╔════════════════════ START COPYING HERE ════════════════════╗");
+        println!("{}", kubeconfig_content);
+        println!("╚════════════════════ STOP COPYING HERE ════════════════════╝");
+        println!();
+        println!("After adding to 1Password:");
+        println!("  1. Make sure your .envrc or environment loads KUBE_CONFIG from 1Password");
+        println!("  2. Run: halvor config kubeconfig --setup");
+        println!("     (This will configure kubectl to use the 'halvor' context)");
+        println!();
+    }
+
+    Ok(())
+}
+
+fn handle_regenerate_command(hostname: Option<&str>, yes: bool) -> Result<()> {
+    use crate::services::k3s;
+
+    let halvor_dir = find_halvor_dir()?;
+    let config = load_env_config(&halvor_dir)?;
+
+    // Default to localhost if not provided
+    let target_host = hostname.unwrap_or("localhost");
+
+    // Regenerate certificates with Tailscale integration
+    k3s::regenerate_certificates(target_host, yes, &config)?;
 
     Ok(())
 }

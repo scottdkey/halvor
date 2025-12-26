@@ -9,15 +9,15 @@ use anyhow::{Context, Result};
 /// Returns the kubeconfig content as a string, with localhost/127.0.0.1 replaced with Tailscale address
 pub fn fetch_kubeconfig_content(primary_hostname: &str, config: &EnvConfig) -> Result<String> {
     println!("  Fetching kubeconfig...");
-    
-    // Helper function to process kubeconfig content
-    let process_kubeconfig = |mut kubeconfig: String| -> Result<String> {
-        // Get Tailscale IP/hostname for the primary node to replace 127.0.0.1
-        let primary_exec = Executor::new(primary_hostname, config)
-            .with_context(|| format!("Failed to create executor for primary node: {}", primary_hostname))?;
+
+    // Helper function to process kubeconfig content - replaces localhost with Tailscale address
+    let process_kubeconfig = |mut kubeconfig: String, hostname: &str| -> Result<String> {
+        // Get Tailscale IP/hostname for the node to replace 127.0.0.1
+        let exec = Executor::new(hostname, config)
+            .with_context(|| format!("Failed to create executor for node: {}", hostname))?;
         let tailscale_ip =
-            tailscale::get_tailscale_ip_with_fallback(&primary_exec, primary_hostname, config)?;
-        let tailscale_hostname = tailscale::get_tailscale_hostname_remote(&primary_exec)
+            tailscale::get_tailscale_ip_with_fallback(&exec, hostname, config)?;
+        let tailscale_hostname = tailscale::get_tailscale_hostname_remote(&exec)
             .ok()
             .flatten();
 
@@ -25,24 +25,69 @@ pub fn fetch_kubeconfig_content(primary_hostname: &str, config: &EnvConfig) -> R
         let server_address = tailscale_hostname.as_ref().unwrap_or(&tailscale_ip);
         kubeconfig = kubeconfig.replace("127.0.0.1", server_address);
         kubeconfig = kubeconfig.replace("localhost", server_address);
-        
+
         Ok(kubeconfig)
     };
-    
-    // Get kubeconfig from KUBE_CONFIG environment variable (from 1Password)
+
+    // First, try to read from local K3s installation if running on this machine
+    if std::path::Path::new("/etc/rancher/k3s/k3s.yaml").exists() {
+        println!("  ✓ Found local K3s installation");
+        match local::execute_shell("sudo cat /etc/rancher/k3s/k3s.yaml") {
+            Ok(output) if output.status.success() => {
+                let mut kubeconfig = String::from_utf8_lossy(&output.stdout).to_string();
+                println!("  ✓ Using kubeconfig from local K3s (/etc/rancher/k3s/k3s.yaml)");
+
+                // Get local Tailscale IP/hostname without SSH
+                let tailscale_status = local::execute_shell("tailscale status --json");
+                if let Ok(status_output) = tailscale_status {
+                    if status_output.status.success() {
+                        let status_str = String::from_utf8_lossy(&status_output.stdout);
+                        if let Ok(status_json) = serde_json::from_str::<serde_json::Value>(&status_str) {
+                            // Get Tailscale hostname from Self field
+                            if let Some(ts_hostname) = status_json.get("Self")
+                                .and_then(|s| s.get("DNSName"))
+                                .and_then(|d| d.as_str())
+                                .map(|s| s.trim_end_matches('.').to_string()) {
+                                println!("  Using Tailscale hostname: {}", ts_hostname);
+                                kubeconfig = kubeconfig.replace("127.0.0.1", &ts_hostname);
+                                kubeconfig = kubeconfig.replace("localhost", &ts_hostname);
+                            } else if let Some(ts_ip) = status_json.get("Self")
+                                .and_then(|s| s.get("TailscaleIPs"))
+                                .and_then(|ips| ips.as_array())
+                                .and_then(|arr| arr.get(0))
+                                .and_then(|ip| ip.as_str()) {
+                                println!("  Using Tailscale IP: {}", ts_ip);
+                                kubeconfig = kubeconfig.replace("127.0.0.1", ts_ip);
+                                kubeconfig = kubeconfig.replace("localhost", ts_ip);
+                            }
+                        }
+                    }
+                }
+
+                return Ok(kubeconfig);
+            }
+            _ => {
+                println!("  ⚠ Local K3s found but couldn't read kubeconfig (need sudo access)");
+            }
+        }
+    }
+
+    // Next, try to get from KUBE_CONFIG environment variable (from 1Password)
     if let Ok(kubeconfig_content) = std::env::var("KUBE_CONFIG") {
         println!("  ✓ Using kubeconfig from KUBE_CONFIG environment variable");
-        return process_kubeconfig(kubeconfig_content);
+        return process_kubeconfig(kubeconfig_content, primary_hostname);
     }
-    
-    // If not in environment variable, provide helpful error message
+
+    // If not found locally or in environment, provide helpful error message
     anyhow::bail!(
-        "Kubeconfig not found in KUBE_CONFIG environment variable.\n\
-         Please add the kubeconfig to your 1Password vault and set it as:\n\
-         KUBE_CONFIG=\"<kubeconfig-content>\"\n\
+        "Kubeconfig not found. Tried:\n\
+         1. Local K3s installation (/etc/rancher/k3s/k3s.yaml)\n\
+         2. KUBE_CONFIG environment variable (from 1Password)\n\
          \n\
-         The kubeconfig should have been printed during cluster initialization.\n\
-         Copy it from the init output and add it to your 1Password environment variables."
+         Please either:\n\
+         - Ensure K3s is installed locally, or\n\
+         - Add the kubeconfig to your 1Password vault as KUBE_CONFIG=\"<content>\", or\n\
+         - Specify a remote hostname with -H <hostname>"
     )
 }
 
@@ -97,6 +142,7 @@ pub fn setup_local_kubeconfig(primary_hostname: &str, config: &EnvConfig) -> Res
 }
 
 /// Get kubeconfig from the cluster
+#[allow(dead_code)]
 pub fn get_kubeconfig(
     hostname: &str,
     merge: bool,

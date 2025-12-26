@@ -8,6 +8,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 /// Uninstall K3s from a node
+#[allow(dead_code)]
 pub fn uninstall(hostname: &str, yes: bool, config: &EnvConfig) -> Result<()> {
     let exec = Executor::new(hostname, config)?;
 
@@ -55,6 +56,7 @@ pub fn uninstall(hostname: &str, yes: bool, config: &EnvConfig) -> Result<()> {
 }
 
 /// Take an etcd snapshot
+#[allow(dead_code)]
 pub fn take_snapshot(hostname: &str, output: Option<&str>, config: &EnvConfig) -> Result<()> {
     let exec = Executor::new(hostname, config)?;
 
@@ -78,6 +80,7 @@ pub fn take_snapshot(hostname: &str, output: Option<&str>, config: &EnvConfig) -
 }
 
 /// Restore from etcd snapshot
+#[allow(dead_code)]
 pub fn restore_snapshot(
     hostname: &str,
     snapshot: &str,
@@ -129,6 +132,7 @@ pub fn restore_snapshot(
 }
 
 /// Create a full cluster backup (etcd + Helm releases + secrets)
+#[allow(dead_code)]
 pub fn backup(
     hostname: &str,
     output: Option<&str>,
@@ -263,6 +267,7 @@ pub fn backup(
 }
 
 /// Restore cluster from backup
+#[allow(dead_code)]
 pub fn restore(
     hostname: &str,
     backup_path: &str,
@@ -367,6 +372,7 @@ pub fn restore(
 }
 
 /// List available backups
+#[allow(dead_code)]
 pub fn list_backups(path: Option<&str>) -> Result<()> {
     let search_path = path.unwrap_or(".");
 
@@ -419,7 +425,216 @@ pub fn list_backups(path: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// Regenerate K3s server certificates with Tailscale hostname
+/// This is needed when TLS SANs change (e.g., adding Tailscale hostname)
+#[allow(dead_code)]
+pub fn regenerate_certificates(hostname: &str, yes: bool, config: &EnvConfig) -> Result<()> {
+    use crate::services::tailscale;
+
+    let exec = Executor::new(hostname, config)?;
+
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("Regenerate K3s Server Certificates");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+
+    // Get Tailscale info
+    let tailscale_ip = tailscale::get_tailscale_ip_with_fallback(&exec, hostname, config)?;
+    let tailscale_hostname = tailscale::get_tailscale_hostname_remote(&exec)
+        .ok()
+        .flatten();
+
+    println!("Current Tailscale configuration:");
+    println!("  IP: {}", tailscale_ip);
+    if let Some(ref ts_hostname) = tailscale_hostname {
+        println!("  Hostname: {}", ts_hostname);
+    }
+    println!();
+
+    if !yes {
+        println!("This will:");
+        println!("  1. Update K3s config to include Tailscale hostname in TLS SANs");
+        println!("  2. Delete existing K3s certificates");
+        println!("  3. Restart K3s to regenerate certificates with new SANs");
+        println!();
+        println!("WARNING: This will cause a brief cluster disruption!");
+        print!("Continue? [y/N]: ");
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Aborted.");
+            return Ok(());
+        }
+    }
+
+    // Step 1: Update systemd service file to add TLS SANs
+    println!("Updating K3s systemd service file...");
+
+    // Read current service file
+    let service_content = exec.read_file("/etc/systemd/system/k3s.service")
+        .context("Failed to read k3s.service file")?;
+
+    // Build TLS SAN arguments
+    let mut tls_san_args = format!("        '--tls-san={}' \\\n", tailscale_ip);
+    if let Some(ref ts_hostname) = tailscale_hostname {
+        tls_san_args.push_str(&format!("        '--tls-san={}' \\\n", ts_hostname));
+    }
+    tls_san_args.push_str(&format!("        '--tls-san={}' \\\n", hostname));
+
+    // Check if TLS SANs are already in the file
+    let has_tls_sans = service_content.contains("--tls-san");
+
+    let new_content = if has_tls_sans {
+        // Remove existing TLS SAN lines and add new ones
+        let lines: Vec<&str> = service_content.lines().collect();
+        let mut new_lines = Vec::new();
+        let mut skip_tls_san = false;
+
+        for line in lines {
+            if line.trim().starts_with("'--tls-san=") {
+                skip_tls_san = true;
+                continue;
+            }
+            if skip_tls_san && !line.trim().is_empty() {
+                // Insert new TLS SANs before this line
+                new_lines.push(tls_san_args.trim_end().to_string());
+                skip_tls_san = false;
+            }
+            new_lines.push(line.to_string());
+        }
+        new_lines.join("\n")
+    } else {
+        // Add TLS SANs after the '--disable=traefik' line
+        service_content.replace(
+            "        '--disable=traefik' \\\n",
+            &format!("        '--disable=traefik' \\\n{}", tls_san_args)
+        )
+    };
+
+    // Write updated service file
+    exec.write_file("/etc/systemd/system/k3s.service", new_content.as_bytes())
+        .context("Failed to write updated k3s.service file")?;
+
+    println!("  ✓ Added TLS SANs to systemd service file:");
+    println!("    - {}", tailscale_ip);
+    if let Some(ref ts_hostname) = tailscale_hostname {
+        println!("    - {}", ts_hostname);
+    }
+    println!("    - {}", hostname);
+
+    // Reload systemd
+    println!("  ✓ Reloading systemd daemon...");
+    exec.execute_shell("sudo systemctl daemon-reload")?;
+
+    // Step 2: Delete existing certificates to force regeneration
+    println!();
+    println!("Deleting existing certificates to force regeneration...");
+    let cert_files = vec![
+        "/var/lib/rancher/k3s/server/tls/serving-kube-apiserver.crt",
+        "/var/lib/rancher/k3s/server/tls/serving-kube-apiserver.key",
+        "/var/lib/rancher/k3s/server/tls/client-ca.crt",
+        "/var/lib/rancher/k3s/server/tls/client-ca.key",
+        "/var/lib/rancher/k3s/server/tls/server-ca.crt",
+        "/var/lib/rancher/k3s/server/tls/server-ca.key",
+    ];
+
+    for cert_file in cert_files {
+        let result = exec.execute_shell(&format!("sudo rm -f {}", cert_file));
+        if result.is_ok() {
+            println!("  ✓ Deleted {}", cert_file);
+        }
+    }
+
+    // Step 3: Restart K3s to apply changes and regenerate certificates
+    println!();
+    println!("Restarting K3s service...");
+    exec.execute_shell("sudo systemctl restart k3s")?;
+
+    println!("Waiting for K3s to regenerate certificates...");
+    std::thread::sleep(std::time::Duration::from_secs(10));
+
+    // Verify K3s is running
+    let status = exec.execute_shell("sudo systemctl is-active k3s")?;
+    let is_active = String::from_utf8_lossy(&status.stdout).trim() == "active";
+
+    if is_active {
+        println!("✓ K3s is running and certificates have been regenerated");
+    } else {
+        println!("⚠ K3s may not be running. Check status with: halvor status k3s -H {}", hostname);
+    }
+
+    println!();
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("✓ Certificates regenerated");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+
+    // Automatically update kubeconfig if running locally (to pick up new CA certificate)
+    if exec.is_local() && std::path::Path::new("/etc/rancher/k3s/k3s.yaml").exists() {
+        println!("Updating kubeconfig with new CA certificate...");
+
+        // Import kubeconfig module
+        use crate::services::k3s::kubeconfig;
+        use crate::utils::exec::local;
+
+        // Check if kubectl exists
+        if local::check_command_exists("kubectl") {
+            match kubeconfig::fetch_kubeconfig_content(hostname, config) {
+                Ok(mut kubeconfig_content) => {
+                    // Rename context to 'halvor'
+                    kubeconfig_content = kubeconfig_content.replace("name: default", "name: halvor");
+                    kubeconfig_content = kubeconfig_content.replace("cluster: default", "cluster: halvor");
+                    kubeconfig_content = kubeconfig_content.replace("user: default", "user: halvor");
+                    kubeconfig_content = kubeconfig_content.replace("current-context: default", "current-context: halvor");
+
+                    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+                    let kube_dir = format!("{}/.kube", home);
+                    let main_config = format!("{}/config", kube_dir);
+                    let temp_config = format!("{}/halvor-temp.yaml", kube_dir);
+
+                    // Create .kube directory if it doesn't exist
+                    let _ = std::fs::create_dir_all(&kube_dir);
+
+                    // Write temp kubeconfig
+                    if std::fs::write(&temp_config, &kubeconfig_content).is_ok() {
+                        // Try to merge with existing config
+                        let merge_cmd = format!(
+                            "export KUBECONFIG='{}:{}' && kubectl config view --flatten > /tmp/kube-merged.yaml && mv /tmp/kube-merged.yaml '{}'",
+                            main_config, temp_config, main_config
+                        );
+
+                        if local::execute_shell(&merge_cmd).is_ok() {
+                            println!("  ✓ Kubeconfig updated with new CA certificate");
+
+                            // Set halvor as current context
+                            let _ = local::execute_shell("kubectl config use-context halvor");
+                        }
+
+                        // Clean up temp file
+                        let _ = std::fs::remove_file(&temp_config);
+                    }
+                }
+                Err(_) => {
+                    println!("  ⚠ Could not automatically update kubeconfig");
+                    println!("  Run manually: halvor config kubeconfig --setup");
+                }
+            }
+        } else {
+            println!("  ℹ kubectl not found - kubeconfig not updated");
+            println!("  To update later: halvor config kubeconfig --setup");
+        }
+    } else {
+        println!("Next steps:");
+        println!("  1. Update kubeconfig: halvor config kubeconfig --setup");
+        println!("  2. Test connection: kubectl --context halvor cluster-info");
+    }
+
+    Ok(())
+}
+
 /// Validate backup integrity
+#[allow(dead_code)]
 pub fn validate_backup(backup_path: &str) -> Result<()> {
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("Validate Backup");

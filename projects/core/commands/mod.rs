@@ -10,7 +10,6 @@ pub mod agent;
 pub mod backup;
 pub mod build;
 pub mod config;
-pub mod configure;
 pub mod dev;
 pub mod generate;
 pub mod init;
@@ -153,9 +152,6 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
         Status { command } => {
             let local_command: Option<status::StatusCommands> = command.map(|c| unsafe { mem::transmute(c) });
             status::handle_status(hostname.as_deref(), local_command)?;
-        }
-        Configure { hostname: target_host } => {
-            configure::handle_configure(hostname.as_deref().or(target_host.as_deref()))?;
         }
     }
     Ok(())

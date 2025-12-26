@@ -4,14 +4,15 @@
 //! for the k3s data directory. Uses a unified path that automatically switches based on availability.
 
 use crate::utils::exec::CommandExecutor;
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 /// Set up SMB failover for k3s data directory
-/// 
+///
 /// Creates a systemd service that:
 /// 1. Checks maple availability
 /// 2. Creates symlink from unified path to active server (maple or willow)
 /// 3. Runs before k3s starts to ensure data directory is available
+#[allow(dead_code)]
 pub fn setup_smb_failover<E: CommandExecutor>(exec: &E, hostname: &str) -> Result<()> {
     println!("Setting up SMB failover for k3s data directory...");
     

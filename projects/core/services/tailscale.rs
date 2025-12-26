@@ -515,6 +515,47 @@ pub fn get_tailscale_ip_remote<E: CommandExecutor>(exec: &E) -> Result<Option<St
                     }
                 }
             }
+
+            // If Self is null, try to find our IP in the Peer list
+            // This happens when tailscale status --json is queried at an inopportune moment
+            // but we're still connected via Tailscale
+            if let Some(peer_map) = status_json.get("Peer").and_then(|v| v.as_object()) {
+                // Strategy 1: Try to find a peer that matches our hostname
+                if let Some(hostname) = exec.execute_shell("hostname 2>/dev/null").ok() {
+                    let our_hostname = String::from_utf8_lossy(&hostname.stdout).trim().to_lowercase();
+                    for (_key, peer_data) in peer_map.iter() {
+                        if let Some(peer_hostname) = peer_data.get("HostName").and_then(|v| v.as_str()) {
+                            if peer_hostname.to_lowercase() == our_hostname {
+                                // Found our peer entry, extract IP
+                                if let Some(ips) = peer_data.get("TailscaleIPs").and_then(|v| v.as_array()) {
+                                    if let Some(ip) = ips.iter().find_map(|v| v.as_str()) {
+                                        if ip.starts_with("100.") {
+                                            return Ok(Some(ip.to_string()));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Strategy 2: Look for the only online peer (likely us if Self is null)
+                let online_peers: Vec<_> = peer_map.iter()
+                    .filter(|(_k, v)| v.get("Online").and_then(|o| o.as_bool()).unwrap_or(false))
+                    .collect();
+
+                if online_peers.len() == 1 {
+                    if let Some(peer_data) = online_peers.first().map(|(_k, v)| v) {
+                        if let Some(ips) = peer_data.get("TailscaleIPs").and_then(|v| v.as_array()) {
+                            if let Some(ip) = ips.iter().find_map(|v| v.as_str()) {
+                                if ip.starts_with("100.") {
+                                    return Ok(Some(ip.to_string()));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

@@ -164,11 +164,11 @@ fn cleanup_old_mounts<E: CommandExecutor>(exec: &E) -> Result<()> {
         let full_path = format!("/mnt/smb/{}", server_dir);
 
         // Check if it's a mount point
-        let mountpoint_check = exec.execute_simple("mountpoint", &["-q", &full_path]);
+        let mountpoint_check = exec.execute_shell(&format!("mountpoint -q {}", full_path));
         if let Ok(output) = mountpoint_check {
             if output.status.success() {
                 println!("Found old mount at {}, unmounting...", full_path);
-                exec.execute_simple("sudo", &["umount", &full_path]).ok();
+                exec.execute_shell(&format!("sudo umount {}", full_path)).ok();
                 remove_fstab_entry(exec, &full_path)?;
                 println!("✓ Cleaned up old mount at {}", full_path);
             }
@@ -233,7 +233,7 @@ fn setup_smb_share<E: CommandExecutor>(
     exec.execute_interactive("sudo", &["mkdir", "-p", mount_point])?;
 
     // Check if already mounted
-    let mountpoint_check = exec.execute_simple("mountpoint", &["-q", mount_point]);
+    let mountpoint_check = exec.execute_shell(&format!("mountpoint -q {}", mount_point));
     if let Ok(output) = mountpoint_check {
         if output.status.success() {
             println!(
@@ -254,11 +254,11 @@ fn setup_smb_share<E: CommandExecutor>(
     #[cfg(not(unix))]
     let (uid, gid) = {
         // Fallback to commands on non-Unix
-        let uid_output = exec.execute_simple("id", &["-u"])?;
+        let uid_output = exec.execute_shell("id -u")?;
         let uid = String::from_utf8_lossy(&uid_output.stdout)
             .trim()
             .to_string();
-        let gid_output = exec.execute_simple("id", &["-g"])?;
+        let gid_output = exec.execute_shell("id -g")?;
         let gid = String::from_utf8_lossy(&gid_output.stdout)
             .trim()
             .to_string();
@@ -289,17 +289,8 @@ fn setup_smb_share<E: CommandExecutor>(
     println!("Mounting: {} -> {}", share_path, mount_point);
 
     // Mount the share
-    let mount_result = exec.execute_simple(
-        "sudo",
-        &[
-            "mount",
-            "-t",
-            "cifs",
-            share_path,
-            mount_point,
-            "-o",
-            &mount_opts,
-        ],
+    let mount_result = exec.execute_shell(
+        &format!("sudo mount -t cifs {} {} -o {}", share_path, mount_point, mount_opts)
     );
     
     // Clean up credentials file after mount attempt (use sudo since we created it with sudo)
@@ -322,8 +313,8 @@ fn setup_smb_share<E: CommandExecutor>(
         // Write persistent credentials file
         let creds_content = format!("username={}\npassword={}\n", username, password);
         exec.write_file("/tmp/smb_creds_persist", creds_content.as_bytes())?;
-        exec.execute_simple("sudo", &["mv", "/tmp/smb_creds_persist", &persistent_creds_file])?;
-        exec.execute_simple("sudo", &["chmod", "600", &persistent_creds_file])?;
+        exec.execute_shell(&format!("sudo mv /tmp/smb_creds_persist {}", persistent_creds_file))?;
+        exec.execute_shell(&format!("sudo chmod 600 {}", persistent_creds_file))?;
         
         // Build fstab mount options with persistent credentials file
         let fstab_mount_opts = format!(
@@ -398,11 +389,11 @@ fn uninstall_smb_mounts_remote<E: CommandExecutor>(exec: &E, config: &EnvConfig)
             let mount_point = format!("/mnt/smb/{}/{}", server_name, share_name);
 
             // Check if mounted
-            let mountpoint_check = exec.execute_simple("mountpoint", &["-q", &mount_point]);
+            let mountpoint_check = exec.execute_shell(&format!("mountpoint -q {}", mount_point));
             if let Ok(output) = mountpoint_check {
                 if output.status.success() {
                     println!("Unmounting {} - {}...", server_name, share_name);
-                    let umount_result = exec.execute_simple("sudo", &["umount", &mount_point]);
+                    let umount_result = exec.execute_shell(&format!("sudo umount {}", mount_point));
                     if umount_result.is_ok() && umount_result.as_ref().unwrap().status.success() {
                         println!("✓ {} - {} unmounted", server_name, share_name);
                     } else {
@@ -419,7 +410,7 @@ fn uninstall_smb_mounts_remote<E: CommandExecutor>(exec: &E, config: &EnvConfig)
 
             // Remove mount point directory using native Rust check
             if exec.is_directory(&mount_point)? {
-                let rmdir_result = exec.execute_simple("sudo", &["rmdir", &mount_point]);
+                let rmdir_result = exec.execute_shell(&format!("sudo rmdir {}", mount_point));
                 if rmdir_result.is_ok() && rmdir_result.as_ref().unwrap().status.success() {
                     println!("✓ Removed mount point {}", mount_point);
                 } else {
