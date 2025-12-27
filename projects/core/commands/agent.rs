@@ -163,10 +163,17 @@ async fn start_agent(port: u16, web_port: Option<u16>, daemon: bool) -> Result<(
     }
 
     // Foreground mode - start server with background sync
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("Starting halvor agent on port {}...", port);
     if let Some(wp) = web_port {
         println!("Starting halvor web server on port {}...", wp);
     }
+    println!();
+    println!("All output will be shown below (including join requests and debug info).");
+    println!("To run in background: halvor agent start --daemon");
+    println!("To view daemon logs: halvor agent logs -f");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
 
     let local_hostname = get_current_hostname()?;
     let _sync = ConfigSync::new(local_hostname.clone());

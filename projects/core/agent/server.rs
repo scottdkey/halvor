@@ -278,10 +278,21 @@ impl AgentServer {
         use crate::agent::mesh;
         use crate::utils::crypto;
 
+        eprintln!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        eprintln!("[AGENT SERVER] Received join request from: {}", joiner_hostname);
+        eprintln!("[AGENT SERVER] Token preview (first 50 chars): {}", &join_token[..50.min(join_token.len())]);
+        eprintln!("[AGENT SERVER] Public key: {}", joiner_public_key);
+
         // Validate the join token
+        eprintln!("[AGENT SERVER] Starting token validation...");
         let _token = match mesh::validate_join_token(join_token) {
-            Ok(t) => t,
+            Ok(t) => {
+                eprintln!("[AGENT SERVER] ✓ Token validation successful");
+                t
+            },
             Err(e) => {
+                eprintln!("[AGENT SERVER] ✗ Token validation failed: {}", e);
+                eprintln!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
                 return Ok(AgentResponse::Error {
                     message: format!("Invalid join token: {}", e),
                 });
@@ -289,10 +300,12 @@ impl AgentServer {
         };
 
         // Generate a shared secret for this peer
+        eprintln!("[AGENT SERVER] Generating shared secret for peer...");
         let shared_secret_bytes = crypto::generate_random_key()?;
         let shared_secret = base64::engine::general_purpose::STANDARD.encode(&shared_secret_bytes);
 
         // Add peer to the mesh
+        eprintln!("[AGENT SERVER] Adding peer to mesh database...");
         if let Err(e) = mesh::add_peer(
             joiner_hostname,
             None, // Will be updated when peer is discovered
@@ -300,18 +313,26 @@ impl AgentServer {
             joiner_public_key,
             &shared_secret,
         ) {
+            eprintln!("[AGENT SERVER] ✗ Failed to add peer: {}", e);
+            eprintln!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
             return Ok(AgentResponse::Error {
                 message: format!("Failed to add peer: {}", e),
             });
         }
+        eprintln!("[AGENT SERVER] ✓ Peer added to mesh");
 
         // Mark token as used
+        eprintln!("[AGENT SERVER] Marking token as used...");
         if let Err(e) = mesh::mark_token_used(join_token, joiner_hostname) {
-            eprintln!("Warning: Failed to mark token as used: {}", e);
+            eprintln!("[AGENT SERVER] ⚠ Warning: Failed to mark token as used: {}", e);
+        } else {
+            eprintln!("[AGENT SERVER] ✓ Token marked as used");
         }
 
         // Get current mesh peers
         let peers = mesh::get_active_peers().unwrap_or_default();
+        eprintln!("[AGENT SERVER] ✓ Join accepted! Mesh now has {} peer(s)", peers.len());
+        eprintln!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
         Ok(AgentResponse::JoinAccepted {
             shared_secret,
