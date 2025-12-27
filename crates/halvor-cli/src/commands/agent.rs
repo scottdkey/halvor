@@ -2,7 +2,7 @@ use halvor_agent::{HostDiscovery, AgentServer, agent::sync::ConfigSync};
 use halvor_core::utils::hostname::get_current_hostname;
 use anyhow::{Context, Result};
 use clap::Subcommand;
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -1010,10 +1010,10 @@ fn verify_mesh_connectivity() -> Result<()> {
     let mut sync_failed = 0;
 
     // Test each peer
-    for (i, (hostname, ip, ts_hostname, discovered, _reachable, _ping_ok)) in peer_info.iter_mut().enumerate() {
+    for (i, (hostname, ip, ts_hostname, discovered, _reachable, _ping_ok)) in peer_info.iter().enumerate() {
         println!("[{}/{}] Testing {}...", i + 1, peer_info.len(), hostname);
         
-        if !discovered {
+        if !*discovered {
             println!("  ⚠️  Not discovered on network");
             ping_failed += 1;
             sync_failed += 1;
@@ -1039,7 +1039,6 @@ fn verify_mesh_connectivity() -> Result<()> {
         match client.ping() {
             Ok(true) => {
                 println!("✓");
-                *_ping_ok = true;
                 ping_ok += 1;
             }
             Ok(false) | Err(_) => {
