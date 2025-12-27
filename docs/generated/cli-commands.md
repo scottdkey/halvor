@@ -20,6 +20,7 @@ Commands:
   join       Join a node to the K3s cluster
   status     Show status of services (mesh overview by default)
   agent      Manage halvor agent (start, stop, discover, sync)
+  k8s        Kubernetes context management (switch between direct and tailscale)
   help       Print this message or the help of the given subcommand(s)
 
 Options:
