@@ -16,9 +16,8 @@ pub enum GenerateCommands {
 pub fn handle_generate(command: GenerateCommands) -> Result<()> {
     match command {
         GenerateCommands::FfiBindings => {
-            println!("Generating FFI bindings...");
-            halvor_core::utils::ffi_bindings::generate_ffi_bindings_cli()?;
-            println!("✓ FFI bindings generated");
+            // TODO: Move FFI bindings generation to halvor-agent
+            anyhow::bail!("FFI bindings generation not yet implemented. Will be moved to halvor-agent.");
         }
         GenerateCommands::Migrations => {
             println!("Generating migration declarations...");
@@ -37,10 +36,11 @@ pub fn handle_generate(command: GenerateCommands) -> Result<()> {
         GenerateCommands::All => {
             println!("Generating all build artifacts...");
             halvor_db::migrations::generator::generate_migrations_cli()?;
-            halvor_core::utils::ffi_bindings::generate_ffi_bindings_cli()?;
+            // TODO: Move FFI bindings to halvor-agent
+            // halvor_agent::ffi::generate_ffi_bindings_cli()?;
             let workspace_root = std::env::current_dir()?;
             halvor_web::client_gen::generate_all_clients(&workspace_root)?;
-            println!("✓ All build artifacts generated");
+            println!("✓ All build artifacts generated (FFI bindings skipped - not yet implemented)");
         }
     }
 

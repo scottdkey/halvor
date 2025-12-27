@@ -1,8 +1,10 @@
 // Host service - all host-related business logic
 use crate::config::{HostConfig, find_halvor_dir, load_env_config};
-use halvor_db as db;
 use crate::utils::exec::Executor;
 use anyhow::{Context, Result};
+
+// NOTE: Database operations (store_host_info, get_host_info) have been moved to halvor-db crate
+// to avoid circular dependencies. Call halvor_db functions directly from the CLI layer.
 
 /// Get host configuration from .env file (loaded via direnv)
 /// This is the main entry point for getting host configuration
@@ -45,29 +47,8 @@ pub fn delete_host_config(hostname: &str) -> Result<()> {
     crate::config::env_file::remove_host_from_env_file(&env_path, hostname)
 }
 
-/// Store host provisioning information
-pub fn store_host_info(
-    hostname: &str,
-    docker_version: Option<&str>,
-    tailscale_installed: bool,
-    portainer_installed: bool,
-    metadata: Option<&str>,
-) -> Result<()> {
-    db::store_host_info(
-        hostname,
-        docker_version,
-        tailscale_installed,
-        portainer_installed,
-        metadata,
-    )
-}
-
-/// Get host provisioning information
-pub fn get_host_info(
-    hostname: &str,
-) -> Result<Option<(Option<i64>, Option<String>, bool, bool, Option<String>)>> {
-    db::get_host_info(hostname)
-}
+// Database operations moved to avoid circular dependencies
+// Use halvor_db::store_host_info() and halvor_db::get_host_info() directly from the CLI layer
 
 /// Create an executor for a host (local or remote)
 pub fn create_executor(hostname: &str) -> Result<Executor> {

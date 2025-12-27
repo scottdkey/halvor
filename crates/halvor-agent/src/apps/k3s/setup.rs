@@ -7,18 +7,18 @@
 //! - Additional control plane node joining
 //! - Cluster verification
 
-use crate::config::EnvConfig;
-use crate::services::k3s::{init_control_plane, join_cluster, verify_ha_cluster};
+use halvor_core::config::EnvConfig;
+use crate::apps::k3s::{init_control_plane, join_cluster, verify_ha_cluster};
 use crate::apps::smb;
 use crate::apps::tailscale;
-use crate::utils::exec::{CommandExecutor, Executor};
-use crate::utils::ssh;
+use halvor_core::utils::exec::{CommandExecutor, Executor};
+use halvor_core::utils::ssh;
 use anyhow::{Context, Result};
 
 /// Get target host (prefer Tailscale hostname, fallback to IP) from config
 #[allow(dead_code)]
 fn get_target_host(hostname: &str, config: &EnvConfig) -> Result<String> {
-    let actual_hostname = crate::config::service::find_hostname_in_config(hostname, config)
+    let actual_hostname = halvor_core::utils::hostname::find_hostname_in_config(hostname, config)
         .ok_or_else(|| anyhow::anyhow!("Host '{}' not found in config", hostname))?;
     let host_config = config
         .hosts
@@ -83,7 +83,7 @@ fn check_ssh_key_auth(hostname: &str, config: &EnvConfig) -> Result<bool> {
     let target_host = get_target_host(hostname, config)?;
 
     // Try with default username first (most common case)
-    let default_username = crate::config::get_default_username();
+    let default_username = halvor_core::config::get_default_username();
     let host_str = format!("{}@{}", default_username, target_host);
 
     // Use the same test as SshConnection::new to check if key-based auth works
@@ -262,7 +262,7 @@ pub fn setup_cluster(
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!();
 
-    use crate::services::k3s::status::get_cluster_join_info;
+    use crate::apps::k3s::status::get_cluster_join_info;
     let (server_addr, cluster_token) = get_cluster_join_info(primary, config)
         .with_context(|| format!("Failed to get cluster join info from {}", primary))?;
 

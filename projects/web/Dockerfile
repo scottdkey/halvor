@@ -19,14 +19,10 @@ RUN apt-get update && apt-get install -y \
 # Install both ARM and x86_64 targets for cross-platform support
 RUN rustup target add aarch64-unknown-linux-musl x86_64-unknown-linux-musl
 
-# Copy Cargo files first (for better caching)
+# Copy workspace Cargo files first (for better caching)
 COPY Cargo.toml Cargo.lock ./
-# Copy crates directory (contains halvor-ffi-macro dependency)
+# Copy all crates (halvor-cli and its dependencies)
 COPY crates ./crates
-# Note: build.rs would be copied here if it existed (for custom build scripts)
-
-# Copy source code
-COPY src ./src
 
 # Build Rust server (release or debug based on BUILD_TYPE)
 # Build musl binary for current platform (TARGETARCH set by Docker buildx)
@@ -49,14 +45,14 @@ RUN ARCH=${TARGETARCH:-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')} && 
     echo "Using musl target: ${MUSL_TARGET}" && \
     if [ "$BUILD_TYPE" = "release" ]; then \
         echo "Building musl binary for production (${MUSL_TARGET})..." && \
-        cargo build --release --bin halvor --target ${MUSL_TARGET} && \
+        cargo build --release -p halvor-cli --target ${MUSL_TARGET} && \
         ls -lh /build/target/${MUSL_TARGET}/release/halvor && \
         echo "Building glibc binary for development..." && \
-        cargo build --release --bin halvor && \
+        cargo build --release -p halvor-cli && \
         ls -lh /build/target/release/halvor; \
     else \
         # Build glibc binary for development
-        cargo build --bin halvor && \
+        cargo build -p halvor-cli && \
         ls -lh /build/target/debug/halvor; \
     fi
 

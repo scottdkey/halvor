@@ -1,9 +1,9 @@
 //! K3s node joining logic
 
-use crate::config::EnvConfig;
-use crate::services::k3s::{agent_service, cleanup, kubeconfig, tools, verify};
+use halvor_core::config::EnvConfig;
+use crate::apps::k3s::{agent_service, cleanup, kubeconfig, tools, verify};
 use crate::apps::tailscale;
-use crate::utils::exec::{CommandExecutor, Executor};
+use halvor_core::utils::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
 use serde_json;
 use std::io::{self, Write};
@@ -47,8 +47,8 @@ pub fn join_cluster(
                 
                 // Verify the processed kubeconfig points to the primary server
                 if let Ok((server_host, _)) = kubeconfig::extract_server_and_token_from_kubeconfig(&processed) {
-                    let normalized_server = crate::config::service::normalize_hostname(&server_host);
-                    let normalized_primary = crate::config::service::normalize_hostname(&primary_hostname);
+                    let normalized_server = halvor_core::utils::hostname::normalize_hostname(&server_host);
+                    let normalized_primary = halvor_core::utils::hostname::normalize_hostname(&primary_hostname);
                     
                     if normalized_server == normalized_primary || server_host == primary_hostname {
                         println!("✓ Kubeconfig correctly points to primary server: {}", server_host);
@@ -1321,15 +1321,15 @@ Requires=network-online.target
         // Check if server points to joining node instead of primary
         let joining_node_hostname = if is_local {
             // Get local hostname
-            crate::config::service::get_current_hostname().unwrap_or_else(|_| hostname.to_string())
+            halvor_core::utils::hostname::get_current_hostname().unwrap_or_else(|_| hostname.to_string())
         } else {
             hostname.to_string()
         };
         
         // Normalize hostnames for comparison
-        let normalized_server = crate::config::service::normalize_hostname(&server_host);
-        let normalized_joining = crate::config::service::normalize_hostname(&joining_node_hostname);
-        let normalized_primary = crate::config::service::normalize_hostname(&primary_hostname);
+        let normalized_server = halvor_core::utils::hostname::normalize_hostname(&server_host);
+        let normalized_joining = halvor_core::utils::hostname::normalize_hostname(&joining_node_hostname);
+        let normalized_primary = halvor_core::utils::hostname::normalize_hostname(&primary_hostname);
         
         // Check if server matches joining node (wrong) instead of primary (correct)
         if normalized_server == normalized_joining || server_host == joining_node_hostname {
@@ -1342,7 +1342,7 @@ Requires=network-online.target
                 Ok(corrected_kubeconfig) => {
                     // Verify the corrected kubeconfig
                     if let Ok((corrected_server, _)) = kubeconfig::extract_server_and_token_from_kubeconfig(&corrected_kubeconfig) {
-                        let normalized_corrected = crate::config::service::normalize_hostname(&corrected_server);
+                        let normalized_corrected = halvor_core::utils::hostname::normalize_hostname(&corrected_server);
                         if normalized_corrected == normalized_primary || corrected_server == primary_hostname {
                             println!("  ✓ Corrected kubeconfig points to primary: {}", corrected_server);
                             // Use the corrected kubeconfig
@@ -1369,7 +1369,7 @@ Requires=network-online.target
     // Final pass: Replace any remaining baulder hostnames with primary server
     // This catches any instances that might have been missed, including in merged content
     let joining_node_hostname_for_replace = if is_local {
-        crate::config::service::get_current_hostname().unwrap_or_else(|_| hostname.to_string())
+        halvor_core::utils::hostname::get_current_hostname().unwrap_or_else(|_| hostname.to_string())
     } else {
         hostname.to_string()
     };
@@ -1532,8 +1532,8 @@ Requires=network-online.target
     // Extract server from the actual written file (might be merged)
     if let Ok((written_server, _)) = kubeconfig::extract_server_and_token_from_kubeconfig(&written_content) {
         println!("  Final kubeconfig server (from file): {}", written_server);
-        let normalized_written = crate::config::service::normalize_hostname(&written_server);
-        let normalized_primary = crate::config::service::normalize_hostname(&primary_hostname);
+        let normalized_written = halvor_core::utils::hostname::normalize_hostname(&written_server);
+        let normalized_primary = halvor_core::utils::hostname::normalize_hostname(&primary_hostname);
         
         // Use the primary server address extracted from kubeconfig
         let primary_server_address = primary_server_addr;
@@ -1568,7 +1568,7 @@ Requires=network-online.target
             // Verify again
             if let Ok((fixed_server, _)) = kubeconfig::extract_server_and_token_from_kubeconfig(&fixed_processed) {
                 println!("  Fixed kubeconfig server: {}", fixed_server);
-                let fixed_normalized = crate::config::service::normalize_hostname(&fixed_server);
+                let fixed_normalized = halvor_core::utils::hostname::normalize_hostname(&fixed_server);
                 if fixed_normalized == normalized_primary || fixed_server == primary_hostname {
                     println!("  ✓ Fixed kubeconfig now points to primary server");
                 } else {
@@ -1877,7 +1877,7 @@ fn check_and_remove_from_existing_cluster<E: CommandExecutor>(
 /// Returns the hostname if found in config, otherwise returns the server address as-is
 fn find_hostname_from_server(server: &str, config: &EnvConfig) -> Option<String> {
     // If it's already a hostname in config, return it
-    if let Some(hostname) = crate::config::service::find_hostname_in_config(server, config) {
+    if let Some(hostname) = halvor_core::utils::hostname::find_hostname_in_config(server, config) {
         return Some(hostname);
     }
 

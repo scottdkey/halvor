@@ -11,13 +11,6 @@ name = "halvor_core"
 path = "src/lib.rs"
 
 [dependencies]
-halvor-db = { path = "../halvor-db" }
-halvor-docker = { path = "../halvor-docker" }
-
-[dependencies.halvor-agent]
-path = "../halvor-agent"
-optional = true
-
 # Core dependencies (no CLI, no agent-specific stuff)
 anyhow.workspace = true
 which.workspace = true
@@ -47,7 +40,9 @@ regex.workspace = true
 
 [features]
 default = []
-agent = ["halvor-agent"]
+
+# Dev dependencies (moved from features)
+[dev-dependencies]
 quote.workspace = true
 syn.workspace = true
 rusqlite.workspace = true

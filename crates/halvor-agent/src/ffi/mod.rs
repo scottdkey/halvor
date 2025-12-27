@@ -7,7 +7,7 @@
 pub mod c_ffi;
 
 // Re-export for convenience
-pub use crate::client::HalvorClient;
-pub use crate::discovery::DiscoveredHost;
-pub use crate::server::HostInfo;
+pub use crate::agent::client::HalvorClient;
+pub use crate::agent::discovery::DiscoveredHost;
+pub use crate::agent::server::HostInfo;
 

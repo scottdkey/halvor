@@ -1,7 +1,7 @@
 //! Agent installation and diagnostics service
 
 use halvor_core::config::EnvConfig;
-use halvor_core::apps::k3s;
+use crate::apps::k3s;
 use halvor_core::utils::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
 
@@ -237,10 +237,10 @@ fn check_halvor_binary<E: CommandExecutor>(exec: &E) -> Result<()> {
 fn check_agent_reachability<E: CommandExecutor>(exec: &E, hostname: &str) -> Result<()> {
     // Try to get Tailscale hostname/IP for better connectivity
     let agent_host = if let Ok(Some(ts_hostname)) =
-        halvor_core::apps::tailscale::get_tailscale_hostname_remote(exec)
+        crate::apps::tailscale::get_tailscale_hostname_remote(exec)
     {
         ts_hostname
-    } else if let Ok(Some(ts_ip)) = halvor_core::apps::tailscale::get_tailscale_ip_remote(exec) {
+    } else if let Ok(Some(ts_ip)) = crate::apps::tailscale::get_tailscale_ip_remote(exec) {
         ts_ip
     } else {
         hostname.to_string()
@@ -250,7 +250,7 @@ fn check_agent_reachability<E: CommandExecutor>(exec: &E, hostname: &str) -> Res
     let check_cmd = format!("timeout 2 bash -c 'echo > /dev/tcp/{}/13500' 2>/dev/null && echo 'open' || echo 'closed'", agent_host);
     let output = exec.execute_shell(&check_cmd).ok();
     if let Some(out) = output {
-        let result = String::from_utf8_lossy(&out.stdout).trim();
+        let result = String::from_utf8_lossy(&out.stdout).trim().to_string();
         if result == "open" {
             println!("  ✓ Agent port 13500 is reachable");
         } else {
@@ -339,10 +339,10 @@ fn verify_agent_installation_linux<E: CommandExecutor>(exec: &E, hostname: &str)
 fn check_agent_ping<E: CommandExecutor>(exec: &E, hostname: &str) -> Result<()> {
     // Try to get Tailscale hostname/IP for better connectivity
     let agent_host = if let Ok(Some(ts_hostname)) =
-        halvor_core::apps::tailscale::get_tailscale_hostname_remote(exec)
+        crate::apps::tailscale::get_tailscale_hostname_remote(exec)
     {
         ts_hostname
-    } else if let Ok(Some(ts_ip)) = halvor_core::apps::tailscale::get_tailscale_ip_remote(exec) {
+    } else if let Ok(Some(ts_ip)) = crate::apps::tailscale::get_tailscale_ip_remote(exec) {
         ts_ip
     } else {
         hostname.to_string()
@@ -352,7 +352,7 @@ fn check_agent_ping<E: CommandExecutor>(exec: &E, hostname: &str) -> Result<()> 
     let check_cmd = format!("timeout 2 bash -c 'echo > /dev/tcp/{}/13500' 2>/dev/null && echo 'open' || echo 'closed'", agent_host);
     let output = exec.execute_shell(&check_cmd).ok();
     if let Some(out) = output {
-        let result = String::from_utf8_lossy(&out.stdout).trim();
+        let result = String::from_utf8_lossy(&out.stdout).trim().to_string();
         if result == "open" {
             println!("  ✓ Agent is reachable and responding");
         } else {

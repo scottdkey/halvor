@@ -1,7 +1,7 @@
 //! Update halvor or installed apps
 
-use crate::config;
-use halvor_core::apps::{AppCategory, find_app, k3s};
+use halvor_core::config;
+use halvor_agent::apps::{AppCategory, find_app, k3s};
 use halvor_core::services::helm;
 use halvor_core::utils::exec::{CommandExecutor, Executor};
 use halvor_core::utils::update;
@@ -141,7 +141,7 @@ fn update_halvor_binary(experimental: bool, force: bool, dev: bool) -> Result<()
 
         // Stop agent service first
         println!("Stopping agent service...");
-        if let Err(e) = agent_service::stop_agent_service(&exec) {
+        if let Err(e) = halvor_agent::apps::k3s::agent_service::stop_agent_service(&exec) {
             eprintln!("Warning: Failed to stop agent service: {}", e);
         }
 
@@ -183,7 +183,7 @@ fn update_halvor_binary(experimental: bool, force: bool, dev: bool) -> Result<()
         // Restart agent service
         println!();
         println!("Restarting agent service...");
-        if let Err(e) = agent_service::restart_agent_service(&exec, None) {
+        if let Err(e) = halvor_agent::apps::k3s::agent_service::restart_agent_service(&exec, None) {
             eprintln!("Warning: Failed to restart agent service: {}", e);
             println!("  You can start it manually with: halvor agent start --daemon");
         }
@@ -203,7 +203,7 @@ fn update_halvor_binary(experimental: bool, force: bool, dev: bool) -> Result<()
                 // Stop agent, update, restart
                 println!();
                 println!("Stopping agent service...");
-                if let Err(e) = agent_service::stop_agent_service(&exec) {
+                if let Err(e) = halvor_agent::apps::k3s::agent_service::stop_agent_service(&exec) {
                     eprintln!("Warning: Failed to stop agent service: {}", e);
                 }
 
@@ -211,7 +211,7 @@ fn update_halvor_binary(experimental: bool, force: bool, dev: bool) -> Result<()
 
                 println!();
                 println!("Restarting agent service...");
-                if let Err(e) = agent_service::restart_agent_service(&exec, None) {
+                if let Err(e) = halvor_agent::apps::k3s::agent_service::restart_agent_service(&exec, None) {
                     eprintln!("Warning: Failed to restart agent service: {}", e);
                 }
             } else {
@@ -222,7 +222,7 @@ fn update_halvor_binary(experimental: bool, force: bool, dev: bool) -> Result<()
                 // Stop agent, update, restart
                 println!();
                 println!("Stopping agent service...");
-                if let Err(e) = agent_service::stop_agent_service(&exec) {
+                if let Err(e) = halvor_agent::apps::k3s::agent_service::stop_agent_service(&exec) {
                     eprintln!("Warning: Failed to stop agent service: {}", e);
                 }
 
@@ -230,7 +230,7 @@ fn update_halvor_binary(experimental: bool, force: bool, dev: bool) -> Result<()
 
                 println!();
                 println!("Restarting agent service...");
-                if let Err(e) = agent_service::restart_agent_service(&exec, None) {
+                if let Err(e) = halvor_agent::apps::k3s::agent_service::restart_agent_service(&exec, None) {
                     eprintln!("Warning: Failed to restart agent service: {}", e);
                 }
             }
@@ -240,7 +240,7 @@ fn update_halvor_binary(experimental: bool, force: bool, dev: bool) -> Result<()
                     // Stop agent, update, restart
                     println!();
                     println!("Stopping agent service...");
-                    if let Err(e) = agent_service::stop_agent_service(&exec) {
+                    if let Err(e) = halvor_agent::apps::k3s::agent_service::stop_agent_service(&exec) {
                         eprintln!("Warning: Failed to stop agent service: {}", e);
                     }
 
@@ -248,7 +248,7 @@ fn update_halvor_binary(experimental: bool, force: bool, dev: bool) -> Result<()
 
                     println!();
                     println!("Restarting agent service...");
-                    if let Err(e) = agent_service::restart_agent_service(&exec, None) {
+                    if let Err(e) = halvor_agent::apps::k3s::agent_service::restart_agent_service(&exec, None) {
                         eprintln!("Warning: Failed to restart agent service: {}", e);
                     }
                 }
@@ -260,7 +260,7 @@ fn update_halvor_binary(experimental: bool, force: bool, dev: bool) -> Result<()
                 // Stop agent, update, restart
                 println!();
                 println!("Stopping agent service...");
-                if let Err(e) = agent_service::stop_agent_service(&exec) {
+                if let Err(e) = halvor_agent::apps::k3s::agent_service::stop_agent_service(&exec) {
                     eprintln!("Warning: Failed to stop agent service: {}", e);
                 }
 
@@ -268,7 +268,7 @@ fn update_halvor_binary(experimental: bool, force: bool, dev: bool) -> Result<()
 
                 println!();
                 println!("Restarting agent service...");
-                if let Err(e) = agent_service::restart_agent_service(&exec, None) {
+                if let Err(e) = halvor_agent::apps::k3s::agent_service::restart_agent_service(&exec, None) {
                     eprintln!("Warning: Failed to restart agent service: {}", e);
                 }
             }

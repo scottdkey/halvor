@@ -1,6 +1,6 @@
-use crate::config::{self, EnvConfig, HostConfig};
-use crate::utils::exec::PackageManager;
-use crate::utils::exec::{CommandExecutor, Executor};
+use halvor_core::config::{self, EnvConfig, HostConfig};
+use halvor_core::utils::exec::PackageManager;
+use halvor_core::utils::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
 use reqwest;
 use std::process::Command;
@@ -198,7 +198,7 @@ pub fn install_tailscale_on_host(hostname: &str, config: &EnvConfig) -> Result<(
 /// This is used across modules that need to access host configuration
 pub fn get_host_config<'a>(config: &'a EnvConfig, hostname: &str) -> Result<&'a HostConfig> {
     // Try normalized hostname lookup
-    let actual_hostname = crate::config::service::find_hostname_in_config(hostname, config)
+    let actual_hostname = halvor_core::utils::hostname::find_hostname_in_config(hostname, config)
         .unwrap_or_else(|| hostname.to_string());
     config.hosts.get(&actual_hostname).with_context(|| {
         format!(
@@ -312,7 +312,7 @@ pub fn list_tailscale_devices() -> Result<Vec<TailscaleDevice>> {
 
 /// Show Tailscale status with all nodes on the tailnet
 pub fn show_tailscale_status(hostname: &str, config: &EnvConfig) -> Result<()> {
-    use crate::utils::exec::Executor;
+    use halvor_core::utils::exec::Executor;
     
     let exec = Executor::new(hostname, config)?;
     let is_local = exec.is_local();

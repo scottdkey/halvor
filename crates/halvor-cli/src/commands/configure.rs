@@ -1,7 +1,7 @@
 //! Configure command handlers
 
-use crate::config;
-use halvor_core::apps::k3s;
+use halvor_core::config;
+use halvor_agent::apps::k3s;
 use anyhow::Result;
 
 /// Handle configure command

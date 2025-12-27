@@ -1,5 +1,5 @@
-use halvor_agent::{discovery::HostDiscovery, server::AgentServer, sync::ConfigSync};
-use halvor_cli::config::service::get_current_hostname;
+use halvor_agent::{HostDiscovery, AgentServer, agent::sync::ConfigSync};
+use halvor_core::utils::hostname::get_current_hostname;
 use anyhow::{Context, Result};
 use clap::Subcommand;
 use std::io::Write;
@@ -333,7 +333,7 @@ fn discover_agents(verbose: bool) -> Result<()> {
             println!("    Reachable: {}", host.reachable);
             if verbose {
                 // Try to get host info
-                use halvor_agent::api::AgentClient;
+                use halvor_agent::agent::api::AgentClient;
                 let ip = host
                     .tailscale_ip
                     .as_ref()
@@ -361,7 +361,7 @@ fn sync_with_agents(force: bool) -> Result<()> {
 }
 
 fn sync_with_agents_internal(sync: &ConfigSync, _force: bool) -> Result<()> {
-    use halvor_agent::mesh;
+    use halvor_agent::agent::mesh;
 
     let discovery = HostDiscovery::default();
     let hosts = discovery.discover_all()?;
@@ -387,11 +387,11 @@ fn sync_with_agents_internal(sync: &ConfigSync, _force: bool) -> Result<()> {
     // Sync mesh peer information - ensure all hosts know about each other
     println!("[3/3] Syncing mesh peer information...");
     let local_hostname = get_current_hostname()?;
-    let normalized_local = halvor_cli::config::service::normalize_hostname(&local_hostname);
+    let normalized_local = halvor_core::utils::hostname::normalize_hostname(&local_hostname);
 
     for host in &hosts {
         // Skip self
-        let normalized_peer = halvor_cli::config::service::normalize_hostname(&host.hostname);
+        let normalized_peer = halvor_core::utils::hostname::normalize_hostname(&host.hostname);
         if normalized_peer == normalized_local {
             continue;
         }
@@ -420,7 +420,7 @@ fn sync_with_agents_internal(sync: &ConfigSync, _force: bool) -> Result<()> {
 
 /// Check if agent is running
 fn is_agent_running() -> Result<bool> {
-    use halvor_agent::api::AgentClient;
+    use halvor_agent::agent::api::AgentClient;
 
     // Try to ping localhost agent
     let client = AgentClient::new("127.0.0.1", 13500);
@@ -500,8 +500,8 @@ fn show_agent_logs(follow: bool) -> Result<()> {
 
 /// Generate a join token for other agents to join this mesh
 fn generate_join_token() -> Result<()> {
-    use halvor_agent::mesh;
-    use halvor_core::apps::tailscale;
+    use halvor_agent::agent::mesh;
+    use halvor_agent::apps::tailscale;
 
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("Generate Join Token");
@@ -510,7 +510,7 @@ fn generate_join_token() -> Result<()> {
 
     // Try to get Tailscale hostname first (e.g., "mint" or "mint.bombay-pinecone.ts.net")
     // If not available, normalize system hostname (e.g., "mint.local" -> "mint")
-    let hostname = halvor_core::apps::tailscale::get_tailscale_hostname()
+    let hostname = halvor_agent::apps::tailscale::get_tailscale_hostname()
         .ok()
         .flatten()
         .map(|ts_hostname| {
@@ -524,7 +524,7 @@ fn generate_join_token() -> Result<()> {
         .unwrap_or_else(|| {
             // Fallback: normalize system hostname
             let system_hostname = get_current_hostname().unwrap_or_else(|_| "unknown".to_string());
-            halvor_cli::config::service::normalize_hostname(&system_hostname)
+            halvor_core::utils::hostname::normalize_hostname(&system_hostname)
         });
 
     // Get Tailscale IP if available, otherwise use local IP
@@ -565,7 +565,7 @@ fn generate_join_token() -> Result<()> {
 
 /// Join an existing agent mesh
 fn join_mesh(token: Option<String>, host: Option<String>) -> Result<()> {
-    use halvor_agent::mesh::JoinToken;
+    use halvor_agent::agent::mesh::JoinToken;
     use std::io::{BufRead, BufReader};
 
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -639,12 +639,12 @@ fn join_mesh(token: Option<String>, host: Option<String>) -> Result<()> {
     // Filter to only reachable hosts (excluding self)
     // Normalize hostname for comparison (e.g., "mint.local" -> "mint")
     let local_hostname = get_current_hostname()?;
-    let normalized_local = halvor_cli::config::service::normalize_hostname(&local_hostname);
+    let normalized_local = halvor_core::utils::hostname::normalize_hostname(&local_hostname);
     let available_hosts: Vec<_> = hosts
         .iter()
         .filter(|h| {
             h.reachable && {
-                let normalized_peer = halvor_cli::config::service::normalize_hostname(&h.hostname);
+                let normalized_peer = halvor_core::utils::hostname::normalize_hostname(&h.hostname);
                 normalized_peer != normalized_local && h.hostname != local_hostname
             }
         })
@@ -759,8 +759,8 @@ fn parse_host_port(s: &str) -> Result<(String, u16)> {
 
 /// Perform the actual join operation
 fn perform_join(host: &str, port: u16, token: &str) -> Result<()> {
-    use halvor_agent::mesh::{self, JoinToken};
-    use halvor_agent::server::{AgentRequest, AgentResponse};
+    use halvor_agent::agent::mesh::{self, JoinToken};
+    use halvor_agent::agent::server::{AgentRequest, AgentResponse};
     use halvor_core::utils::{format_address, read_json, write_json};
     use std::net::{TcpStream, ToSocketAddrs};
 
@@ -774,7 +774,7 @@ fn perform_join(host: &str, port: u16, token: &str) -> Result<()> {
 
     // Try to get Tailscale hostname first (e.g., "mint" or "mint.bombay-pinecone.ts.net")
     // If not available, normalize system hostname (e.g., "mint.local" -> "mint")
-    let local_hostname = halvor_core::apps::tailscale::get_tailscale_hostname()
+    let local_hostname = halvor_agent::apps::tailscale::get_tailscale_hostname()
         .ok()
         .flatten()
         .map(|ts_hostname| {
@@ -788,7 +788,7 @@ fn perform_join(host: &str, port: u16, token: &str) -> Result<()> {
         .unwrap_or_else(|| {
             // Fallback: normalize system hostname
             let system_hostname = get_current_hostname().unwrap_or_else(|_| "unknown".to_string());
-            halvor_cli::config::service::normalize_hostname(&system_hostname)
+            halvor_core::utils::hostname::normalize_hostname(&system_hostname)
         });
 
     // Generate a public key for this node (for future encrypted communication)
@@ -878,7 +878,7 @@ fn perform_join(host: &str, port: u16, token: &str) -> Result<()> {
 
 /// List peers in the mesh
 fn list_peers() -> Result<()> {
-    use halvor_agent::mesh;
+    use halvor_agent::agent::mesh;
 
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("Mesh Peers");
@@ -906,9 +906,9 @@ fn list_peers() -> Result<()> {
 
 /// Update hostname and sync across mesh
 fn update_hostname(new_hostname: &str) -> Result<()> {
-    use halvor_agent::api::AgentClient;
-    use halvor_agent::discovery::HostDiscovery;
-    use halvor_core::apps::tailscale;
+    use halvor_agent::agent::api::AgentClient;
+    use halvor_agent::agent::discovery::HostDiscovery;
+    use halvor_agent::apps::tailscale;
 
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("Update Hostname");
@@ -917,10 +917,10 @@ fn update_hostname(new_hostname: &str) -> Result<()> {
 
     // Get current hostname
     let current_hostname = get_current_hostname()?;
-    let normalized_current = halvor_cli::config::service::normalize_hostname(&current_hostname);
+    let normalized_current = halvor_core::utils::hostname::normalize_hostname(&current_hostname);
 
     // Normalize new hostname
-    let normalized_new = halvor_cli::config::service::normalize_hostname(new_hostname);
+    let normalized_new = halvor_core::utils::hostname::normalize_hostname(new_hostname);
 
     if normalized_current == normalized_new {
         println!("Hostname is already '{}'", normalized_new);
@@ -1013,7 +1013,7 @@ fn update_hostname(new_hostname: &str) -> Result<()> {
         }
 
         // Skip self
-        let normalized_peer = halvor_cli::config::service::normalize_hostname(&host.hostname);
+        let normalized_peer = halvor_core::utils::hostname::normalize_hostname(&host.hostname);
         if normalized_peer == normalized_current || normalized_peer == normalized_new {
             continue;
         }

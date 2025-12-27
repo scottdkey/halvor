@@ -1,7 +1,7 @@
 //! Initialize K3s cluster (primary control plane node)
 
-use crate::config;
-use halvor_core::apps::k3s;
+use halvor_core::config;
+use halvor_agent::apps::k3s;
 use anyhow::Result;
 
 /// Handle init command - initialize K3s cluster or prepare node

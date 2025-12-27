@@ -3,7 +3,7 @@
 //! Defines the interface that all Helm chart apps must implement.
 //! Helm chart apps are Kubernetes applications deployed via Helm charts.
 
-use crate::config::EnvConfig;
+use halvor_core::config::EnvConfig;
 use crate::apps::registry::AppDefinition;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -59,7 +59,7 @@ impl HelmApp for AppDefinition {
 
     fn generate_values(&self) -> Result<Vec<String>> {
         // Use the existing Helm service function to generate values
-        use crate::services::helm;
+        use halvor_core::services::helm;
         
         // This is a bit of a hack - we need to access the private function
         // For now, we'll generate values using the chart name
@@ -193,7 +193,7 @@ pub fn install_helm_app(
     hostname: &str,
     config: &EnvConfig,
 ) -> Result<()> {
-    use crate::services::helm;
+    use halvor_core::services::helm;
 
     helm::install_chart(
         hostname,
@@ -214,7 +214,7 @@ pub fn upgrade_helm_app(
     hostname: &str,
     config: &EnvConfig,
 ) -> Result<()> {
-    use crate::services::helm;
+    use halvor_core::services::helm;
 
     helm::upgrade_release(
         hostname,
@@ -231,7 +231,7 @@ pub fn uninstall_helm_app(
     hostname: &str,
     config: &EnvConfig,
 ) -> Result<()> {
-    use crate::services::helm;
+    use halvor_core::services::helm;
 
     helm::uninstall_release(
         hostname,

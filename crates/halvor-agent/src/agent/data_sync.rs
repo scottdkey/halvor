@@ -9,7 +9,7 @@ use std::path::PathBuf;
 /// Sync data to/from a remote halvor installation
 pub fn sync_data(hostname: &str, pull: bool, config: &EnvConfig) -> Result<()> {
     // Get target host info (try normalized hostname)
-    let actual_hostname = halvor_core::config::service::find_hostname_in_config(hostname, config)
+    let actual_hostname = halvor_core::utils::hostname::find_hostname_in_config(hostname, config)
         .ok_or_else(|| anyhow::anyhow!("Host '{}' not found in configuration", hostname))?;
     let host_config = config
         .hosts
@@ -177,10 +177,10 @@ fn get_remote_db_path(ssh: &SshConnection) -> Result<String> {
 fn copy_file_to_remote(ssh: &SshConnection, local_path: &PathBuf, remote_path: &str) -> Result<()> {
     use std::process::Command;
 
-    let host = &ssh.host;
+    let host = ssh.host();
     let mut scp_args = vec!["-o".to_string(), "StrictHostKeyChecking=no".to_string()];
 
-    if ssh.use_key_auth {
+    if ssh.use_key_auth() {
         scp_args.extend([
             "-o".to_string(),
             "PreferredAuthentications=publickey".to_string(),
@@ -190,7 +190,7 @@ fn copy_file_to_remote(ssh: &SshConnection, local_path: &PathBuf, remote_path: &
     }
 
     scp_args.push(format!("{}:{}", local_path.display(), remote_path));
-    scp_args.insert(0, host.clone());
+    scp_args.insert(0, host.to_string());
 
     let status = Command::new("scp")
         .args(&scp_args)

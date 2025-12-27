@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod apps;  // Apps module (tailscale, k3s, npm, etc.)
 #[cfg(not(target_arch = "wasm32"))]
 pub mod ffi;
 
@@ -17,6 +18,6 @@ use anyhow::Result;
 /// * `port` - Agent API port (default: 13500)
 /// * `web_port` - Optional web UI port (enables UI if Some)
 pub async fn start(port: u16, web_port: Option<u16>) -> Result<()> {
-    let server = AgentServer::new(port);
-    server.start().await
+    let server = AgentServer::new(port, None);
+    server.start()
 }

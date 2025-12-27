@@ -7,9 +7,9 @@
 //!   halvor install <app> -H <host>    # Install on remote host
 //!   halvor install --list             # Show all available apps
 
-use crate::config;
-use halvor_core::apps::{AppCategory, find_app, list_apps, k3s};
-use halvor_core::apps::{smb, tailscale};
+use halvor_core::config;
+use halvor_agent::apps::{AppCategory, find_app, list_apps, k3s};
+use halvor_agent::apps::{smb, tailscale};
 use halvor_core::services::helm;
 use halvor_docker;
 use anyhow::Result;

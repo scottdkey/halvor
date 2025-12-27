@@ -130,6 +130,16 @@ impl SshConnection {
         })
     }
 
+    /// Get the host address
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    /// Check if using key-based authentication
+    pub fn use_key_auth(&self) -> bool {
+        self.use_key_auth
+    }
+
     fn build_ssh_args(&self) -> Vec<String> {
         let mut args = vec![
             "-o".to_string(),
@@ -533,7 +543,7 @@ impl SshConnection {
 }
 
 /// Escape a string for safe use in shell commands
-pub(crate) fn shell_escape(s: &str) -> String {
+pub fn shell_escape(s: &str) -> String {
     // Simple escaping - wrap in single quotes and escape single quotes
     if s.is_empty() {
         return "''".to_string();

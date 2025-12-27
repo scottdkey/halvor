@@ -1,7 +1,7 @@
 //! K3s maintenance operations (uninstall, snapshots, backup, restore)
 
-use crate::config::EnvConfig;
-use crate::utils::exec::{CommandExecutor, Executor};
+use halvor_core::config::EnvConfig;
+use halvor_core::utils::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
 use chrono::Utc;
 use std::io::{self, Write};
@@ -575,8 +575,8 @@ pub fn regenerate_certificates(hostname: &str, yes: bool, config: &EnvConfig) ->
         println!("Updating kubeconfig with new CA certificate...");
 
         // Import kubeconfig module
-        use crate::services::k3s::kubeconfig;
-        use crate::utils::exec::local;
+        use crate::apps::k3s::kubeconfig;
+        use halvor_core::utils::exec::local;
 
         // Check if kubectl exists
         if local::check_command_exists("kubectl") {

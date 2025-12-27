@@ -1,10 +1,10 @@
 //! K3s cluster initialization
 
-use crate::config::EnvConfig;
-use crate::services::k3s::utils::{generate_cluster_token, parse_node_token};
-use crate::services::k3s::{agent_service, cleanup, tools};
+use halvor_core::config::EnvConfig;
+use crate::apps::k3s::utils::{generate_cluster_token, parse_node_token};
+use crate::apps::k3s::{agent_service, cleanup, tools};
 use crate::apps::tailscale;
-use crate::utils::exec::{CommandExecutor, Executor};
+use halvor_core::utils::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
 use std::io::{self, Write};
 
@@ -14,7 +14,7 @@ fn check_existing_cluster<E: CommandExecutor>(exec: &E) -> Result<Option<String>
     // Check if K3s service is running - use sudo since systemctl requires it
     // Capture output to temp file (don't use tee to avoid showing output to user)
     let status_tmp = format!("/tmp/halvor_k3s_status_check_{}", std::process::id());
-    use crate::utils::ssh::shell_escape;
+    use halvor_core::utils::ssh::shell_escape;
     let escaped_tmp = shell_escape(&status_tmp);
     let status_cmd = format!("sudo systemctl is-active k3s 2>&1 > {} || sudo systemctl is-active k3s-agent 2>&1 > {} || echo 'inactive' > {}", escaped_tmp, escaped_tmp, escaped_tmp);
 

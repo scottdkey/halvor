@@ -3,7 +3,7 @@
 //! Sets up automatic failover between maple (primary) and willow (fallback) SMB servers
 //! for the k3s data directory. Uses a unified path that automatically switches based on availability.
 
-use crate::utils::exec::CommandExecutor;
+use halvor_core::utils::exec::CommandExecutor;
 use anyhow::Result;
 
 /// Set up SMB failover for k3s data directory

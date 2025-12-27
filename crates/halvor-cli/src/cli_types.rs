@@ -1,15 +1,4 @@
-// Library crate for halvor - exposes modules for use by other crates
-
-// Re-export halvor-db for internal use
-pub use halvor_db as db;
-
-pub mod agent;
-pub mod commands;
-pub mod config;
-#[cfg(feature = "ffi")]
-pub mod ffi;
-pub mod services;
-pub mod utils;
+// CLI types for halvor CLI
 
 // CLI-specific types (used by both library and binary)
 use clap::Subcommand;

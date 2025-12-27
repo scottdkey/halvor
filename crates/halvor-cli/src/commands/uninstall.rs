@@ -1,7 +1,6 @@
-use crate::config;
+use halvor_core::config;
 use halvor_core::config::config_manager;
 use halvor_db as db;
-use crate::services;
 use anyhow::Result;
 use std::env;
 use std::io::{self, Write};
@@ -16,8 +15,8 @@ pub fn handle_uninstall(hostname: Option<&str>, service: &str) -> Result<()> {
         host
     } else {
         // Check if this is a Helm chart
-        let is_helm_chart = halvor_core::apps::find_app(service)
-            .map(|app| matches!(app.category, halvor_core::apps::AppCategory::HelmChart))
+        let is_helm_chart = halvor_agent::apps::find_app(service)
+            .map(|app| matches!(app.category, halvor_agent::apps::AppCategory::HelmChart))
             .unwrap_or(false);
         
         if is_helm_chart {
@@ -31,20 +30,20 @@ pub fn handle_uninstall(hostname: Option<&str>, service: &str) -> Result<()> {
     };
 
     // Check if this is a Helm chart
-    if let Some(app) = halvor_core::apps::find_app(service) {
+    if let Some(app) = halvor_agent::apps::find_app(service) {
         match app.category {
-            halvor_core::apps::AppCategory::HelmChart => {
+            halvor_agent::apps::AppCategory::HelmChart => {
                 // Use release name (chart name)
                 let release_name = app.name;
                 println!("Uninstalling Helm chart '{}' (release: {})...", service, release_name);
                 halvor_core::services::helm::uninstall_release(target_host, release_name, false, &config)?;
                 return Ok(());
             }
-            halvor_core::apps::AppCategory::Platform => {
+            halvor_agent::apps::AppCategory::Platform => {
                 // Handle platform tools
                 match service.to_lowercase().as_str() {
                     "smb" | "samba" | "cifs" => {
-                        halvor_core::apps::smb::uninstall_smb_mounts(target_host, &config)?;
+                        halvor_agent::apps::smb::uninstall_smb_mounts(target_host, &config)?;
                         return Ok(());
                     }
                     _ => {
@@ -66,7 +65,7 @@ pub fn handle_uninstall(hostname: Option<&str>, service: &str) -> Result<()> {
             halvor_core::services::helm::uninstall_release(target_host, "portainer", false, &config)?;
         }
         "smb" | "samba" | "cifs" => {
-            halvor_core::apps::smb::uninstall_smb_mounts(target_host, &config)?;
+            halvor_agent::apps::smb::uninstall_smb_mounts(target_host, &config)?;
         }
         _ => {
             anyhow::bail!(

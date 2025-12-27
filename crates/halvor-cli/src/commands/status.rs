@@ -1,7 +1,8 @@
 //! Status commands for various services
 
-use crate::config;
-use halvor_core::services::{helm, k3s, tailscale};
+use halvor_core::config;
+use halvor_core::services::helm;
+use halvor_agent::apps::{k3s, tailscale};
 use halvor_core::utils::exec::CommandExecutor;
 use anyhow::Result;
 use clap::Subcommand;
@@ -34,11 +35,11 @@ pub fn handle_status(hostname: Option<&str>, command: Option<StatusCommands>) ->
         host.to_string()
     } else {
         // Try to detect current hostname and find it in config
-        match halvor_cli::config::service::get_current_hostname() {
+        match halvor_core::utils::hostname::get_current_hostname() {
             Ok(current_host) => {
                 // Try to find it in config (with normalization)
                 if let Some(found_host) =
-                    halvor_cli::config::service::find_hostname_in_config(&current_host, &config)
+                    halvor_core::utils::hostname::find_hostname_in_config(&current_host, &config)
                 {
                     found_host
                 } else {
@@ -93,7 +94,7 @@ fn show_mesh_status(hostname: &str, config: &config::EnvConfig) -> Result<()> {
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!();
 
-    if !halvor_core::apps::tailscale::is_tailscale_installed(&exec) {
+    if !halvor_agent::apps::tailscale::is_tailscale_installed(&exec) {
         println!("✗ Tailscale is not installed on this node.");
     } else {
         // Get Tailscale status
@@ -304,7 +305,7 @@ fn show_mesh_status(hostname: &str, config: &config::EnvConfig) -> Result<()> {
     println!();
 
     // Check if agent is running locally
-    use halvor_agent::api::AgentClient;
+    use halvor_agent::agent::api::AgentClient;
     let agent_running = if is_local {
         let client = AgentClient::new("127.0.0.1", 13500);
         client.ping().is_ok()
@@ -317,7 +318,7 @@ fn show_mesh_status(hostname: &str, config: &config::EnvConfig) -> Result<()> {
         println!();
 
         // Get mesh peers from database
-        use halvor_agent::mesh;
+        use halvor_agent::agent::mesh;
         use halvor_db::generated::agent_peers;
 
         match mesh::get_active_peers() {

@@ -1,5 +1,5 @@
-use crate::config::EnvConfig;
-use crate::utils::exec::{CommandExecutor, Executor};
+use halvor_core::config::EnvConfig;
+use halvor_core::utils::exec::{CommandExecutor, Executor};
 use anyhow::Result;
 
 pub fn setup_smb_mounts(hostname: &str, config: &EnvConfig) -> Result<()> {
@@ -10,7 +10,7 @@ pub fn setup_smb_mounts(hostname: &str, config: &EnvConfig) -> Result<()> {
     // Get the actual hostname for display - detect current machine if local
     let display_hostname = if is_local && (hostname == "localhost" || hostname == "127.0.0.1") {
         // Try to detect current hostname
-        crate::config::service::get_current_hostname()
+        halvor_core::utils::hostname::get_current_hostname()
             .ok()
             .unwrap_or_else(|| hostname.to_string())
     } else {
@@ -128,7 +128,7 @@ fn install_smb_client<E: CommandExecutor>(exec: &E) -> Result<()> {
     }
 
     // Detect package manager and install
-    let pkg_mgr = crate::utils::exec::PackageManager::detect(exec)?;
+    let pkg_mgr = halvor_core::utils::exec::PackageManager::detect(exec)?;
     println!("Detected package manager: {}", pkg_mgr.display_name());
     pkg_mgr.install_package(exec, "cifs-utils")?;
 
@@ -185,7 +185,7 @@ fn setup_smb_share<E: CommandExecutor>(
     share_name: &str,
     share_path: &str,
     mount_point: &str,
-    server_config: &crate::config::SmbServerConfig,
+    server_config: &halvor_core::config::SmbServerConfig,
 ) -> Result<()> {
     println!();
     println!("=== Setting up {} - {} ===", server_name, share_name);

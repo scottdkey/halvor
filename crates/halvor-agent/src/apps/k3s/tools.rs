@@ -1,7 +1,7 @@
 //! Tool installation functions for K3s cluster setup
-use crate::services::k3s::utils;
-use crate::utils::exec::{CommandExecutor, PackageManager};
-use crate::utils::ssh::shell_escape;
+use crate::apps::k3s::utils;
+use halvor_core::utils::exec::{CommandExecutor, PackageManager};
+use halvor_core::utils::ssh::shell_escape;
 use anyhow::{Context, Result};
 use reqwest;
 use std::io::Write;

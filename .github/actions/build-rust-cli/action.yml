@@ -83,7 +83,7 @@ runs:
         if [ "${{ inputs.unset_macos_deployment_target }}" == "true" ]; then
           unset MACOSX_DEPLOYMENT_TARGET || true
         fi
-        cargo build --release --target ${{ inputs.target }} --manifest-path projects/core/Cargo.toml
+        cargo build --release --target ${{ inputs.target }} -p halvor-cli
       env:
         SKIP_TARGET: ${{ env.SKIP_TARGET }}
         MUSL_CROSS_DIR: ${{ env.MUSL_CROSS_DIR }}

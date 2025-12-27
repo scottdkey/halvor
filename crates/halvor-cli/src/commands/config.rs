@@ -1,4 +1,4 @@
-use halvor_cli::config::service;
+use halvor_core::utils::hostname;
 use anyhow::Result;
 
 #[derive(clap::Subcommand, Clone)]

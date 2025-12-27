@@ -1,6 +1,6 @@
 //! K3s cleanup and uninstall utilities
 
-use crate::utils::exec::CommandExecutor;
+use halvor_core::utils::exec::CommandExecutor;
 use anyhow::{Context, Result};
 use std::io::{self, Write};
 

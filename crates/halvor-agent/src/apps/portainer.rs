@@ -1,6 +1,6 @@
-use crate::config::EnvConfig;
+use halvor_core::config::EnvConfig;
 use halvor_docker;
-use crate::utils::exec::{CommandExecutor, Executor};
+use halvor_core::utils::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
 
 /// Portainer edition type
@@ -136,7 +136,7 @@ pub fn install_agent<E: CommandExecutor>(exec: &E) -> Result<()> {
 /// This function is used by provision module and expects an Executor
 pub fn copy_compose_file<E: CommandExecutor>(exec: &E, compose_filename: &str) -> Result<()> {
     // Find the halvor directory to locate the compose file
-    let halvor_dir = crate::config::find_halvor_dir()?;
+    let halvor_dir = halvor_core::config::find_halvor_dir()?;
     let compose_file = halvor_dir.join("compose").join(compose_filename);
 
     if !compose_file.exists() {

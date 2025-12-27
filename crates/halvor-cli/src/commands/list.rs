@@ -1,4 +1,5 @@
-use crate::{services::host, utils::exec::CommandExecutor};
+use halvor_core::services::host;
+use halvor_core::utils::exec::CommandExecutor;
 use anyhow::Result;
 
 /// Handle list command
@@ -16,7 +17,7 @@ pub fn handle_list(hostname: Option<&str>, verbose: bool) -> Result<()> {
 
 /// List services running on a host
 fn list_host_services(hostname: &str, _verbose: bool) -> Result<()> {
-    use crate::config;
+    use halvor_core::config;
     use halvor_docker;
     use halvor_core::utils::exec::Executor;
 

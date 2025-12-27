@@ -1,8 +1,8 @@
 //! Configure Tailscale integration for existing K3s cluster
 
-use crate::config::EnvConfig;
+use halvor_core::config::EnvConfig;
 use crate::apps::tailscale;
-use crate::utils::exec::{CommandExecutor, Executor};
+use halvor_core::utils::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
 
 /// Configure an existing K3s cluster to use Tailscale

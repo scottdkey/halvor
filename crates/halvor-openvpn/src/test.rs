@@ -489,7 +489,7 @@ pub fn show_vpn_status() -> Result<()> {
 /// Run startup tests
 pub fn run_startup_tests(proxy_port: &str) -> Result<()> {
     // Run comprehensive VPN tests
-    std::env::set_var("PROXY_PORT", proxy_port);
+    unsafe { std::env::set_var("PROXY_PORT", proxy_port); }
     run_vpn_tests()?;
     Ok(())
 }

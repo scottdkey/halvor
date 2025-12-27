@@ -7,9 +7,9 @@
 //!   - More reliable connections
 //!   - Easier troubleshooting
 
-use crate::config::EnvConfig;
+use halvor_core::config::EnvConfig;
 use crate::apps::tailscale;
-use crate::utils::exec::{CommandExecutor, Executor, local};
+use halvor_core::utils::exec::{CommandExecutor, Executor, local};
 use anyhow::{Context, Result};
 use yaml_rust::YamlLoader;
 
@@ -67,10 +67,10 @@ pub fn fetch_kubeconfig_content(primary_hostname: &str, config: &EnvConfig) -> R
     if std::path::Path::new("/etc/rancher/k3s/k3s.yaml").exists() {
         // Check if primary_hostname matches local machine
         let is_local_primary = if let Ok(current_hostname) =
-            crate::config::service::get_current_hostname()
+            halvor_core::utils::hostname::get_current_hostname()
         {
-            let normalized_current = crate::config::service::normalize_hostname(&current_hostname);
-            let normalized_primary = crate::config::service::normalize_hostname(primary_hostname);
+            let normalized_current = halvor_core::utils::hostname::normalize_hostname(&current_hostname);
+            let normalized_primary = halvor_core::utils::hostname::normalize_hostname(primary_hostname);
             primary_hostname.eq_ignore_ascii_case(&current_hostname)
                 || primary_hostname.eq_ignore_ascii_case(&normalized_current)
                 || normalized_primary.eq_ignore_ascii_case(&normalized_current)

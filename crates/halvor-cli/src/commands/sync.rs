@@ -1,4 +1,4 @@
-use crate::config;
+use halvor_core::config;
 use halvor_agent::sync_data;
 use anyhow::Result;
 

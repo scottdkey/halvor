@@ -1,7 +1,7 @@
 //! Join a node to the K3s cluster
 
-use crate::config;
-use halvor_core::apps::k3s;
+use halvor_core::config;
+use halvor_agent::apps::k3s;
 use halvor_core::utils::exec::CommandExecutor;
 use anyhow::{Context, Result};
 
@@ -47,9 +47,9 @@ pub fn handle_join(
     // Also try to find it in config to get the normalized hostname
     let resolved_hostname = if join_target == "localhost" {
         // First try to get current hostname and find it in config
-        if let Ok(current_hostname) = halvor_cli::config::service::get_current_hostname() {
+        if let Ok(current_hostname) = halvor_core::utils::hostname::get_current_hostname() {
             // Try to find normalized hostname in config
-            if let Some(normalized) = halvor_cli::config::service::find_hostname_in_config(&current_hostname, &config) {
+            if let Some(normalized) = halvor_core::utils::hostname::find_hostname_in_config(&current_hostname, &config) {
                 normalized
             } else {
                 // Not in config, use current hostname as-is
@@ -71,7 +71,7 @@ pub fn handle_join(
     };
     
     if target_host_for_validation != "localhost" {
-        if halvor_cli::config::service::find_hostname_in_config(target_host_for_validation, &config).is_none() {
+        if halvor_core::utils::hostname::find_hostname_in_config(target_host_for_validation, &config).is_none() {
             anyhow::bail!(
                 "Target host '{}' not found in config.\n\nAdd to .env:\n  HOST_{}_IP=\"<ip-address>\"\n  HOST_{}_HOSTNAME=\"<hostname>\"\n\nOr run the command locally on {} without -H flag.",
                 target_host_for_validation,
@@ -94,7 +94,7 @@ pub fn handle_join(
         // Validate server is in config or is a valid Tailscale hostname/IP
         if !s.ends_with(".ts.net") && !s.parse::<std::net::IpAddr>().is_ok() {
             // Not a Tailscale hostname or IP, check if it's in config
-            if halvor_cli::config::service::find_hostname_in_config(&s, &config).is_none() {
+            if halvor_core::utils::hostname::find_hostname_in_config(&s, &config).is_none() {
                 println!("⚠ Warning: Server '{}' not found in config. Will attempt to resolve via Tailscale.", s);
             }
         }
@@ -103,7 +103,7 @@ pub fn handle_join(
         // No server provided - try to extract from KUBE_CONFIG or auto-detect
         if let Ok(kubeconfig_content) = std::env::var("KUBE_CONFIG") {
             println!("Extracting cluster server from KUBE_CONFIG environment variable...");
-            let (extracted_server, _) = halvor_core::apps::k3s::kubeconfig::extract_server_and_token_from_kubeconfig(&kubeconfig_content)
+            let (extracted_server, _) = halvor_agent::apps::k3s::kubeconfig::extract_server_and_token_from_kubeconfig(&kubeconfig_content)
                 .context("Failed to extract server from KUBE_CONFIG. Ensure KUBE_CONFIG environment variable is set.")?;
             println!("Using cluster server from kubeconfig: {}", extracted_server);
             extracted_server
@@ -156,10 +156,10 @@ fn auto_detect_primary_node(config: &config::EnvConfig, target_host: &str) -> Re
                 let server_status = server_status_cow.trim();
                 if server_status == "server" {
                     // This is a control plane node - find its hostname in config
-                    if let Ok(current_hostname) = halvor_cli::config::service::get_current_hostname() {
+                    if let Ok(current_hostname) = halvor_core::utils::hostname::get_current_hostname() {
                         // Use find_hostname_in_config to normalize (handles .ts.net, etc.)
                         if let Some(normalized_hostname) =
-                            halvor_cli::config::service::find_hostname_in_config(&current_hostname, config)
+                            halvor_core::utils::hostname::find_hostname_in_config(&current_hostname, config)
                         {
                             found_primary = Some(normalized_hostname);
                         }
@@ -184,9 +184,9 @@ fn auto_detect_primary_node(config: &config::EnvConfig, target_host: &str) -> Re
             
             // Skip the target host - we're trying to join it, not check if it's the primary
             // Normalize both hostnames for comparison (handles .ts.net suffixes, etc.)
-            let normalized_target = halvor_cli::config::service::find_hostname_in_config(target_host, config)
+            let normalized_target = halvor_core::utils::hostname::find_hostname_in_config(target_host, config)
                 .unwrap_or_else(|| target_host.to_string());
-            let normalized_hostname = halvor_cli::config::service::find_hostname_in_config(hostname, config)
+            let normalized_hostname = halvor_core::utils::hostname::find_hostname_in_config(hostname, config)
                 .unwrap_or_else(|| hostname.clone());
             
             if normalized_hostname == normalized_target {
@@ -236,7 +236,7 @@ fn auto_detect_primary_node(config: &config::EnvConfig, target_host: &str) -> Re
     if let Some(primary) = found_primary {
         println!("Auto-detected primary control plane node: {}", primary);
         // Get Tailscale hostname from config directly
-        let host_config = halvor_core::apps::tailscale::get_host_config(config, &primary)
+        let host_config = halvor_agent::apps::tailscale::get_host_config(config, &primary)
             .with_context(|| format!("Failed to get config for {}", primary))?;
 
         // Get Tailscale hostname from config (preferred) or construct it

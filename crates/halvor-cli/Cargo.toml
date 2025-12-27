@@ -17,6 +17,7 @@ halvor-agent = { path = "../halvor-agent" }
 halvor-build = { path = "../halvor-build" }
 halvor-docker = { path = "../halvor-docker" }
 halvor-web = { path = "../halvor-web", features = ["agent"] }
+halvor-openvpn = { path = "../halvor-openvpn" }
 
 clap.workspace = true
 anyhow.workspace = true
@@ -25,3 +26,5 @@ serde.workspace = true
 serde_json.workspace = true
 whoami.workspace = true
 chrono.workspace = true
+uuid.workspace = true
+rusqlite.workspace = true

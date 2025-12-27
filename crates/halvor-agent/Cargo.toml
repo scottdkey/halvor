@@ -17,8 +17,14 @@ path = "src/main.rs"
 [dependencies]
 halvor-core = { path = "../halvor-core" }
 halvor-db = { path = "../halvor-db" }
+halvor-docker = { path = "../halvor-docker" }  # Apps need Docker operations
+halvor-ffi-macro = { path = "../halvor-ffi-macro" }  # FFI exports
 
 anyhow.workspace = true
+yaml-rust.workspace = true
+rand.workspace = true
+rusqlite.workspace = true
+which.workspace = true
 tokio.workspace = true
 axum.workspace = true
 tower-http.workspace = true

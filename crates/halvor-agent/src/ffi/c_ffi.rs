@@ -1,7 +1,7 @@
 // C FFI bindings for Swift
 // This module exports C-compatible functions that Swift can call
 
-use crate::client::HalvorClient;
+use crate::agent::client::HalvorClient;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::ptr;
@@ -12,7 +12,7 @@ pub type HalvorClientPtr = *mut HalvorClient;
 /// Create a new Halvor client
 /// Returns a pointer to the client, or NULL on error
 /// agent_port: 0 means use default port
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn halvor_client_new(agent_port: u16) -> HalvorClientPtr {
     let port = if agent_port == 0 {
         None
@@ -24,7 +24,7 @@ pub unsafe extern "C" fn halvor_client_new(agent_port: u16) -> HalvorClientPtr {
 }
 
 /// Free a Halvor client
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn halvor_client_free(ptr: HalvorClientPtr) {
     if !ptr.is_null() {
         let _ = Box::from_raw(ptr);
@@ -34,7 +34,7 @@ pub unsafe extern "C" fn halvor_client_free(ptr: HalvorClientPtr) {
 /// Discover all agents
 /// Returns JSON string with array of DiscoveredHost, or NULL on error
 /// Caller must free the returned string with halvor_string_free
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn halvor_client_discover_agents(ptr: HalvorClientPtr) -> *mut c_char {
     if ptr.is_null() {
         return ptr::null_mut();
@@ -54,7 +54,7 @@ pub unsafe extern "C" fn halvor_client_discover_agents(ptr: HalvorClientPtr) -> 
 }
 
 /// Discover agents via Tailscale
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn halvor_client_discover_via_tailscale(ptr: HalvorClientPtr) -> *mut c_char {
     if ptr.is_null() {
         return ptr::null_mut();
@@ -74,7 +74,7 @@ pub unsafe extern "C" fn halvor_client_discover_via_tailscale(ptr: HalvorClientP
 }
 
 /// Discover agents on local network
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn halvor_client_discover_via_local_network(
     ptr: HalvorClientPtr,
 ) -> *mut c_char {
@@ -97,7 +97,7 @@ pub unsafe extern "C" fn halvor_client_discover_via_local_network(
 
 /// Ping an agent
 /// Returns 1 if reachable, 0 if not reachable or on error
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn halvor_client_ping_agent(
     ptr: HalvorClientPtr,
     host: *const c_char,
@@ -127,7 +127,7 @@ pub unsafe extern "C" fn halvor_client_ping_agent(
 
 /// Get host info
 /// Returns JSON string with HostInfo, or NULL on error
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn halvor_client_get_host_info(
     ptr: HalvorClientPtr,
     host: *const c_char,
@@ -158,7 +158,7 @@ pub unsafe extern "C" fn halvor_client_get_host_info(
 /// Execute a command
 /// Returns JSON string with command output, or NULL on error
 /// args_json: JSON array of strings, or NULL for empty array
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn halvor_client_execute_command(
     ptr: HalvorClientPtr,
     host: *const c_char,
@@ -203,7 +203,7 @@ pub unsafe extern "C" fn halvor_client_execute_command(
 }
 
 /// Free a string returned by the FFI
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn halvor_string_free(ptr: *mut c_char) {
     if !ptr.is_null() {
         let _ = CString::from_raw(ptr);

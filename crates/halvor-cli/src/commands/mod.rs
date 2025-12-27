@@ -103,11 +103,11 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
                 host.to_string()
             } else {
                 // Try to detect current hostname and find it in config
-                match halvor_cli::config::service::get_current_hostname() {
+                match halvor_core::utils::hostname::get_current_hostname() {
                     Ok(current_host) => {
                         // Try to find it in config (with normalization)
                         if let Some(found_host) =
-                            halvor_cli::config::service::find_hostname_in_config(&current_host, &config)
+                            halvor_core::utils::hostname::find_hostname_in_config(&current_host, &config)
                         {
                             found_host
                         } else {
@@ -128,7 +128,7 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
             db,
             command,
         } => {
-            // Convert Option<halvor_cli::commands::config::ConfigCommands> to Option<commands::config::ConfigCommands>
+            // Convert Option<crate::commands::config::ConfigCommands> to Option<commands::config::ConfigCommands>
             let local_command =
                 command.map(|c| unsafe { mem::transmute::<_, config::ConfigCommands>(c) });
             config::handle_config(None, verbose, db, local_command.as_ref())?;

@@ -1,5 +1,5 @@
-use crate::config::EnvConfig;
-use crate::services::host;
+use halvor_core::config::EnvConfig;
+use halvor_core::services::host;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -72,7 +72,7 @@ pub async fn setup_proxy_hosts(
     println!();
 
     // Read compose file
-    let halvor_dir = crate::config::find_halvor_dir()?;
+    let halvor_dir = halvor_core::config::find_halvor_dir()?;
     let compose_path = halvor_dir.join("compose").join(compose_file);
 
     if !compose_path.exists() {
@@ -98,9 +98,9 @@ pub async fn setup_proxy_hosts(
 
     // Get NPM credentials from config
     let npm_url =
-        crate::config::get_npm_url().unwrap_or_else(|| format!("https://{}:81", target_host));
-    let npm_username = crate::config::get_npm_username().context("NPM_USERNAME not set in .env")?;
-    let npm_password = crate::config::get_npm_password().context("NPM_PASSWORD not set in .env")?;
+        halvor_core::config::get_npm_url().unwrap_or_else(|| format!("https://{}:81", target_host));
+    let npm_username = halvor_core::config::get_npm_username().context("NPM_USERNAME not set in .env")?;
+    let npm_password = halvor_core::config::get_npm_password().context("NPM_PASSWORD not set in .env")?;
 
     // Login to NPM API
     let token = login_to_npm(&npm_url, &npm_username, &npm_password)
@@ -338,9 +338,9 @@ pub async fn setup_single_proxy_host(hostname: &str, service_spec: &str) -> Resu
 
     // Get NPM credentials from config
     let npm_url =
-        crate::config::get_npm_url().unwrap_or_else(|| format!("https://{}:81", target_host));
-    let npm_username = crate::config::get_npm_username().context("NPM_USERNAME not set in .env")?;
-    let npm_password = crate::config::get_npm_password().context("NPM_PASSWORD not set in .env")?;
+        halvor_core::config::get_npm_url().unwrap_or_else(|| format!("https://{}:81", target_host));
+    let npm_username = halvor_core::config::get_npm_username().context("NPM_USERNAME not set in .env")?;
+    let npm_password = halvor_core::config::get_npm_password().context("NPM_PASSWORD not set in .env")?;
 
     // Login to NPM API
     let token = login_to_npm(&npm_url, &npm_username, &npm_password)

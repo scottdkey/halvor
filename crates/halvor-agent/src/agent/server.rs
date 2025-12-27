@@ -141,7 +141,7 @@ impl AgentServer {
     }
 
     fn get_host_info(&self) -> Result<AgentResponse> {
-        use halvor_core::apps::tailscale;
+        use crate::apps::tailscale;
         use halvor_core::utils::networking;
         use std::env;
 

@@ -2,7 +2,7 @@ mod commands;
 
 use anyhow::Result;
 use clap::Parser;
-use halvor_cli::Commands;
+use crate::Commands;
 
 #[derive(Parser)]
 #[command(name = "halvor")]

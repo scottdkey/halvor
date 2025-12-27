@@ -1,6 +1,6 @@
 use super::kubeconfig::setup_local_kubeconfig;
-use crate::config::EnvConfig;
-use crate::utils::exec::{CommandExecutor, Executor};
+use halvor_core::config::EnvConfig;
+use halvor_core::utils::exec::{CommandExecutor, Executor};
 use anyhow::{Context, Result};
 
 /// Verify that a node successfully joined the cluster with retries using local kubectl
@@ -56,8 +56,8 @@ pub fn verify_cluster_join_with_local_kubectl_and_config(
                 // File already has k3s - verify it points to the correct server
                 // If not, replace the k3s section with our processed version
                 if let Ok((existing_server, _)) = super::kubeconfig::extract_server_and_token_from_kubeconfig(&existing) {
-                    let normalized_existing = crate::config::service::normalize_hostname(&existing_server);
-                    let normalized_primary = crate::config::service::normalize_hostname(primary_hostname);
+                    let normalized_existing = halvor_core::utils::hostname::normalize_hostname(&existing_server);
+                    let normalized_primary = halvor_core::utils::hostname::normalize_hostname(primary_hostname);
                     if normalized_existing != normalized_primary && existing_server != primary_hostname {
                         println!("  ⚠ Existing kubeconfig points to wrong server ({}), replacing with corrected version", existing_server);
                         // Replace the k3s section - this is a simple approach

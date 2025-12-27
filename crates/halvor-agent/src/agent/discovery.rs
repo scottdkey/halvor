@@ -1,4 +1,4 @@
-use halvor_core::apps::tailscale;
+use crate::apps::tailscale;
 use halvor_core::utils::{format_address, networking, write_json};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

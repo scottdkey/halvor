@@ -1,5 +1,5 @@
 //! Service management for halvor agent (systemd on Linux, launchd on macOS)
-use crate::utils::exec::CommandExecutor;
+use halvor_core::utils::exec::CommandExecutor;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
