@@ -317,8 +317,12 @@ fn show_mesh_status(hostname: &str, config: &config::EnvConfig) -> Result<()> {
         println!("  ✓ Agent is running");
         println!();
 
-        // Get mesh peers from database
+        // Refresh Tailscale hostnames from current Tailscale status before displaying
+        // This ensures we show the latest information even if database is stale
         use halvor_agent::agent::mesh;
+        let _ = mesh::refresh_peer_tailscale_hostnames();
+
+        // Get mesh peers from database
         use halvor_db::generated::agent_peers;
 
         match mesh::get_active_peers() {

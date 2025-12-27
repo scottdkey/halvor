@@ -232,11 +232,90 @@ pub fn update_peer_last_seen(hostname: &str) -> Result<()> {
     Ok(())
 }
 
+/// Update peer Tailscale information (IP and hostname)
+pub fn update_peer_tailscale_info(
+    hostname: &str,
+    tailscale_ip: Option<String>,
+    tailscale_hostname: Option<String>,
+) -> Result<()> {
+    let conn = db::get_connection()?;
+    let now = chrono::Utc::now().timestamp();
+
+    // Update both IP and hostname if provided
+    match (tailscale_ip.as_ref(), tailscale_hostname.as_ref()) {
+        (Some(ip), Some(ts_hostname)) => {
+            conn.execute(
+                "UPDATE agent_peers SET tailscale_ip = ?1, tailscale_hostname = ?2, last_seen_at = ?3 WHERE hostname = ?4",
+                rusqlite::params![ip, ts_hostname, now, hostname],
+            )?;
+        }
+        (Some(ip), None) => {
+            conn.execute(
+                "UPDATE agent_peers SET tailscale_ip = ?1, last_seen_at = ?2 WHERE hostname = ?3",
+                rusqlite::params![ip, now, hostname],
+            )?;
+        }
+        (None, Some(ts_hostname)) => {
+            conn.execute(
+                "UPDATE agent_peers SET tailscale_hostname = ?1, last_seen_at = ?2 WHERE hostname = ?3",
+                rusqlite::params![ts_hostname, now, hostname],
+            )?;
+        }
+        (None, None) => {
+            // Just update last_seen_at if no Tailscale info provided
+            update_peer_last_seen(hostname)?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Remove a peer from the mesh
 pub fn remove_peer(hostname: &str) -> Result<()> {
     agent_peers::delete_by_hostname(hostname)?;
     // peer_keys will be deleted automatically via CASCADE
     Ok(())
+}
+
+/// Refresh Tailscale hostnames for all peers from current Tailscale status
+pub fn refresh_peer_tailscale_hostnames() -> Result<usize> {
+    use crate::apps::tailscale;
+    
+    // Get all active peers from database
+    let peers = get_active_peers()?;
+    let mut updated_count = 0;
+    
+    // Get current Tailscale status
+    if let Ok(devices) = tailscale::list_tailscale_devices() {
+        // Create a map of normalized hostname -> (ip, full_hostname)
+        // We match by normalized short name (e.g., "baulder" matches "baulder.bombay-pinecone.ts.net")
+        let mut device_map = std::collections::HashMap::new();
+        for device in devices {
+            // Normalize the device name to get the short hostname
+            // e.g., "baulder.bombay-pinecone.ts.net" -> "baulder"
+            let normalized_device = halvor_core::utils::hostname::normalize_hostname(&device.name);
+            // Store with normalized name as key
+            device_map.insert(normalized_device, (device.ip, device.name));
+        }
+        
+        // Update each peer with Tailscale information if found
+        for peer_hostname in &peers {
+            let normalized_peer = halvor_core::utils::hostname::normalize_hostname(peer_hostname);
+            
+            // Try to find matching device by normalized hostname
+            if let Some((ip, full_hostname)) = device_map.get(&normalized_peer) {
+                // Use the peer_hostname as stored in database (which is already normalized)
+                let _ = update_peer_tailscale_info(
+                    peer_hostname,
+                    ip.clone(),
+                    Some(full_hostname.clone()),
+                );
+                updated_count += 1;
+            }
+        }
+    }
+    
+    Ok(updated_count)
 }
 
 /// Clean up expired join tokens
