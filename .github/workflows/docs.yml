@@ -44,7 +44,18 @@ jobs:
       - name: Build halvor CLI
         run: |
           cargo build --release --bin halvor --manifest-path crates/halvor-cli/Cargo.toml
-          sudo mv target/release/halvor /usr/local/bin/halvor || cp target/release/halvor /tmp/halvor && sudo mv /tmp/halvor /usr/local/bin/halvor
+          if [ -f target/release/halvor ]; then
+            sudo cp target/release/halvor /usr/local/bin/halvor
+            sudo chmod +x /usr/local/bin/halvor
+            echo "✓ halvor installed to /usr/local/bin/halvor"
+            halvor --version || echo "Warning: halvor command not found in PATH"
+          else
+            echo "Error: Binary not found at target/release/halvor"
+            echo "Checking target directory structure:"
+            find target -name "halvor" -type f 2>/dev/null || echo "No halvor binary found in target/"
+            ls -la target/release/ 2>/dev/null || echo "target/release/ directory does not exist"
+            exit 1
+          fi
 
       - name: Generate documentation
         run: |
