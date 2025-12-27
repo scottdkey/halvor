@@ -146,4 +146,9 @@ pub enum Commands {
         #[command(subcommand)]
         command: Option<commands::status::StatusCommands>,
     },
+    /// Manage halvor agent (start, stop, discover, sync)
+    Agent {
+        #[command(subcommand)]
+        command: commands::agent::AgentCommands,
+    },
 }

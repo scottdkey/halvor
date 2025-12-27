@@ -171,6 +171,11 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
                 command.map(|c| unsafe { mem::transmute(c) });
             status::handle_status(hostname.as_deref(), local_command)?;
         }
+        Agent { command } => {
+            let rt = tokio::runtime::Runtime::new()?;
+            let local_command: agent::AgentCommands = unsafe { mem::transmute(command) };
+            rt.block_on(agent::handle_agent(local_command))?;
+        }
     }
     Ok(())
 }
