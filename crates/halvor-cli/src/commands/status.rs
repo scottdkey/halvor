@@ -317,8 +317,12 @@ fn show_mesh_status(hostname: &str, config: &config::EnvConfig) -> Result<()> {
         println!("  ✓ Agent is running");
         println!();
 
-        // Get mesh peers from database
+        // Refresh Tailscale hostnames from current Tailscale status before displaying
+        // This ensures we show the latest information even if database is stale
         use halvor_agent::agent::mesh;
+        let _ = mesh::refresh_peer_tailscale_hostnames();
+
+        // Get mesh peers from database
         use halvor_db::generated::agent_peers;
 
         match mesh::get_active_peers() {
@@ -330,13 +334,44 @@ fn show_mesh_status(hostname: &str, config: &config::EnvConfig) -> Result<()> {
                     println!("    1. Generate a token: halvor agent token");
                     println!("    2. On another machine: halvor agent join <token>");
                 } else {
+                    // Get Tailscale devices to look up missing hostnames
+                    let tailscale_devices = tailscale::list_tailscale_devices().unwrap_or_default();
+                    
                     // Get detailed peer information
                     let mut peer_details = Vec::new();
                     for peer_hostname in &peers {
-                        if let Ok(Some(peer_row)) = agent_peers::select_one(
+                        if let Ok(Some(mut peer_row)) = agent_peers::select_one(
                             "hostname = ?1",
                             &[&peer_hostname as &dyn rusqlite::types::ToSql],
                         ) {
+                            // If Tailscale hostname is missing but we have an IP, try to look it up
+                            if peer_row.tailscale_hostname.is_none() {
+                                if let Some(ref peer_ip) = peer_row.tailscale_ip {
+                                    // Try to find matching device by IP
+                                    if let Some(device) = tailscale_devices.iter().find(|d| {
+                                        d.ip.as_ref().map(|ip| ip == peer_ip).unwrap_or(false)
+                                    }) {
+                                        // Found matching device, update database
+                                        let ts_hostname = device.name.trim_end_matches('.').to_string();
+                                        if let Ok(()) = mesh::update_peer_tailscale_hostname(peer_hostname, &ts_hostname) {
+                                            peer_row.tailscale_hostname = Some(ts_hostname);
+                                        }
+                                    } else {
+                                        // Try to match by hostname (short name before first dot)
+                                        let short_name = peer_hostname.split('.').next().unwrap_or(peer_hostname);
+                                        if let Some(device) = tailscale_devices.iter().find(|d| {
+                                            let device_short = d.name.split('.').next().unwrap_or(&d.name);
+                                            device_short == short_name || d.name == peer_hostname
+                                        }) {
+                                            let ts_hostname = device.name.trim_end_matches('.').to_string();
+                                            if let Ok(()) = mesh::update_peer_tailscale_hostname(peer_hostname, &ts_hostname) {
+                                                peer_row.tailscale_hostname = Some(ts_hostname);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
                             peer_details.push((
                                 peer_hostname.clone(),
                                 peer_row.tailscale_ip.clone(),

@@ -486,10 +486,29 @@ fn sync_with_agents_internal(sync: &ConfigSync, _force: bool) -> Result<()> {
                 println!("  ✓ Added new peer: {}", normalized_peer);
             }
         } else {
-            // Update last seen timestamp for reachable peers
+            // Update existing peer with discovered Tailscale information
             if host.reachable {
-                let _ = mesh::update_peer_last_seen(&normalized_peer);
+                // Update Tailscale IP and hostname if discovered
+                if host.tailscale_ip.is_some() || host.tailscale_hostname.is_some() {
+                    let _ = mesh::update_peer_tailscale_info(
+                        &normalized_peer,
+                        host.tailscale_ip.clone(),
+                        host.tailscale_hostname.clone(),
+                    );
+                } else {
+                    // Just update last seen if no Tailscale info
+                    let _ = mesh::update_peer_last_seen(&normalized_peer);
+                }
             }
+        }
+    }
+
+    // Refresh Tailscale hostnames for all peers from current Tailscale status
+    // This ensures we have the full hostnames (e.g., "baulder.bombay-pinecone.ts.net")
+    // even if they weren't discovered during this sync
+    if let Ok(updated_count) = mesh::refresh_peer_tailscale_hostnames() {
+        if updated_count > 0 {
+            println!("  ✓ Refreshed Tailscale hostnames for {} peer(s)", updated_count);
         }
     }
 
@@ -968,6 +987,10 @@ fn list_peers() -> Result<()> {
     println!("Mesh Peers");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!();
+
+    // Refresh Tailscale hostnames from current Tailscale status before displaying
+    // This ensures we show the latest information even if database is stale
+    let _ = mesh::refresh_peer_tailscale_hostnames();
 
     let peers = mesh::get_active_peers()?;
 
