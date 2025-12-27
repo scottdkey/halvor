@@ -384,7 +384,7 @@ fn update_halvor_binary(
                 "You're already running the latest version: {}",
                 current_version
             );
-            }
+        }
         } else {
             // Remote update in production mode: use check_and_install_halvor which downloads from GitHub
             println!("Production mode: Updating halvor on {} from GitHub releases...", hostname);
