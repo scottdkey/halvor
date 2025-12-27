@@ -357,12 +357,12 @@ fn show_mesh_status(hostname: &str, config: &config::EnvConfig) -> Result<()> {
                                             peer_row.tailscale_hostname = Some(ts_hostname);
                                         }
                                     } else {
-                                        // Try to match by hostname (short name before first dot)
-                                        let short_name = peer_hostname.split('.').next().unwrap_or(peer_hostname);
-                                        if let Some(device) = tailscale_devices.iter().find(|d| {
-                                            let device_short = d.name.split('.').next().unwrap_or(&d.name);
-                                            device_short == short_name || d.name == peer_hostname
-                                        }) {
+                                         // Try to match by hostname (short name before first dot)
+                                         let short_name = peer_hostname.split('.').next().unwrap_or(peer_hostname);
+                                         if let Some(device) = tailscale_devices.iter().find(|d| {
+                                             let device_short = d.name.split('.').next().unwrap_or(&d.name);
+                                             device_short == short_name || d.name == *peer_hostname
+                                         }) {
                                             let ts_hostname = device.name.trim_end_matches('.').to_string();
                                             if let Ok(()) = mesh::update_peer_tailscale_hostname(peer_hostname, &ts_hostname) {
                                                 peer_row.tailscale_hostname = Some(ts_hostname);
