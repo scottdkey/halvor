@@ -1,13 +1,15 @@
 //! Update halvor or installed apps
 
 use crate::config;
-use crate::services::apps::{find_app, AppCategory};
+use crate::services::apps::{AppCategory, find_app};
 use crate::services::helm;
+use crate::services::k3s::agent_service;
 use crate::utils::exec::{CommandExecutor, Executor};
 use crate::utils::update;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::env;
 use std::io::{self, Write};
+use std::process::Command;
 
 /// Handle update command
 pub fn handle_update(
@@ -19,10 +21,24 @@ pub fn handle_update(
     let config = config::load_config()?;
     let target_host = hostname.unwrap_or("localhost");
 
+    // Check if we're in development mode from HALVOR_ENV
+    let is_dev = env::var("HALVOR_ENV")
+        .map(|v| v.to_lowercase() == "development")
+        .unwrap_or(false);
+
     // If app is specified, update that app
     if let Some(app_name) = app {
+        // Special case: "halvor" app means update halvor itself
+        if app_name == "halvor" {
+            return update_halvor_binary(experimental, force, is_dev);
+        }
         update_app(target_host, app_name, &config)?;
         return Ok(());
+    }
+
+    // If in development mode, just update halvor from local source
+    if is_dev {
+        return update_halvor_binary(false, false, true);
     }
 
     // Otherwise, update halvor itself and prompt for updating everything
@@ -111,12 +127,240 @@ pub fn handle_update(
     Ok(())
 }
 
+/// Update halvor binary (from GitHub or local source)
+fn update_halvor_binary(experimental: bool, force: bool, dev: bool) -> Result<()> {
+    let exec = Executor::Local;
+
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("Update Halvor");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+
+    if dev {
+        println!("Development mode: Building from local source...");
+        println!();
+
+        // Stop agent service first
+        println!("Stopping agent service...");
+        if let Err(e) = agent_service::stop_agent_service(&exec) {
+            eprintln!("Warning: Failed to stop agent service: {}", e);
+        }
+
+        // Find project root (look for Cargo.toml with halvor)
+        let project_root = find_project_root()?;
+        println!("Project root: {}", project_root.display());
+
+        // Build release binary
+        println!();
+        println!("Building halvor (release mode)...");
+        let status = Command::new("cargo")
+            .args(["build", "--release", "--bin", "halvor", "--manifest-path"])
+            .arg(project_root.join("projects/core/Cargo.toml"))
+            .status()
+            .context("Failed to run cargo build")?;
+
+        if !status.success() {
+            anyhow::bail!("Cargo build failed");
+        }
+
+        // Install binary
+        println!();
+        println!("Installing halvor...");
+        let home_dir = std::env::var("HOME")
+            .ok()
+            .map(std::path::PathBuf::from)
+            .ok_or_else(|| anyhow::anyhow!("Could not find home directory (HOME not set)"))?;
+        let cargo_bin = home_dir.join(".cargo/bin");
+        std::fs::create_dir_all(&cargo_bin)?;
+
+        let source = project_root.join("target/release/halvor");
+        let dest = cargo_bin.join("halvor");
+        std::fs::copy(&source, &dest).with_context(|| {
+            format!("Failed to copy {} to {}", source.display(), dest.display())
+        })?;
+
+        println!("✓ Installed halvor to {}", dest.display());
+
+        // Restart agent service
+        println!();
+        println!("Restarting agent service...");
+        if let Err(e) = agent_service::restart_agent_service(&exec, None) {
+            eprintln!("Warning: Failed to restart agent service: {}", e);
+            println!("  You can start it manually with: halvor agent start --daemon");
+        }
+
+        println!();
+        println!("✓ Halvor updated from local source");
+    } else {
+        // Download from GitHub
+        let current_version = env!("CARGO_PKG_VERSION");
+
+        if force {
+            if experimental {
+                println!("Force mode: Downloading latest experimental version...");
+                let latest_version = update::get_latest_experimental_version()?;
+                println!("Latest experimental version: {}", latest_version);
+
+                // Stop agent, update, restart
+                println!();
+                println!("Stopping agent service...");
+                if let Err(e) = agent_service::stop_agent_service(&exec) {
+                    eprintln!("Warning: Failed to stop agent service: {}", e);
+                }
+
+                update::download_and_install_update(&latest_version)?;
+
+                println!();
+                println!("Restarting agent service...");
+                if let Err(e) = agent_service::restart_agent_service(&exec, None) {
+                    eprintln!("Warning: Failed to restart agent service: {}", e);
+                }
+            } else {
+                println!("Force mode: Downloading latest stable version...");
+                let latest_version = update::get_latest_version()?;
+                println!("Latest version: {}", latest_version);
+
+                // Stop agent, update, restart
+                println!();
+                println!("Stopping agent service...");
+                if let Err(e) = agent_service::stop_agent_service(&exec) {
+                    eprintln!("Warning: Failed to stop agent service: {}", e);
+                }
+
+                update::download_and_install_update(&latest_version)?;
+
+                println!();
+                println!("Restarting agent service...");
+                if let Err(e) = agent_service::restart_agent_service(&exec, None) {
+                    eprintln!("Warning: Failed to restart agent service: {}", e);
+                }
+            }
+        } else if experimental {
+            if let Ok(Some(new_version)) = update::check_for_experimental_updates(current_version) {
+                if update::prompt_for_update(&new_version, current_version)? {
+                    // Stop agent, update, restart
+                    println!();
+                    println!("Stopping agent service...");
+                    if let Err(e) = agent_service::stop_agent_service(&exec) {
+                        eprintln!("Warning: Failed to stop agent service: {}", e);
+                    }
+
+                    update::download_and_install_update(&new_version)?;
+
+                    println!();
+                    println!("Restarting agent service...");
+                    if let Err(e) = agent_service::restart_agent_service(&exec, None) {
+                        eprintln!("Warning: Failed to restart agent service: {}", e);
+                    }
+                }
+            } else {
+                println!("You're already running the latest experimental version.");
+            }
+        } else if let Ok(Some(new_version)) = update::check_for_updates(current_version) {
+            if update::prompt_for_update(&new_version, current_version)? {
+                // Stop agent, update, restart
+                println!();
+                println!("Stopping agent service...");
+                if let Err(e) = agent_service::stop_agent_service(&exec) {
+                    eprintln!("Warning: Failed to stop agent service: {}", e);
+                }
+
+                update::download_and_install_update(&new_version)?;
+
+                println!();
+                println!("Restarting agent service...");
+                if let Err(e) = agent_service::restart_agent_service(&exec, None) {
+                    eprintln!("Warning: Failed to restart agent service: {}", e);
+                }
+            }
+        } else {
+            println!(
+                "You're already running the latest version: {}",
+                current_version
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Find the halvor project root directory
+fn find_project_root() -> Result<std::path::PathBuf> {
+    // First, check if we're in the project directory
+    let current_dir = std::env::current_dir()?;
+
+    // Walk up looking for projects/core/Cargo.toml with halvor
+    let mut dir = current_dir.as_path();
+    loop {
+        let cargo_toml = dir.join("projects/core/Cargo.toml");
+        if cargo_toml.exists() {
+            // Verify it's the halvor project
+            if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
+                if content.contains("name = \"halvor\"") {
+                    return Ok(dir.to_path_buf());
+                }
+            }
+        }
+
+        // Also check for Cargo.toml at this level
+        let cargo_toml = dir.join("Cargo.toml");
+        if cargo_toml.exists() {
+            if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
+                if content.contains("name = \"halvor\"") {
+                    // This might be the projects/core directory, go up one level
+                    if let Some(parent) = dir.parent() {
+                        if let Some(grandparent) = parent.parent() {
+                            let check = grandparent.join("projects/core/Cargo.toml");
+                            if check.exists() {
+                                return Ok(grandparent.to_path_buf());
+                            }
+                        }
+                    }
+                    return Ok(dir.to_path_buf());
+                }
+            }
+        }
+
+        if let Some(parent) = dir.parent() {
+            dir = parent;
+        } else {
+            break;
+        }
+    }
+
+    // Fallback: check common locations
+    let home = std::env::var("HOME")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
+    let common_paths = [
+        home.join("code/halvor"),
+        home.join("projects/halvor"),
+        home.join("dev/halvor"),
+        home.join("src/halvor"),
+    ];
+
+    for path in &common_paths {
+        let cargo_toml = path.join("projects/core/Cargo.toml");
+        if cargo_toml.exists() {
+            return Ok(path.clone());
+        }
+    }
+
+    anyhow::bail!(
+        "Could not find halvor project root. Make sure you're in the project directory or it's in a common location."
+    )
+}
+
 /// Update a specific app
 fn update_app(hostname: &str, app_name: &str, config: &config::EnvConfig) -> Result<()> {
     let app_def = match find_app(app_name) {
         Some(def) => def,
         None => {
-            anyhow::bail!("Unknown app: {}. Use 'halvor install --list' to see available apps.", app_name);
+            anyhow::bail!(
+                "Unknown app: {}. Use 'halvor install --list' to see available apps.",
+                app_name
+            );
         }
     };
 
@@ -140,7 +384,10 @@ fn update_platform_tools(hostname: &str, config: &config::EnvConfig) -> Result<(
 
     // Update Docker
     println!("  Checking Docker...");
-    if exec.execute_shell("command -v docker >/dev/null 2>&1").is_ok() {
+    if exec
+        .execute_shell("command -v docker >/dev/null 2>&1")
+        .is_ok()
+    {
         // Try to update Docker (platform-specific)
         if cfg!(target_os = "linux") {
             let _ = exec.execute_shell("sudo apt-get update && sudo apt-get upgrade -y docker-ce docker-ce-cli containerd.io");
@@ -150,7 +397,10 @@ fn update_platform_tools(hostname: &str, config: &config::EnvConfig) -> Result<(
 
     // Update Tailscale
     println!("  Checking Tailscale...");
-    if exec.execute_shell("command -v tailscale >/dev/null 2>&1").is_ok() {
+    if exec
+        .execute_shell("command -v tailscale >/dev/null 2>&1")
+        .is_ok()
+    {
         if cfg!(target_os = "linux") {
             let _ = exec.execute_shell("sudo tailscale update");
         }
@@ -215,11 +465,11 @@ fn update_helm_charts(_hostname: &str, _config: &config::EnvConfig) -> Result<()
 /// Update a specific Helm chart
 fn update_helm_chart(hostname: &str, chart_name: &str, config: &config::EnvConfig) -> Result<()> {
     println!("Updating Helm chart '{}' on {}...", chart_name, hostname);
-    
+
     let release_name = chart_name; // Use chart name as release name
-    
+
     // Use helm upgrade_release (it will detect namespace from the release)
     helm::upgrade_release(hostname, release_name, None, &[], config)?;
-    
+
     Ok(())
 }

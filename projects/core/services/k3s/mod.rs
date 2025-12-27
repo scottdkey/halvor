@@ -3,7 +3,7 @@
 //! Handles K3s installation, HA configuration, and etcd snapshots.
 
 // Module declarations
-mod agent_service;
+pub mod agent_service;
 mod cleanup;
 mod init;
 mod join;
@@ -18,7 +18,7 @@ mod utils;
 mod verify;
 
 // Re-export public functions from modules
-pub use agent_service::setup_agent_service;
+pub use agent_service::{setup_agent_service, stop_agent_service, restart_agent_service};
 pub use init::{init_control_plane, prepare_node};
 pub use join::join_cluster;
 pub use maintenance::regenerate_certificates;

@@ -279,7 +279,7 @@ impl AgentServer {
         use crate::utils::crypto;
 
         // Validate the join token
-        let token = match mesh::validate_join_token(join_token) {
+        let _token = match mesh::validate_join_token(join_token) {
             Ok(t) => t,
             Err(e) => {
                 return Ok(AgentResponse::Error {

@@ -45,14 +45,50 @@ install: install-rust install-rust-targets install-rust-deps install-swift insta
 		echo "You can now run: halvor build cli or halvor build web"; \
 	fi
 
-# Install CLI to system
+# Install CLI to system (stops agent service, builds, installs, restarts service)
 .PHONY: install-cli
 install-cli:
 	@echo "Building and installing CLI to system..."
+	@# Stop agent service if running (macOS)
+	@if [ "$$(uname -s)" = "Darwin" ]; then \
+		if launchctl list com.halvor.agent 2>/dev/null | grep -q .; then \
+			echo "Stopping halvor agent service..."; \
+			launchctl stop com.halvor.agent 2>/dev/null || true; \
+			launchctl unload ~/Library/LaunchAgents/com.halvor.agent.plist 2>/dev/null || true; \
+			sleep 1; \
+		fi; \
+		pkill -9 -f "halvor agent" 2>/dev/null || true; \
+	fi
+	@# Stop agent service if running (Linux)
+	@if [ "$$(uname -s)" = "Linux" ]; then \
+		if systemctl is-active halvor-agent.service >/dev/null 2>&1; then \
+			echo "Stopping halvor agent service..."; \
+			sudo systemctl stop halvor-agent.service 2>/dev/null || true; \
+			sleep 1; \
+		fi; \
+	fi
 	@cargo build --release --bin halvor --manifest-path projects/core/Cargo.toml
 	@mkdir -p ~/.cargo/bin
 	@cp -f target/release/halvor ~/.cargo/bin/halvor
 	@echo "✓ CLI installed to ~/.cargo/bin/halvor (available as 'halvor')"
+	@# Restart agent service if plist/service file exists (macOS)
+	@if [ "$$(uname -s)" = "Darwin" ]; then \
+		if [ -f ~/Library/LaunchAgents/com.halvor.agent.plist ]; then \
+			echo "Restarting halvor agent service..."; \
+			launchctl load -w ~/Library/LaunchAgents/com.halvor.agent.plist 2>/dev/null || true; \
+			launchctl start com.halvor.agent 2>/dev/null || true; \
+			echo "✓ Agent service restarted"; \
+		fi; \
+	fi
+	@# Restart agent service if service file exists (Linux)
+	@if [ "$$(uname -s)" = "Linux" ]; then \
+		if [ -f /etc/systemd/system/halvor-agent.service ]; then \
+			echo "Restarting halvor agent service..."; \
+			sudo systemctl daemon-reload; \
+			sudo systemctl start halvor-agent.service 2>/dev/null || true; \
+			echo "✓ Agent service restarted"; \
+		fi; \
+	fi
 
 # Install Rust toolchain
 install-rust:

@@ -9,7 +9,7 @@ use base64::{engine::general_purpose, Engine};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-const TOKEN_EXPIRY_HOURS: i64 = 24;
+pub const TOKEN_EXPIRY_HOURS: i64 = 24;
 
 /// Join token structure (encoded in base64)
 #[derive(Debug, Clone, Serialize, Deserialize)]
