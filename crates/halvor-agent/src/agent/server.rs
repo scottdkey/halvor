@@ -233,6 +233,8 @@ impl AgentServer {
 
     fn sync_database(&self, from_hostname: &str, _last_sync: Option<i64>) -> Result<AgentResponse> {
         use halvor_core::services::host;
+        use crate::agent::mesh;
+        use halvor_db::generated::agent_peers;
 
         // Export host configs and settings for this host
         let local_hostname = std::env::var("HOSTNAME")
@@ -255,12 +257,32 @@ impl AgentServer {
             std::collections::HashMap::new();
         // Settings are now in environment variables loaded via direnv from .envrc
 
-        // Serialize sync data
+        // Get ALL mesh peers from database to share with requesting node
+        let peer_rows = agent_peers::select_many(
+            "status = ?1",
+            &[&"active" as &dyn rusqlite::types::ToSql],
+        ).unwrap_or_default();
+
+        let mut mesh_peers = Vec::new();
+        for peer in &peer_rows {
+            mesh_peers.push(serde_json::json!({
+                "hostname": peer.hostname,
+                "tailscale_ip": peer.tailscale_ip,
+                "tailscale_hostname": peer.tailscale_hostname,
+                "public_key": peer.public_key,
+                "status": peer.status,
+                "last_seen_at": peer.last_seen_at,
+                "joined_at": peer.joined_at,
+            }));
+        }
+
+        // Serialize sync data - includes ALL known peers for self-healing
         let sync_data = serde_json::json!({
             "from_hostname": from_hostname,
             "local_hostname": local_hostname,
             "hosts": host_configs,
             "settings": db_settings,
+            "mesh_peers": mesh_peers, // Share all known peers
         });
 
         let data_str = serde_json::to_string(&sync_data)?;
