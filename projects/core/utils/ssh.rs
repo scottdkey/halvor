@@ -1,6 +1,7 @@
 use crate::config::{self, EnvConfig};
 use crate::utils::exec::local;
 use anyhow::{Context, Result};
+use base64::Engine as _;
 use std::io::{self, Write};
 use std::process::{Command, Output, Stdio};
 use std::time::Duration;
@@ -55,8 +56,11 @@ impl SshConnection {
         // Test if key-based auth works (with very short timeout to avoid hanging)
         // Use spawn with a timeout to prevent indefinite hanging
         // IMPORTANT: Show stderr so Tailscale SSH authentication prompts are visible
-        eprintln!("  [DEBUG] Testing SSH key-based authentication for {} (2s timeout)...", host);
-        
+        eprintln!(
+            "  [DEBUG] Testing SSH key-based authentication for {} (2s timeout)...",
+            host
+        );
+
         let use_key_auth = {
             let mut child = Command::new("ssh")
                 .args([
@@ -78,11 +82,11 @@ impl SshConnection {
                 .stderr(Stdio::inherit()) // Show stderr so authentication prompts are visible
                 .stdin(Stdio::null())
                 .spawn()?;
-            
+
             // Wait for process with timeout
             let start = std::time::Instant::now();
             let timeout = Duration::from_secs(3); // 3 second max wait
-            
+
             let mut result = false;
             while start.elapsed() < timeout {
                 match child.try_wait() {
@@ -100,20 +104,22 @@ impl SshConnection {
                     }
                 }
             }
-            
+
             // If still running, kill it
             if child.try_wait()?.is_none() {
                 let _ = child.kill();
                 let _ = child.wait();
             }
-            
+
             result
         };
-        
+
         if use_key_auth {
             eprintln!("  [DEBUG] SSH key-based authentication works");
         } else {
-            eprintln!("  [DEBUG] SSH key-based authentication failed or timed out, will use password authentication");
+            eprintln!(
+                "  [DEBUG] SSH key-based authentication failed or timed out, will use password authentication"
+            );
         }
 
         Ok(Self {
@@ -373,7 +379,7 @@ impl SshConnection {
             .stdin(Stdio::null())
             .output()
             .with_context(|| format!("Failed to read temp file: {}", temp_file))?;
-        
+
         let content = if temp_output.status.success() {
             String::from_utf8(temp_output.stdout)
                 .with_context(|| format!("Failed to decode temp file contents: {}", temp_file))?
@@ -381,7 +387,7 @@ impl SshConnection {
             // Fallback: if temp file read failed, the original command output should have been shown
             anyhow::bail!("Failed to read captured file content from: {}", temp_file);
         };
-        
+
         // Clean up temp file (use shell_escape to ensure path is properly quoted)
         // Only try to remove if temp_file is not empty
         if !temp_file.is_empty() {
@@ -392,29 +398,41 @@ impl SshConnection {
 
     pub fn write_file(&self, path: &str, content: &[u8]) -> Result<()> {
         // Check if path requires sudo (system directories)
-        let needs_sudo = path.starts_with("/etc/") 
+        let needs_sudo = path.starts_with("/etc/")
             || path.starts_with("/usr/local/bin/")
             || path.starts_with("/opt/")
             || path.starts_with("/var/lib/");
 
-        let write_command = if needs_sudo {
+        let (write_command, use_base64) = if needs_sudo {
             // Use sudo with tee for system paths
             if self.sudo_password.is_some() {
-                // We have sudo password, inject it
+                // We have sudo password - use base64 encoding to avoid stdin conflicts
+                // This allows us to pipe password to sudo while also providing file content
                 let password = self.sudo_password.as_ref().unwrap();
                 let escaped_password = shell_escape(password);
-                format!(
-                    "echo {} | sudo -S tee {} > /dev/null",
-                    escaped_password,
-                    shell_escape(path)
+                let escaped_path = shell_escape(path);
+                // Encode content to base64, then decode on remote side
+                // Password goes to sudo, base64 content goes to base64 -d
+                let base64_content = base64::engine::general_purpose::STANDARD.encode(content);
+                (
+                    format!(
+                        "echo {} | sudo -S sh -c 'echo {} | base64 -d > {}'",
+                        escaped_password,
+                        shell_escape(&base64_content),
+                        escaped_path
+                    ),
+                    false, // Already encoded
                 )
             } else {
                 // No password, use interactive sudo (will prompt)
-                format!("sudo tee {} > /dev/null", shell_escape(path))
+                (
+                    format!("sudo tee {} > /dev/null", shell_escape(path)),
+                    false,
+                )
             }
         } else {
             // Regular path, no sudo needed
-            format!("cat > {}", shell_escape(path))
+            (format!("cat > {}", shell_escape(path)), false)
         };
 
         let mut ssh_args = self.build_ssh_args();
@@ -430,7 +448,12 @@ impl SshConnection {
 
         let mut cmd = Command::new("ssh");
         cmd.args(&ssh_args);
-        cmd.stdin(Stdio::piped());
+        // Only pipe stdin if we're not using base64 (which embeds content in command)
+        if !use_base64 {
+            cmd.stdin(Stdio::piped());
+        } else {
+            cmd.stdin(Stdio::null()); // Password and content are in the command
+        }
         cmd.stdout(Stdio::null());
         cmd.stderr(Stdio::inherit());
 
@@ -438,9 +461,12 @@ impl SshConnection {
             .spawn()
             .with_context(|| format!("Failed to spawn SSH command for writing file"))?;
 
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(content)?;
-            stdin.flush()?;
+        // Only write to stdin if we're not using base64 (which embeds content in command)
+        if !use_base64 {
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(content)?;
+                stdin.flush()?;
+            }
         }
 
         let status = child

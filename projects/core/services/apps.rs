@@ -60,6 +60,14 @@ pub static APPS: &[AppDefinition] = &[
         aliases: &["kubernetes", "k8s"],
         namespace: None,
     },
+    AppDefinition {
+        name: "agent",
+        category: AppCategory::Platform,
+        description: "Halvor agent daemon (for remote execution and automation)",
+        requires_vpn: false,
+        aliases: &["halvor-agent"],
+        namespace: None,
+    },
     // Helm charts
     AppDefinition {
         name: "portainer",

@@ -143,6 +143,10 @@ fn install_platform_tool(hostname: &str, tool: &str, config: &config::EnvConfig)
             // K3s init - initialize primary control plane node
             services::k3s::init_control_plane(hostname, None, false, config)?;
         }
+        "agent" | "halvor-agent" => {
+            // Install/update halvor agent
+            crate::services::agent::install_agent(hostname, config)?;
+        }
         "pia-vpn" | "pia" | "vpn" => {
             // PIA VPN is a Helm chart - should be installed via Helm chart category
             anyhow::bail!(

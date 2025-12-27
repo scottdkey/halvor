@@ -1,6 +1,7 @@
 // Services module - auto-detects and exports all services
 // Add new services by creating a file in this directory
 
+pub mod agent;
 pub mod apps;
 pub mod backup;
 pub mod build;
@@ -8,7 +9,7 @@ pub mod dev;
 pub mod docker;
 pub mod helm;
 pub mod host;
-pub(crate) mod k3s;  // Internal to crate - accessed via commands only
+pub(crate) mod k3s; // Internal to crate - accessed via commands only
 pub mod npm;
 pub mod pia_vpn;
 pub mod portainer;
