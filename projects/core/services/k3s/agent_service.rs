@@ -293,13 +293,20 @@ fn setup_agent_service_linux<E: CommandExecutor>(exec: &E, web_port: Option<u16>
         .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("/opt/halvor/projects/web"));
 
-    // Get config directory for PID file (must match what agent.rs uses)
-    // The agent uses get_agent_pid_file() which uses config_manager::get_config_dir()
-    // This resolves to ~/.config/halvor/halvor-agent.pid (or /root/.config/halvor when running as root)
+    // Get the current user (who is running the setup)
+    let current_user = exec
+        .execute_shell("whoami")
+        .and_then(|o| {
+            let user = String::from_utf8(o.stdout)?;
+            Ok(user.trim().to_string())
+        })
+        .unwrap_or_else(|_| "root".to_string());
+
+    // Get user's home directory
     let home_dir = exec.get_home_dir().unwrap_or_else(|_| "/root".to_string());
     let config_dir = format!("{}/.config/halvor", home_dir);
     let pid_file = format!("{}/halvor-agent.pid", config_dir);
-    
+
     // Ensure config directory exists
     exec.execute_shell(&format!("mkdir -p {}", config_dir))
         .context("Failed to create config directory")?;
@@ -314,7 +321,8 @@ Wants=network.target
 
 [Service]
 Type=forking
-User=root
+User={}
+Group={}
 ExecStart={} agent start --port 13500{} --daemon
 PIDFile={}
 Restart=always
@@ -323,7 +331,8 @@ StandardOutput=journal
 StandardError=journal
 
 # Environment variables
-Environment="HALVOR_DB_DIR=/var/lib/halvor/data"
+Environment="HOME={}"
+Environment="HALVOR_DB_DIR={}"
 Environment="HALVOR_WEB_DIR={}"
 
 # Security settings
@@ -333,6 +342,8 @@ PrivateTmp=true
 [Install]
 WantedBy=multi-user.target
 "#,
+        current_user,
+        current_user,
         halvor_path,
         if let Some(wp) = web_port {
             format!(" --web-port {}", wp)
@@ -340,6 +351,8 @@ WantedBy=multi-user.target
             String::new()
         },
         pid_file,
+        home_dir,
+        config_dir,
         web_dir.display()
     );
 
