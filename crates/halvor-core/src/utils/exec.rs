@@ -15,8 +15,8 @@ pub mod local {
     pub fn execute(program: &str, args: &[&str]) -> Result<Output> {
         let mut cmd = Command::new(program);
         cmd.args(args);
-        cmd.stdout(Stdio::inherit()); // Show stdout in real-time - ALL output must be visible
-        cmd.stderr(Stdio::inherit()); // Show stderr in real-time - ALL output must be visible
+        cmd.stdout(Stdio::piped()); // Capture stdout for parsing
+        cmd.stderr(Stdio::piped()); // Capture stderr for error messages
         cmd.stdin(Stdio::null());
         cmd.output()
             .with_context(|| format!("Failed to execute command: {}", program))
