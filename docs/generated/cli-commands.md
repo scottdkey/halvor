@@ -67,19 +67,6 @@ Options:
   -h, --help                 Print help
 ```
 
-### `halvor sync`
-
-```
-Sync encrypted data between hal installations
-
-Usage: halvor sync [OPTIONS]
-
-Options:
-  -H, --hostname <HOSTNAME>  Hostname to operate on (defaults to localhost if not provided)
-      --pull                 Pull data from remote instead of pushing
-  -h, --help                 Print help
-```
-
 ### `halvor list`
 
 ```

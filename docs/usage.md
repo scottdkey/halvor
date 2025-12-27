@@ -448,28 +448,6 @@ halvor list -H frigg
 halvor list --verbose
 ```
 
-### `halvor sync`
-
-Sync encrypted data between halvor installations.
-
-**Usage:**
-```bash
-halvor sync [-H <hostname>] [--pull]
-```
-
-**Options:**
-- `-H, --hostname <HOSTNAME>` - Target hostname (required)
-- `--pull` - Pull data from remote instead of pushing
-
-**Examples:**
-```bash
-# Push data to remote host
-halvor sync -H frigg
-
-# Pull data from remote host
-halvor sync -H frigg --pull
-```
-
 ### `halvor update`
 
 Update halvor or installed apps.

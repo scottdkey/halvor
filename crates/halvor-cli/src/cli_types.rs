@@ -33,12 +33,6 @@ pub enum Commands {
         #[arg(long)]
         backup: Option<String>,
     },
-    /// Sync encrypted data between hal installations
-    Sync {
-        /// Pull data from remote instead of pushing
-        #[arg(long)]
-        pull: bool,
-    },
     /// List services or hosts
     List {
         /// Show verbose information

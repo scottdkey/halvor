@@ -15,7 +15,6 @@ pub mod install;
 pub mod join;
 pub mod list;
 pub mod status;
-pub mod sync;
 pub mod uninstall;
 pub mod update;
 pub mod utils;
@@ -55,9 +54,6 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
                 env,
                 backup.as_deref(),
             )?;
-        }
-        Sync { pull } => {
-            sync::handle_sync(hostname.as_deref(), pull)?;
         }
         List { verbose } => {
             list::handle_list(hostname.as_deref(), verbose)?;
