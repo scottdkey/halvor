@@ -98,7 +98,7 @@ pub static APPS: &[AppDefinition] = &[
     AppDefinition {
         name: "traefik-public",
         category: AppCategory::HelmChart,
-        description: "Public Traefik reverse proxy (requires PUBLIC_DOMAIN environment variable)",
+        description: "Public Traefik reverse proxy (requires PUBLIC_TLD environment variable)",
         requires_vpn: false,
         aliases: &["traefik-pub", "traefik-dev"],
         namespace: Some("traefik"),
@@ -107,7 +107,7 @@ pub static APPS: &[AppDefinition] = &[
     AppDefinition {
         name: "traefik-private",
         category: AppCategory::HelmChart,
-        description: "Private Traefik reverse proxy (requires PRIVATE_DOMAIN environment variable, local/Tailnet only)",
+        description: "Private Traefik reverse proxy (requires PRIVATE_TLD environment variable, local/Tailnet only)",
         requires_vpn: false,
         aliases: &["traefik-priv", "traefik-me"],
         namespace: Some("traefik"),

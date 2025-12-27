@@ -93,8 +93,8 @@ fn generate_values_from_env_internal(chart: &str) -> Result<HashMap<String, Stri
 
     match chart {
         "traefik-public" => {
-            let domain = std::env::var("PUBLIC_DOMAIN")
-                .context("PUBLIC_DOMAIN environment variable not set")?;
+            let domain = std::env::var("PUBLIC_TLD")
+                .context("PUBLIC_TLD environment variable not set")?;
             let acme_email = std::env::var("ACME_EMAIL")
                 .context("ACME_EMAIL environment variable not set")?;
             let cf_token = std::env::var("CF_DNS_API_TOKEN")
@@ -109,8 +109,8 @@ fn generate_values_from_env_internal(chart: &str) -> Result<HashMap<String, Stri
             );
         }
         "traefik-private" => {
-            let domain = std::env::var("PRIVATE_DOMAIN")
-                .context("PRIVATE_DOMAIN environment variable not set")?;
+            let domain = std::env::var("PRIVATE_TLD")
+                .context("PRIVATE_TLD environment variable not set")?;
             let acme_email = std::env::var("ACME_EMAIL")
                 .context("ACME_EMAIL environment variable not set")?;
             let cf_token = std::env::var("CF_DNS_API_TOKEN")
@@ -126,9 +126,9 @@ fn generate_values_from_env_internal(chart: &str) -> Result<HashMap<String, Stri
         }
         "gitea" => {
             let domain = std::env::var("GITEA_DOMAIN")
-                .or_else(|_| std::env::var("PUBLIC_DOMAIN").map(|d| format!("gitea.{}", d)))
-                .or_else(|_| std::env::var("PRIVATE_DOMAIN").map(|d| format!("gitea.{}", d)))
-                .context("GITEA_DOMAIN, PUBLIC_DOMAIN, or PRIVATE_DOMAIN environment variable not set")?;
+                .or_else(|_| std::env::var("PUBLIC_TLD").map(|d| format!("gitea.{}", d)))
+                .or_else(|_| std::env::var("PRIVATE_TLD").map(|d| format!("gitea.{}", d)))
+                .context("GITEA_DOMAIN, PUBLIC_TLD, or PRIVATE_TLD environment variable not set")?;
 
             let root_url =
                 std::env::var("GITEA_ROOT_URL").unwrap_or_else(|_| format!("https://{}", domain));
@@ -170,7 +170,7 @@ fn generate_values_from_env_internal(chart: &str) -> Result<HashMap<String, Stri
         }
         _ => {
             // For other charts, try to load common env vars
-            if let Ok(domain) = std::env::var("PUBLIC_DOMAIN") {
+            if let Ok(domain) = std::env::var("PUBLIC_TLD") {
                 values.insert("domain".to_string(), domain);
             }
         }

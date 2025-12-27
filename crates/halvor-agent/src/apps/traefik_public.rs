@@ -24,8 +24,8 @@ impl HelmApp for TraefikPublic {
     fn generate_values(&self) -> Result<Vec<String>> {
         let mut values = HashMap::new();
         
-        let domain = std::env::var("PUBLIC_DOMAIN")
-            .context("PUBLIC_DOMAIN environment variable not set")?;
+        let domain = std::env::var("PUBLIC_TLD")
+            .context("PUBLIC_TLD environment variable not set")?;
         let acme_email = std::env::var("ACME_EMAIL")
             .context("ACME_EMAIL environment variable not set")?;
         let cf_token = std::env::var("CF_DNS_API_TOKEN")

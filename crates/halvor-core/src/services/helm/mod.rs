@@ -17,8 +17,8 @@ fn generate_values_from_env(chart: &str) -> Result<HashMap<String, String>> {
 
     match chart {
         "traefik-public" => {
-            let domain = std::env::var("PUBLIC_DOMAIN")
-                .context("PUBLIC_DOMAIN environment variable not set")?;
+            let domain = std::env::var("PUBLIC_TLD")
+                .context("PUBLIC_TLD environment variable not set")?;
             let acme_email = std::env::var("ACME_EMAIL")
                 .context("ACME_EMAIL environment variable not set")?;
             let cf_token = std::env::var("CF_DNS_API_TOKEN")
@@ -33,8 +33,8 @@ fn generate_values_from_env(chart: &str) -> Result<HashMap<String, String>> {
             );
         }
         "traefik-private" => {
-            let domain = std::env::var("PRIVATE_DOMAIN")
-                .context("PRIVATE_DOMAIN environment variable not set")?;
+            let domain = std::env::var("PRIVATE_TLD")
+                .context("PRIVATE_TLD environment variable not set")?;
             let acme_email = std::env::var("ACME_EMAIL")
                 .context("ACME_EMAIL environment variable not set")?;
             let cf_token = std::env::var("CF_DNS_API_TOKEN")
@@ -50,9 +50,9 @@ fn generate_values_from_env(chart: &str) -> Result<HashMap<String, String>> {
         }
         "gitea" => {
             let domain = std::env::var("GITEA_DOMAIN")
-                .or_else(|_| std::env::var("PUBLIC_DOMAIN").map(|d| format!("gitea.{}", d)))
-                .or_else(|_| std::env::var("PRIVATE_DOMAIN").map(|d| format!("gitea.{}", d)))
-                .context("GITEA_DOMAIN, PUBLIC_DOMAIN, or PRIVATE_DOMAIN environment variable not set")?;
+                .or_else(|_| std::env::var("PUBLIC_TLD").map(|d| format!("gitea.{}", d)))
+                .or_else(|_| std::env::var("PRIVATE_TLD").map(|d| format!("gitea.{}", d)))
+                .context("GITEA_DOMAIN, PUBLIC_TLD, or PRIVATE_TLD environment variable not set")?;
 
             let root_url =
                 std::env::var("GITEA_ROOT_URL").unwrap_or_else(|_| format!("https://{}", domain));
@@ -110,7 +110,7 @@ fn generate_values_from_env(chart: &str) -> Result<HashMap<String, String>> {
         }
         _ => {
             // For other charts, try to load common env vars
-            if let Ok(domain) = std::env::var("PUBLIC_DOMAIN") {
+            if let Ok(domain) = std::env::var("PUBLIC_TLD") {
                 values.insert("domain".to_string(), domain);
             }
         }
@@ -201,7 +201,7 @@ pub fn install_chart(
     println!();
 
     // Handle external Helm repository if provided
-    let (chart_path, is_temp_file, use_external_repo) = if let Some(repo_url) = repo {
+    let (chart_path, is_temp_file) = if let Some(repo_url) = repo {
         // External Helm repository provided
         let repo_name = repo_name.unwrap_or_else(|| {
             // Generate a repo name from the URL (e.g., tailscale from https://pkgs.tailscale.com/helmcharts)
@@ -252,21 +252,44 @@ pub fn install_chart(
             format!("{}/{}", repo_name, chart)
         };
 
-        (chart_ref, false, true)
+        (chart_ref, false)
     } else if chart.contains('/') {
         // Chart is in repo/chart format but no repo URL provided
         // Try to use it as-is (assumes repo is already added)
         println!("Using chart reference: {}", chart);
         println!("  (Assuming Helm repository is already configured)");
         println!();
-        (chart.to_string(), false, true)
+        (chart.to_string(), false)
     } else {
         // Try to find chart locally first, then fall back to GitHub
         let halvor_dir = crate::config::find_halvor_dir()?;
-        let local_path = halvor_dir.join("charts").join(chart);
+
+        // Handle traefik-private and traefik-public specially - they use the same base chart
+        // with different values files
+        let (chart_dir, values_file) = if chart == "traefik-private" {
+            ("traefik", Some("values-private.yaml"))
+        } else if chart == "traefik-public" {
+            ("traefik", Some("values-public.yaml"))
+        } else {
+            (chart, None)
+        };
+
+        let local_path = halvor_dir.join("charts").join(chart_dir);
 
         if local_path.exists() {
-            (local_path.to_string_lossy().to_string(), false, false)
+            // If we have a values file for this chart variant, include it in the path info
+            if let Some(vf) = values_file {
+                let values_path = local_path.join(vf);
+                if values_path.exists() {
+                    // Return chart path with values file info encoded
+                    // We'll extract this later to add -f flag
+                    (format!("{}|{}", local_path.to_string_lossy(), values_path.to_string_lossy()), false)
+                } else {
+                    (local_path.to_string_lossy().to_string(), false)
+                }
+            } else {
+                (local_path.to_string_lossy().to_string(), false)
+            }
         } else {
             // Try to install from GitHub releases
             println!("  Chart not found locally, attempting to install from GitHub...");
@@ -296,7 +319,7 @@ pub fn install_chart(
                     std::io::copy(&mut bytes.as_ref(), &mut file)
                         .context("Failed to write chart file")?;
                     println!("  ✓ Downloaded chart from GitHub");
-                    (chart_tgz.to_string_lossy().to_string(), true, false)
+                    (chart_tgz.to_string_lossy().to_string(), true)
                 }
                 Ok(resp) => {
                     let status = resp.status();
@@ -336,19 +359,24 @@ pub fn install_chart(
     }
 
     // Build helm install command
-    let mut cmd = if use_external_repo {
-        // For external repos, chart_path is already in repo/chart format
-        format!(
-            "helm upgrade --install {} {} --namespace {} --create-namespace --wait --timeout 10m",
-            release_name, chart_path, ns
-        )
+    // Check if chart_path contains a values file (encoded as "chart_path|values_path")
+    let (actual_chart_path, embedded_values_file) = if chart_path.contains('|') {
+        let parts: Vec<&str> = chart_path.splitn(2, '|').collect();
+        (parts[0].to_string(), Some(parts[1].to_string()))
     } else {
-        // For local/GitHub charts, use chart path
-        format!(
-            "helm install {} {} --namespace {} --create-namespace --wait --timeout 10m",
-            release_name, chart_path, ns
-        )
+        (chart_path.clone(), None)
     };
+
+    // Use helm upgrade --install for idempotent installs (works whether release exists or not)
+    let mut cmd = format!(
+        "helm upgrade --install {} {} --namespace {} --create-namespace --wait --timeout 10m",
+        release_name, actual_chart_path, ns
+    );
+
+    // Add embedded values file if present (e.g., for traefik-private/traefik-public)
+    if let Some(vf) = embedded_values_file {
+        cmd.push_str(&format!(" -f {}", vf));
+    }
 
     // Add values file if provided
     if let Some(v) = values {
@@ -379,7 +407,7 @@ pub fn install_chart(
 
     // Clean up temporary chart file if we downloaded it
     if is_temp_file {
-        if let Err(e) = std::fs::remove_file(&chart_path) {
+        if let Err(e) = std::fs::remove_file(&actual_chart_path) {
             eprintln!(
                 "  ⚠ Warning: Failed to clean up temporary chart file: {}",
                 e

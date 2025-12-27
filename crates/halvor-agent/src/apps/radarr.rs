@@ -25,7 +25,7 @@ impl HelmApp for Radarr {
         let mut values = HashMap::new();
         
         // Try to load common env vars
-        if let Ok(domain) = std::env::var("PUBLIC_DOMAIN") {
+        if let Ok(domain) = std::env::var("PUBLIC_TLD") {
             values.insert("domain".to_string(), domain);
         }
         

@@ -24,8 +24,8 @@ impl HelmApp for TraefikPrivate {
     fn generate_values(&self) -> Result<Vec<String>> {
         let mut values = HashMap::new();
         
-        let domain = std::env::var("PRIVATE_DOMAIN")
-            .context("PRIVATE_DOMAIN environment variable not set")?;
+        let domain = std::env::var("PRIVATE_TLD")
+            .context("PRIVATE_TLD environment variable not set")?;
         let acme_email = std::env::var("ACME_EMAIL")
             .context("ACME_EMAIL environment variable not set")?;
         let cf_token = std::env::var("CF_DNS_API_TOKEN")

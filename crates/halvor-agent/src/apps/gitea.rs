@@ -25,9 +25,9 @@ impl HelmApp for Gitea {
         let mut values = HashMap::new();
         
         let domain = std::env::var("GITEA_DOMAIN")
-            .or_else(|_| std::env::var("PUBLIC_DOMAIN").map(|d| format!("gitea.{}", d)))
-            .or_else(|_| std::env::var("PRIVATE_DOMAIN").map(|d| format!("gitea.{}", d)))
-            .context("GITEA_DOMAIN, PUBLIC_DOMAIN, or PRIVATE_DOMAIN environment variable not set")?;
+            .or_else(|_| std::env::var("PUBLIC_TLD").map(|d| format!("gitea.{}", d)))
+            .or_else(|_| std::env::var("PRIVATE_TLD").map(|d| format!("gitea.{}", d)))
+            .context("GITEA_DOMAIN, PUBLIC_TLD, or PRIVATE_TLD environment variable not set")?;
 
         let root_url = std::env::var("GITEA_ROOT_URL")
             .unwrap_or_else(|_| format!("https://{}", domain));
