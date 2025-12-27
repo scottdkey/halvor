@@ -283,9 +283,6 @@ fn show_mesh_status(hostname: &str, config: &config::EnvConfig) -> Result<()> {
             let nodes_output = exec
                 .read_file(tmp_file)
                 .unwrap_or_else(|_| "Unable to get nodes".to_string());
-            let nodes_output = exec
-                .read_file(tmp_file)
-                .unwrap_or_else(|_| "Unable to get nodes".to_string());
 
             if nodes_output.trim() == "Unable to get nodes" || nodes_output.trim().is_empty() {
                 println!("  ⚠ Unable to get nodes. The cluster may still be initializing.");
