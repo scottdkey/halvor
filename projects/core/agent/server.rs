@@ -1,5 +1,6 @@
 use crate::utils::{bytes_to_string, format_bind_address, read_json, write_json};
 use anyhow::{Context, Result};
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::net::{TcpListener, TcpStream};
 
@@ -38,6 +39,16 @@ pub enum AgentRequest {
         last_sync: Option<i64>,
     },
     Ping,
+    /// Request to join the mesh with a token
+    JoinRequest {
+        join_token: String,
+        joiner_hostname: String,
+        joiner_public_key: String,
+    },
+    /// Validate a join token (check if it's valid before attempting join)
+    ValidateToken {
+        join_token: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -46,6 +57,15 @@ pub enum AgentResponse {
     Error { message: String },
     HostInfo { info: HostInfo },
     Pong,
+    /// Response to join request with shared secret
+    JoinAccepted {
+        shared_secret: String,
+        mesh_peers: Vec<String>,
+    },
+    /// Response to token validation
+    TokenValid {
+        issuer_hostname: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -106,6 +126,12 @@ impl AgentServer {
                 from_hostname,
                 last_sync,
             } => self.sync_database(&from_hostname, last_sync)?,
+            AgentRequest::JoinRequest {
+                join_token,
+                joiner_hostname,
+                joiner_public_key,
+            } => self.handle_join_request(&join_token, &joiner_hostname, &joiner_public_key)?,
+            AgentRequest::ValidateToken { join_token } => self.validate_token(&join_token)?,
         };
 
         // Send response
@@ -240,5 +266,70 @@ impl AgentServer {
         let data_str = serde_json::to_string(&sync_data)?;
 
         Ok(AgentResponse::Success { output: data_str })
+    }
+
+    /// Handle a join request from a new agent
+    fn handle_join_request(
+        &self,
+        join_token: &str,
+        joiner_hostname: &str,
+        joiner_public_key: &str,
+    ) -> Result<AgentResponse> {
+        use crate::agent::mesh;
+        use crate::utils::crypto;
+
+        // Validate the join token
+        let token = match mesh::validate_join_token(join_token) {
+            Ok(t) => t,
+            Err(e) => {
+                return Ok(AgentResponse::Error {
+                    message: format!("Invalid join token: {}", e),
+                });
+            }
+        };
+
+        // Generate a shared secret for this peer
+        let shared_secret_bytes = crypto::generate_random_key()?;
+        let shared_secret = base64::engine::general_purpose::STANDARD.encode(&shared_secret_bytes);
+
+        // Add peer to the mesh
+        if let Err(e) = mesh::add_peer(
+            joiner_hostname,
+            None, // Will be updated when peer is discovered
+            None,
+            joiner_public_key,
+            &shared_secret,
+        ) {
+            return Ok(AgentResponse::Error {
+                message: format!("Failed to add peer: {}", e),
+            });
+        }
+
+        // Mark token as used
+        if let Err(e) = mesh::mark_token_used(join_token, joiner_hostname) {
+            eprintln!("Warning: Failed to mark token as used: {}", e);
+        }
+
+        // Get current mesh peers
+        let peers = mesh::get_active_peers().unwrap_or_default();
+
+        Ok(AgentResponse::JoinAccepted {
+            shared_secret,
+            mesh_peers: peers,
+        })
+    }
+
+    /// Validate a join token without consuming it
+    fn validate_token(&self, join_token: &str) -> Result<AgentResponse> {
+        use crate::agent::mesh;
+
+        match mesh::validate_join_token(join_token) {
+            Ok(token) => Ok(AgentResponse::TokenValid {
+                issuer_hostname: token.issuer_hostname,
+            }),
+            Err(e) => Ok(AgentResponse::Error {
+                message: format!("Invalid token: {}", e),
+            }),
+        }
     }
 }

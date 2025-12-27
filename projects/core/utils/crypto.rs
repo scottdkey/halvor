@@ -135,3 +135,9 @@ pub fn key_exists() -> Result<bool> {
     let key_path = config_dir.join(KEY_FILE_NAME);
     Ok(key_path.exists())
 }
+
+/// Generate a random encryption key (32 bytes for AES-256)
+pub fn generate_random_key() -> Result<Vec<u8>> {
+    let key = Aes256Gcm::generate_key(&mut OsRng);
+    Ok(key.to_vec())
+}

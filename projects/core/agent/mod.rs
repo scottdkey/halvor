@@ -1,6 +1,7 @@
 pub mod api;
 pub mod client;
 pub mod discovery;
+pub mod mesh;
 pub mod server;
 pub mod sync;
 

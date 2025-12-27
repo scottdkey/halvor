@@ -2,15 +2,21 @@
 // This file is generated - do not edit manually
 // Run `halvor db generate` to regenerate
 
+pub mod agent_peers;
 pub mod encrypted_env_data;
 pub mod host_info;
+pub mod join_tokens;
+pub mod peer_keys;
 pub mod settings;
 pub mod smb_servers;
 pub mod update_history;
 
 // Re-export all generated structs
+pub use agent_peers::{AgentPeersRow, AgentPeersRowData};
 pub use encrypted_env_data::{EncryptedEnvDataRow, EncryptedEnvDataRowData};
 pub use host_info::{HostInfoRow, HostInfoRowData};
+pub use join_tokens::{JoinTokensRow, JoinTokensRowData};
+pub use peer_keys::{PeerKeysRow, PeerKeysRowData};
 pub use settings::{SettingsRow, SettingsRowData};
 pub use smb_servers::{SmbServersRow, SmbServersRowData};
 pub use update_history::{UpdateHistoryRow, UpdateHistoryRowData};

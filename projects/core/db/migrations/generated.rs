@@ -13,6 +13,9 @@ mod migration_003_add_smb_servers_table {
 mod migration_004_fix_host_info_id_column {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/db/migrations/004_fix_host_info_id_column.rs"));
 }
+mod migration_005_add_agent_mesh_tables {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/db/migrations/005_add_agent_mesh_tables.rs"));
+}
 
 
 const MIGRATIONS: &[Migration] = &[
@@ -39,6 +42,12 @@ const MIGRATIONS: &[Migration] = &[
         name: "fix_host_info_id_column",
         up: migration_004_fix_host_info_id_column::up,
         down: Some(migration_004_fix_host_info_id_column::down),
+    },
+    Migration {
+        version: 5,
+        name: "add_agent_mesh_tables",
+        up: migration_005_add_agent_mesh_tables::up,
+        down: Some(migration_005_add_agent_mesh_tables::down),
     },
 
 ];
