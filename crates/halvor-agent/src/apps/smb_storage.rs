@@ -22,7 +22,7 @@ impl HelmApp for SmbStorage {
     }
 
     fn generate_values(&self) -> Result<Vec<String>> {
-        let mut values: HashMap<String, String> = HashMap::new();
+        let values: HashMap<String, String> = HashMap::new();
         
         // SMB storage uses SMB server config from environment
         // Values are typically set via values.yaml, not env vars

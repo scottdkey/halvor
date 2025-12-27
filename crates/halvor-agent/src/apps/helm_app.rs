@@ -58,11 +58,7 @@ impl HelmApp for AppDefinition {
     }
 
     fn generate_values(&self) -> Result<Vec<String>> {
-        // Use the existing Helm service function to generate values
-        use halvor_core::services::helm;
-        
-        // This is a bit of a hack - we need to access the private function
-        // For now, we'll generate values using the chart name
+        // Generate values using the chart name
         let chart = self.chart_name();
         let values_map = generate_values_from_env_internal(chart)?;
         

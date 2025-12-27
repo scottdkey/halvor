@@ -77,14 +77,14 @@ install-cli:
 	@cargo build --release --bin halvor --manifest-path crates/halvor-cli/Cargo.toml
 	@mkdir -p ~/.cargo/bin
 	@cp -f target/release/halvor ~/.cargo/bin/halvor
-	@echo "✓ CLI installed to ~/.cargo/bin/halvor (available as 'halvor')"
+	@echo "CLI installed to ~/.cargo/bin/halvor (available as 'halvor')"
 	@# Restart agent service if plist/service file exists (macOS)
 	@if [ "$$(uname -s)" = "Darwin" ]; then \
 		if [ -f ~/Library/LaunchAgents/com.halvor.agent.plist ]; then \
 			echo "Restarting halvor agent service..."; \
 			launchctl load -w ~/Library/LaunchAgents/com.halvor.agent.plist 2>/dev/null || true; \
 			launchctl start com.halvor.agent 2>/dev/null || true; \
-			echo "✓ Agent service restarted"; \
+			echo "Agent service restarted"; \
 		fi; \
 	fi
 	@# Restart agent service if service file exists (Linux)
@@ -94,15 +94,15 @@ install-cli:
 			echo "Restarting halvor agent service (user service)..."; \
 			systemctl --user daemon-reload 2>/dev/null || true; \
 			systemctl --user restart halvor-agent.service 2>/dev/null || true; \
-			echo "✓ Agent service restarted"; \
+			echo "Agent service restarted"; \
 		# Fall back to system service (requires sudo)
 		elif [ -f /etc/systemd/system/halvor-agent.service ]; then \
 			echo "Restarting halvor agent service (system service, requires sudo)..."; \
 			sudo systemctl daemon-reload; \
 			sudo systemctl start halvor-agent.service 2>/dev/null || true; \
-			echo "✓ Agent service restarted"; \
+			echo "Agent service restarted"; \
 			echo ""; \
-			echo "ℹ️  Note: Service is installed as a system service, which requires sudo."; \
+			echo "Note: Service is installed as a system service, which requires sudo."; \
 			echo "   To avoid sudo, reinstall the service: halvor agent start --daemon"; \
 		fi; \
 	fi

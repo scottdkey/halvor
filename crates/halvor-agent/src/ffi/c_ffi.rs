@@ -177,7 +177,7 @@ pub unsafe extern "C" fn halvor_client_execute_command(
         Err(_) => return ptr::null_mut(),
     };
 
-    let command_str = match CStr::from_ptr(command).to_str() {
+    let command_str = match unsafe { CStr::from_ptr(command) }.to_str() {
         Ok(s) => s.to_string(),
         Err(_) => return ptr::null_mut(),
     };

@@ -22,7 +22,7 @@ impl HelmApp for NginxProxyManager {
     }
 
     fn generate_values(&self) -> Result<Vec<String>> {
-        let mut values: HashMap<String, String> = HashMap::new();
+        let values: HashMap<String, String> = HashMap::new();
         
         // NPM doesn't require special env vars, uses default values
         // But we can add custom values if needed

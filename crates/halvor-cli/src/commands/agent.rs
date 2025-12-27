@@ -356,7 +356,6 @@ fn sync_with_agents(force: bool) -> Result<()> {
 
 fn sync_with_agents_internal(sync: &ConfigSync, _force: bool) -> Result<()> {
     use halvor_agent::agent::mesh;
-    use halvor_agent::agent::api::AgentClient;
     use halvor_db::generated::agent_peers;
 
     let local_hostname = get_current_hostname()?;

@@ -233,7 +233,6 @@ impl AgentServer {
 
     fn sync_database(&self, from_hostname: &str, _last_sync: Option<i64>) -> Result<AgentResponse> {
         use halvor_core::services::host;
-        use crate::agent::mesh;
         use halvor_db::generated::agent_peers;
 
         // Export host configs and settings for this host
