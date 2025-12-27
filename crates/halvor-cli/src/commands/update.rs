@@ -2,6 +2,7 @@
 
 use halvor_core::config;
 use halvor_agent::apps::{AppCategory, find_app};
+use halvor_agent::agent::discovery::HostDiscovery;
 use halvor_core::utils::exec::{CommandExecutor, Executor};
 use halvor_core::utils::update;
 use anyhow::{Context, Result};
@@ -17,117 +18,190 @@ pub fn handle_update(
     force: bool,
 ) -> Result<()> {
     let config = config::load_config()?;
-    let target_host = hostname.unwrap_or("localhost");
 
     // Check if we're in development mode from HALVOR_ENV
     let is_dev = env::var("HALVOR_ENV")
         .map(|v| v.to_lowercase() == "development")
         .unwrap_or(false);
 
-    // If app is specified, update that app
+    // If app is specified, update that app on specified host (or localhost)
     if let Some(app_name) = app {
+        let target_host = hostname.unwrap_or("localhost");
         // Special case: "halvor" app means update halvor itself
         if app_name == "halvor" {
-            return update_halvor_binary(experimental, force, is_dev);
+            return update_halvor_binary(target_host, experimental, force, is_dev, &config);
         }
         update_app(target_host, app_name, &config)?;
         return Ok(());
     }
 
-    // If in development mode, just update halvor from local source
-    if is_dev {
-        return update_halvor_binary(false, false, true);
+    // If hostname is specified, update halvor on that specific host
+    if let Some(target_host) = hostname {
+        return update_halvor_binary(target_host, experimental, force, is_dev, &config);
     }
 
-    // Otherwise, update halvor itself and prompt for updating everything
-    let current_version = env!("CARGO_PKG_VERSION");
+    // No hostname or app specified - discover mesh and let user select nodes to update
+    return update_with_node_selection(experimental, force, is_dev, &config);
+
+/// Update with interactive node selection
+fn update_with_node_selection(
+    experimental: bool,
+    force: bool,
+    is_dev: bool,
+    config: &config::EnvConfig,
+) -> Result<()> {
+    use halvor_core::utils::hostname::get_current_hostname;
+    use std::io::BufRead;
 
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("Update System");
+    println!("Update Halvor");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!();
 
-    // First, check for halvor updates
-    println!("Checking for halvor updates...");
-    let halvor_updated = if force {
-        if experimental {
-            println!("Force mode: Downloading latest experimental version...");
-            let latest_version = update::get_latest_experimental_version()?;
-            println!("Latest experimental version: {}", latest_version);
-            update::download_and_install_update(&latest_version)?;
-            true
-        } else {
-            println!("Force mode: Downloading latest stable version...");
-            let latest_version = update::get_latest_version()?;
-            println!("Latest version: {}", latest_version);
-            update::download_and_install_update(&latest_version)?;
-            true
-        }
-    } else if experimental {
-        if let Ok(Some(new_version)) = update::check_for_experimental_updates(current_version) {
-            if update::prompt_for_update(&new_version, current_version)? {
-                update::download_and_install_update(&new_version)?;
-                true
-            } else {
-                false
-            }
-        } else {
-            println!("You're already running the latest experimental version.");
-            false
-        }
-    } else if let Ok(Some(new_version)) = update::check_for_updates(current_version) {
-        if update::prompt_for_update(&new_version, current_version)? {
-            update::download_and_install_update(&new_version)?;
-            true
-        } else {
-            false
-        }
-    } else {
-        println!(
-            "You're already running the latest version: {}",
-            current_version
-        );
-        false
+    // Discover all nodes on the mesh
+    println!("Discovering nodes on the mesh...");
+    let discovery = HostDiscovery::default();
+    let hosts = discovery.discover_all()?;
+
+    let local_hostname = get_current_hostname()?;
+    let normalized_local = halvor_core::utils::hostname::normalize_hostname(&local_hostname);
+
+    // Build list of available nodes (including localhost)
+    // Store localhost node separately so we can reference it
+    let localhost_node = halvor_agent::agent::discovery::DiscoveredHost {
+        hostname: local_hostname.clone(),
+        tailscale_ip: None,
+        tailscale_hostname: None,
+        local_ip: Some("127.0.0.1".to_string()),
+        agent_port: 13500,
+        reachable: true,
     };
 
-    if halvor_updated {
-        println!();
-        println!("⚠️  halvor was updated. Please restart the CLI to use the new version.");
-        println!("   Continuing with app updates...");
-        println!();
+    let mut available_nodes: Vec<(&halvor_agent::agent::discovery::DiscoveredHost, bool)> = Vec::new();
+    
+    // Add localhost first
+    available_nodes.push((&localhost_node, true));
+
+    // Add remote nodes
+    for host in &hosts {
+        let normalized_host = halvor_core::utils::hostname::normalize_hostname(&host.hostname);
+        if normalized_host != normalized_local && host.reachable {
+            available_nodes.push((host, false));
+        }
     }
 
-    // Prompt to update all apps
-    println!("Update all installed apps on {}?", target_host);
-    println!("⚠️  WARNING: This may update system packages and Docker containers.");
-    println!("   Some updates may require service restarts.");
+    if available_nodes.is_empty() {
+        println!("No nodes found. Updating localhost only...");
+        return update_halvor_binary("localhost", experimental, force, is_dev, config);
+    }
+
+    println!("Available nodes:");
     println!();
-    print!("Continue? [y/N]: ");
+    for (i, (host, is_local)) in available_nodes.iter().enumerate() {
+        let ip = host
+            .tailscale_ip
+            .as_ref()
+            .or(host.local_ip.as_ref())
+            .map(|s| s.as_str())
+            .unwrap_or("unknown");
+        let ts_name = host
+            .tailscale_hostname
+            .as_ref()
+            .map(|s| format!(" ({})", s))
+            .unwrap_or_default();
+        let local_marker = if *is_local { " [localhost]" } else { "" };
+        println!("  [{}] {} - {}{}{}", i + 1, host.hostname, ip, ts_name, local_marker);
+    }
+    println!();
+    println!(
+        "Select nodes to update (comma-separated numbers, 'all' for all, or 'q' to quit):"
+    );
+    print!("> ");
     io::stdout().flush()?;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let response = input.trim().to_lowercase();
-    if response != "y" && response != "yes" {
-        println!("Update cancelled.");
+
+    let stdin = io::stdin();
+    let mut reader = std::io::BufReader::new(stdin.lock());
+    let mut selection = String::new();
+    reader.read_line(&mut selection)?;
+    let selection = selection.trim();
+
+    if selection.eq_ignore_ascii_case("q") {
+        println!("Cancelled.");
         return Ok(());
     }
+
+    // Parse selection
+    let selected_indices: Vec<usize> = if selection.eq_ignore_ascii_case("all") {
+        (1..=available_nodes.len()).collect()
+    } else {
+        selection
+            .split(',')
+            .map(|s| s.trim().parse::<usize>())
+            .collect::<Result<Vec<_>, _>>()
+            .context("Invalid selection format. Use comma-separated numbers (e.g., 1,2,3) or 'all'")?
+    };
+
+    // Validate indices
+    for &idx in &selected_indices {
+        if idx < 1 || idx > available_nodes.len() {
+            anyhow::bail!("Selection {} is out of range (1-{})", idx, available_nodes.len());
+        }
+    }
+
+    // Update selected nodes
+    println!();
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("Updating {} node(s)...", selected_indices.len());
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!();
 
-    // Update platform tools
-    update_platform_tools(target_host, &config)?;
+    let mut updated = 0;
+    let mut failed = 0;
 
-    // Update Helm charts
-    update_helm_charts(target_host, &config)?;
+    for (i, &idx) in selected_indices.iter().enumerate() {
+        let (host, is_local) = &available_nodes[idx - 1];
+        let target_host = if *is_local {
+            "localhost"
+        } else {
+            &host.hostname
+        };
 
-    println!();
-    println!("✓ Update complete");
+        println!("[{}/{}] Updating {}...", i + 1, selected_indices.len(), host.hostname);
+        match update_halvor_binary(target_host, experimental, force, is_dev, config) {
+            Ok(_) => {
+                println!("  ✓ Updated {}", host.hostname);
+                updated += 1;
+            }
+            Err(e) => {
+                println!("  ✗ Failed to update {}: {}", host.hostname, e);
+                failed += 1;
+            }
+        }
+        println!();
+    }
+
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("Update complete: {} updated, {} failed", updated, failed);
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
     Ok(())
 }
 
 /// Update halvor binary (from GitHub or local source)
-fn update_halvor_binary(experimental: bool, force: bool, dev: bool) -> Result<()> {
-    let exec = Executor::Local;
+/// If hostname is not "localhost", deploys to remote host
+fn update_halvor_binary(
+    hostname: &str,
+    experimental: bool,
+    force: bool,
+    dev: bool,
+    config: &config::EnvConfig,
+) -> Result<()> {
+    let is_local = hostname == "localhost";
+    let exec = if is_local {
+        Executor::Local
+    } else {
+        Executor::new(hostname, config)?
+    };
 
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("Update Halvor");
@@ -135,65 +209,98 @@ fn update_halvor_binary(experimental: bool, force: bool, dev: bool) -> Result<()
     println!();
 
     if dev {
-        println!("Development mode: Building from local source...");
-        println!();
+        if is_local {
+            println!("Development mode: Building from local source...");
+            println!();
 
-        // Stop agent service first
-        println!("Stopping agent service...");
-        if let Err(e) = halvor_agent::apps::k3s::agent_service::stop_agent_service(&exec) {
-            eprintln!("Warning: Failed to stop agent service: {}", e);
+            // Stop agent service first
+            println!("Stopping agent service...");
+            if let Err(e) = halvor_agent::apps::k3s::agent_service::stop_agent_service(&exec) {
+                eprintln!("Warning: Failed to stop agent service: {}", e);
+            }
+
+            // Find project root (look for Cargo.toml with halvor)
+            let project_root = find_project_root()?;
+            println!("Project root: {}", project_root.display());
+
+            // Build release binary
+            println!();
+            println!("Building halvor (release mode)...");
+            let status = Command::new("cargo")
+                .args(["build", "--release", "--bin", "halvor", "--manifest-path"])
+                .arg(project_root.join("crates/halvor-cli/Cargo.toml"))
+                .status()
+                .context("Failed to run cargo build")?;
+
+            if !status.success() {
+                anyhow::bail!("Cargo build failed");
+            }
+
+            // Install binary locally
+            println!();
+            println!("Installing halvor...");
+            let home_dir = std::env::var("HOME")
+                .ok()
+                .map(std::path::PathBuf::from)
+                .ok_or_else(|| anyhow::anyhow!("Could not find home directory (HOME not set)"))?;
+            let cargo_bin = home_dir.join(".cargo/bin");
+            std::fs::create_dir_all(&cargo_bin)?;
+
+            let source = project_root.join("target/release/halvor");
+            let dest = cargo_bin.join("halvor");
+            std::fs::copy(&source, &dest).with_context(|| {
+                format!("Failed to copy {} to {}", source.display(), dest.display())
+            })?;
+
+            println!("✓ Installed halvor to {}", dest.display());
+
+            // Restart agent service
+            println!();
+            println!("Restarting agent service...");
+            if let Err(e) = halvor_agent::apps::k3s::agent_service::restart_agent_service(&exec, None) {
+                eprintln!("Warning: Failed to restart agent service: {}", e);
+                println!("  You can start it manually with: halvor agent start --daemon");
+            }
+
+            println!();
+            println!("✓ Halvor updated from local source");
+        } else {
+            // Remote deployment in dev mode: build locally, then deploy
+            println!("Development mode: Building from local source and deploying to {}...", hostname);
+            println!();
+
+            // Find project root
+            let project_root = find_project_root()?;
+            println!("Project root: {}", project_root.display());
+
+            // Build release binary
+            println!();
+            println!("Building halvor (release mode)...");
+            let status = Command::new("cargo")
+                .args(["build", "--release", "--bin", "halvor", "--manifest-path"])
+                .arg(project_root.join("crates/halvor-cli/Cargo.toml"))
+                .status()
+                .context("Failed to run cargo build")?;
+
+            if !status.success() {
+                anyhow::bail!("Cargo build failed");
+            }
+
+            // Deploy to remote host using check_and_install_halvor
+            println!();
+            println!("Deploying halvor to {}...", hostname);
+            halvor_agent::apps::k3s::check_and_install_halvor(&exec)?;
+
+            println!();
+            println!("✓ Halvor deployed to {} from local source", hostname);
         }
-
-        // Find project root (look for Cargo.toml with halvor)
-        let project_root = find_project_root()?;
-        println!("Project root: {}", project_root.display());
-
-        // Build release binary
-        println!();
-        println!("Building halvor (release mode)...");
-        let status = Command::new("cargo")
-            .args(["build", "--release", "--bin", "halvor", "--manifest-path"])
-            .arg(project_root.join("crates/halvor-cli/Cargo.toml"))
-            .status()
-            .context("Failed to run cargo build")?;
-
-        if !status.success() {
-            anyhow::bail!("Cargo build failed");
-        }
-
-        // Install binary
-        println!();
-        println!("Installing halvor...");
-        let home_dir = std::env::var("HOME")
-            .ok()
-            .map(std::path::PathBuf::from)
-            .ok_or_else(|| anyhow::anyhow!("Could not find home directory (HOME not set)"))?;
-        let cargo_bin = home_dir.join(".cargo/bin");
-        std::fs::create_dir_all(&cargo_bin)?;
-
-        let source = project_root.join("target/release/halvor");
-        let dest = cargo_bin.join("halvor");
-        std::fs::copy(&source, &dest).with_context(|| {
-            format!("Failed to copy {} to {}", source.display(), dest.display())
-        })?;
-
-        println!("✓ Installed halvor to {}", dest.display());
-
-        // Restart agent service
-        println!();
-        println!("Restarting agent service...");
-        if let Err(e) = halvor_agent::apps::k3s::agent_service::restart_agent_service(&exec, None) {
-            eprintln!("Warning: Failed to restart agent service: {}", e);
-            println!("  You can start it manually with: halvor agent start --daemon");
-        }
-
-        println!();
-        println!("✓ Halvor updated from local source");
     } else {
-        // Download from GitHub
-        let current_version = env!("CARGO_PKG_VERSION");
+        // Production mode: Download from GitHub or deploy to remote
+        if is_local {
+            // Local update from GitHub
+            let current_version = env!("CARGO_PKG_VERSION");
 
-        if force {
+            if force {
             if experimental {
                 println!("Force mode: Downloading latest experimental version...");
                 let latest_version = update::get_latest_experimental_version()?;
@@ -276,6 +383,14 @@ fn update_halvor_binary(experimental: bool, force: bool, dev: bool) -> Result<()
                 "You're already running the latest version: {}",
                 current_version
             );
+            }
+        } else {
+            // Remote update in production mode: use check_and_install_halvor which downloads from GitHub
+            println!("Production mode: Updating halvor on {} from GitHub releases...", hostname);
+            println!();
+            halvor_agent::apps::k3s::check_and_install_halvor(&exec)?;
+            println!();
+            println!("✓ Halvor updated on {} from GitHub releases", hostname);
         }
     }
 
