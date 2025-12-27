@@ -95,10 +95,34 @@ pub fn validate_join_token(encoded_token: &str) -> Result<JoinToken> {
     }
 
     // Check if token exists in database and hasn't been used
+    eprintln!("[DEBUG] Validating token_id: {}", token.token_id);
+    eprintln!("[DEBUG] Searching for encoded token in database (first 50 chars): {}", &encoded_token[..50.min(encoded_token.len())]);
+
     let rows = join_tokens::select_many(
         "token = ?1 AND used = 0",
         &[&encoded_token as &dyn rusqlite::types::ToSql],
     )?;
+
+    eprintln!("[DEBUG] Found {} matching tokens", rows.len());
+
+    // Also check if token exists but was already used
+    let all_rows = join_tokens::select_many(
+        "token = ?1",
+        &[&encoded_token as &dyn rusqlite::types::ToSql],
+    )?;
+
+    eprintln!("[DEBUG] Found {} total tokens (including used)", all_rows.len());
+    if !all_rows.is_empty() {
+        eprintln!("[DEBUG] Token exists - used={}", all_rows[0].used);
+    }
+
+    // List all tokens for debugging
+    let all_tokens = join_tokens::select_many("1=1", &[])?;
+    eprintln!("[DEBUG] Total tokens in database: {}", all_tokens.len());
+    for (i, t) in all_tokens.iter().enumerate() {
+        eprintln!("[DEBUG]   Token {}: issuer={}, used={}, token_preview={}",
+            i, t.issuer_hostname, t.used, &t.token[..50.min(t.token.len())]);
+    }
 
     if rows.is_empty() {
         anyhow::bail!("Invalid or already used join token");
