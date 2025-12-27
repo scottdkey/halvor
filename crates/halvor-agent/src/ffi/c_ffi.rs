@@ -27,7 +27,9 @@ pub unsafe extern "C" fn halvor_client_new(agent_port: u16) -> HalvorClientPtr {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn halvor_client_free(ptr: HalvorClientPtr) {
     if !ptr.is_null() {
-        let _ = Box::from_raw(ptr);
+        unsafe {
+            let _ = Box::from_raw(ptr);
+        }
     }
 }
 
@@ -40,7 +42,7 @@ pub unsafe extern "C" fn halvor_client_discover_agents(ptr: HalvorClientPtr) -> 
         return ptr::null_mut();
     }
 
-    let client = &*ptr;
+    let client = unsafe { &*ptr };
     match client.discover_agents() {
         Ok(hosts) => match serde_json::to_string(&hosts) {
             Ok(json) => match CString::new(json) {
@@ -60,7 +62,7 @@ pub unsafe extern "C" fn halvor_client_discover_via_tailscale(ptr: HalvorClientP
         return ptr::null_mut();
     }
 
-    let client = &*ptr;
+    let client = unsafe { &*ptr };
     match client.discover_via_tailscale() {
         Ok(hosts) => match serde_json::to_string(&hosts) {
             Ok(json) => match CString::new(json) {
@@ -82,7 +84,7 @@ pub unsafe extern "C" fn halvor_client_discover_via_local_network(
         return ptr::null_mut();
     }
 
-    let client = &*ptr;
+    let client = unsafe { &*ptr };
     match client.discover_via_local_network() {
         Ok(hosts) => match serde_json::to_string(&hosts) {
             Ok(json) => match CString::new(json) {
@@ -107,12 +109,12 @@ pub unsafe extern "C" fn halvor_client_ping_agent(
         return 0;
     }
 
-    let host_str = match CStr::from_ptr(host).to_str() {
+    let host_str = match unsafe { CStr::from_ptr(host) }.to_str() {
         Ok(s) => s.to_string(),
         Err(_) => return 0,
     };
 
-    let client = &*ptr;
+    let client = unsafe { &*ptr };
     match client.ping_agent(host_str, port) {
         Ok(reachable) => {
             if reachable {
@@ -137,12 +139,12 @@ pub unsafe extern "C" fn halvor_client_get_host_info(
         return ptr::null_mut();
     }
 
-    let host_str = match CStr::from_ptr(host).to_str() {
+    let host_str = match unsafe { CStr::from_ptr(host) }.to_str() {
         Ok(s) => s.to_string(),
         Err(_) => return ptr::null_mut(),
     };
 
-    let client = &*ptr;
+    let client = unsafe { &*ptr };
     match client.get_host_info(host_str, port) {
         Ok(info) => match serde_json::to_string(&info) {
             Ok(json) => match CString::new(json) {
@@ -170,7 +172,7 @@ pub unsafe extern "C" fn halvor_client_execute_command(
         return ptr::null_mut();
     }
 
-    let host_str = match CStr::from_ptr(host).to_str() {
+    let host_str = match unsafe { CStr::from_ptr(host) }.to_str() {
         Ok(s) => s.to_string(),
         Err(_) => return ptr::null_mut(),
     };
@@ -183,7 +185,7 @@ pub unsafe extern "C" fn halvor_client_execute_command(
     let args: Vec<String> = if args_json.is_null() {
         Vec::new()
     } else {
-        match CStr::from_ptr(args_json).to_str() {
+        match unsafe { CStr::from_ptr(args_json) }.to_str() {
             Ok(json) => match serde_json::from_str::<Vec<String>>(json) {
                 Ok(v) => v,
                 Err(_) => Vec::new(),
@@ -192,7 +194,7 @@ pub unsafe extern "C" fn halvor_client_execute_command(
         }
     };
 
-    let client = &*ptr;
+    let client = unsafe { &*ptr };
     match client.execute_command(host_str, port, command_str, args) {
         Ok(output) => match CString::new(output) {
             Ok(c_str) => c_str.into_raw(),
@@ -206,7 +208,9 @@ pub unsafe extern "C" fn halvor_client_execute_command(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn halvor_string_free(ptr: *mut c_char) {
     if !ptr.is_null() {
-        let _ = CString::from_raw(ptr);
+        unsafe {
+            let _ = CString::from_raw(ptr);
+        }
     }
 }
 

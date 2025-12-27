@@ -9,9 +9,9 @@ inputs:
     description: 'Platform (linux, darwin, windows)'
     required: true
   binary_name:
-    description: 'Binary name (hal or hal.exe)'
+    description: 'Binary name (halvor or halvor.exe)'
     required: true
-    default: 'hal'
+    default: 'halvor'
   archive_extension:
     description: 'Archive extension (.tar.gz or .zip)'
     required: true
@@ -42,9 +42,9 @@ runs:
           ARCHIVE_VERSION="$VERSION"
         fi
 
-        for artifact_dir in artifacts/hal-*/; do
+        for artifact_dir in artifacts/halvor-*/; do
           if [ -d "$artifact_dir" ]; then
-            TARGET=$(basename "$artifact_dir" | sed 's/hal-//')
+            TARGET=$(basename "$artifact_dir" | sed 's/halvor-//')
             echo "Processing: $TARGET"
             
             # Extract architecture from target
@@ -89,9 +89,9 @@ runs:
                 chmod +x "release/${OS}-${ARCH}${EXT_SUFFIX:+-$EXT_SUFFIX}/$BINARY_NAME"
                 
                 if [ -n "$EXT_SUFFIX" ]; then
-                  ARCHIVE_NAME="hal-${ARCHIVE_VERSION}-${OS}-${ARCH}-${EXT_SUFFIX}.tar.gz"
+                  ARCHIVE_NAME="halvor-${ARCHIVE_VERSION}-${OS}-${ARCH}-${EXT_SUFFIX}.tar.gz"
                 else
-                  ARCHIVE_NAME="hal-${ARCHIVE_VERSION}-${OS}-${ARCH}.tar.gz"
+                  ARCHIVE_NAME="halvor-${ARCHIVE_VERSION}-${OS}-${ARCH}.tar.gz"
                 fi
                 tar -czf "$ARCHIVE_NAME" -C "release/${OS}-${ARCH}${EXT_SUFFIX:+-$EXT_SUFFIX}" "$BINARY_NAME"
               elif [ "$PLATFORM" == "darwin" ]; then
@@ -99,13 +99,13 @@ runs:
                 mkdir -p "release/${OS}-${ARCH}"
                 cp "$artifact_dir/$BINARY_NAME" "release/${OS}-${ARCH}/$BINARY_NAME"
                 chmod +x "release/${OS}-${ARCH}/$BINARY_NAME"
-                ARCHIVE_NAME="hal-${ARCHIVE_VERSION}-${OS}-${ARCH}.tar.gz"
+                ARCHIVE_NAME="halvor-${ARCHIVE_VERSION}-${OS}-${ARCH}.tar.gz"
                 tar -czf "$ARCHIVE_NAME" -C "release/${OS}-${ARCH}" "$BINARY_NAME"
               elif [ "$PLATFORM" == "windows" ]; then
                 OS="windows"
                 mkdir -p "release/${OS}-${ARCH}"
                 cp "$artifact_dir/$BINARY_NAME" "release/${OS}-${ARCH}/$BINARY_NAME"
-                ARCHIVE_NAME="hal-${ARCHIVE_VERSION}-${OS}-${ARCH}.zip"
+                ARCHIVE_NAME="halvor-${ARCHIVE_VERSION}-${OS}-${ARCH}.zip"
                 cd "release/${OS}-${ARCH}"
                 zip -r "../../$ARCHIVE_NAME" "$BINARY_NAME"
                 cd ../..
@@ -117,9 +117,9 @@ runs:
 
         # Set output pattern for file matching
         if [ "$PLATFORM" == "linux" ]; then
-          echo "archive_pattern=hal-*-linux-*.tar.gz" >> $GITHUB_OUTPUT
+          echo "archive_pattern=halvor-*-linux-*.tar.gz" >> $GITHUB_OUTPUT
         elif [ "$PLATFORM" == "darwin" ]; then
-          echo "archive_pattern=hal-*-darwin-*.tar.gz" >> $GITHUB_OUTPUT
+          echo "archive_pattern=halvor-*-darwin-*.tar.gz" >> $GITHUB_OUTPUT
         elif [ "$PLATFORM" == "windows" ]; then
-          echo "archive_pattern=hal-*-windows-*.zip" >> $GITHUB_OUTPUT
+          echo "archive_pattern=halvor-*-windows-*.zip" >> $GITHUB_OUTPUT
         fi

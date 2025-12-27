@@ -21,7 +21,12 @@ runs:
         if [ -n "${{ inputs.version_input }}" ]; then
           VERSION="${{ inputs.version_input }}"
         else
-          VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          # Get version from workspace Cargo.toml
+          VERSION=$(grep '^\[workspace.package\]' -A 10 Cargo.toml | grep '^version = ' | sed 's/version = "\(.*\)"/\1/')
+          if [ -z "$VERSION" ]; then
+            # Fallback to crates/halvor-cli/Cargo.toml if workspace version not found
+            VERSION=$(grep '^version = ' crates/halvor-cli/Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          fi
         fi
         # Remove 'v' prefix if present
         VERSION="${VERSION#v}"

@@ -368,6 +368,35 @@ pub fn configure_permissions<E: CommandExecutor>(exec: &E) -> Result<()> {
         return Ok(());
     }
 
+    // Ensure docker group exists
+    println!("Ensuring docker group exists...");
+    let group_check = exec.execute_shell("getent group docker");
+    if group_check.is_err() || !group_check.unwrap().status.success() {
+        println!("Creating docker group...");
+        exec.execute_interactive("sudo", &["groupadd", "docker"])?;
+        println!("✓ Docker group created");
+    } else {
+        println!("✓ Docker group exists");
+    }
+
+    // Verify Docker socket permissions
+    println!("Verifying Docker socket permissions...");
+    let socket_check = exec.execute_shell("ls -la /var/run/docker.sock 2>&1");
+    if let Ok(output) = socket_check {
+        let socket_info = String::from_utf8_lossy(&output.stdout);
+        if socket_info.contains("/var/run/docker.sock") {
+            // Check if socket is owned by docker group
+            if !socket_info.contains(" docker ") {
+                println!("Fixing Docker socket group ownership...");
+                exec.execute_interactive("sudo", &["chown", "root:docker", "/var/run/docker.sock"])?;
+                exec.execute_interactive("sudo", &["chmod", "660", "/var/run/docker.sock"])?;
+                println!("✓ Docker socket permissions fixed");
+            } else {
+                println!("✓ Docker socket has correct group ownership");
+            }
+        }
+    }
+
     // Check if user is in docker group using native Rust (Unix only)
     let username = exec.get_username()?;
     #[cfg(unix)]
@@ -393,35 +422,89 @@ pub fn configure_permissions<E: CommandExecutor>(exec: &E) -> Result<()> {
     };
 
     if !in_group {
-        println!("Adding user to docker group...");
+        println!("Adding user '{}' to docker group...", username);
         exec.execute_interactive("sudo", &["usermod", "-aG", "docker", &username])?;
         println!("✓ User added to docker group");
-        println!("Note: You may need to log out and back in for changes to take effect");
-
-        // Try to apply group changes immediately using newgrp or by checking if we can use docker
-        // For SSH sessions, we can't easily apply group changes, but we can try using newgrp
-        // However, this is complex, so we'll just note it and continue
-        // The user can use 'newgrp docker' or restart their session
+        
+        // Try to test access using sg (substitute group) command
+        // This allows us to test if the group membership works without starting a new shell
+        println!("Testing Docker access with new group membership...");
+        let sg_test = exec.execute_shell(&format!("sg docker -c 'docker version --format \"{{{{.Server.Version}}}}\"' 2>&1"));
+        
+        match sg_test {
+            Ok(output) if output.status.success() => {
+                let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !version.is_empty() {
+                    println!("✓ Docker access works with group membership (version: {})", version);
+                    println!();
+                    println!("⚠ Group membership is active, but your current shell session");
+                    println!("   needs to be refreshed to use it without 'sg docker'.");
+                    println!();
+                    println!("   To apply group changes to your current session:");
+                    println!("   1. Run: newgrp docker");
+                    println!("   2. Or log out and log back in");
+                    println!("   3. Or restart your SSH session");
+                    println!();
+                    println!("   After refreshing, verify with: docker ps");
+                }
+            }
+            _ => {
+                // sg didn't work, try direct test
+                let direct_test = exec.execute_shell("docker version --format '{{.Server.Version}}' 2>&1");
+                match direct_test {
+                    Ok(output) if output.status.success() => {
+                        println!("✓ Docker access verified - group changes already active");
+                    }
+                    _ => {
+                        println!();
+                        println!("⚠ Group changes require a new session to take effect.");
+                        println!("   To apply immediately, run one of the following:");
+                        println!("   1. Run: newgrp docker");
+                        println!("   2. Log out and log back in");
+                        println!("   3. Restart your SSH session");
+                        println!("   4. Or use 'sg docker -c \"docker <command>\"' for individual commands");
+                        println!();
+                        println!("   After restarting your session, verify with: docker ps");
+                    }
+                }
+            }
+        }
     } else {
         println!("✓ User already in docker group");
     }
 
-    // Verify Docker access after group configuration
-    // If user was just added, they might need to use 'newgrp docker' or restart session
-    // But we can try to verify with a simple command
+    // Final verification of Docker access
     let test_output =
-        exec.execute_shell("docker version --format '{{.Server.Version}}'");
+        exec.execute_shell("docker version --format '{{.Server.Version}}' 2>&1");
     match test_output {
         Ok(output) if output.status.success() => {
-            let _version = String::from_utf8_lossy(&output.stdout);
-            println!("✓ Docker access verified");
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !version.is_empty() {
+                println!("✓ Docker access verified (version: {})", version);
+            } else {
+                println!("✓ Docker access verified");
+            }
         }
         _ => {
-            // Try with newgrp docker if available, otherwise warn
-            println!(
-                "⚠ Docker command failed - user may need to run 'newgrp docker' or restart SSH session"
-            );
-            println!("⚠ Alternatively, using 'sudo docker' commands will work");
+            // Check if docker daemon is running at all
+            let sudo_test = exec.execute_shell("sudo docker version --format '{{.Server.Version}}' 2>&1");
+            match sudo_test {
+                Ok(output) if output.status.success() => {
+                    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    println!("⚠ Docker daemon is running (version: {}), but user doesn't have access yet.", version);
+                    println!("   This is expected if you were just added to the docker group.");
+                    println!();
+                    println!("   To apply group changes immediately:");
+                    println!("   • Run: newgrp docker");
+                    println!("   • Or restart your SSH session");
+                    println!();
+                    println!("   Then verify with: docker ps");
+                }
+                _ => {
+                    println!("⚠ Could not verify Docker access.");
+                    println!("   Make sure Docker daemon is running: sudo systemctl status docker");
+                }
+            }
         }
     }
 

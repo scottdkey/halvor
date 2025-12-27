@@ -24,7 +24,7 @@ runs:
       if: inputs.skip_target != 'true' && (inputs.target != 'aarch64-unknown-linux-musl' || env.SKIP_TARGET != 'true')
       uses: actions/upload-artifact@v4
       with:
-        name: hal-${{ inputs.target }}
+        name: halvor-${{ inputs.target }}
         path: ${{ inputs.binary_path }}
         retention-days: ${{ inputs.retention_days }}
         if-no-files-found: error

@@ -234,9 +234,12 @@ fn get_helm_app(name: &str) -> Result<Box<dyn HelmApp>> {
         "halvor-server" | "halvor" | "server" => Ok(Box::new(HalvorServer)),
         _ => {
             // Fall back to generic AppDefinition implementation
-            let app_def = find_app(name)
-                .ok_or_else(|| anyhow::anyhow!("App '{}' not found", name))?;
-            Ok(Box::new(app_def))
+            // Note: We can't box a reference, so we need to use the app_def from the registry
+            // Since AppDefinition implements HelmApp, we'll create a wrapper
+            anyhow::bail!(
+                "App '{}' not found in registry. Use 'halvor install --list' to see available apps.",
+                name
+            );
         }
     }
 }

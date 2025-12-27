@@ -10,7 +10,7 @@ inputs:
     description: 'Platform (linux, darwin, windows)'
     required: true
   binary_name:
-    description: 'Binary name (hal or hal.exe)'
+    description: 'Binary name (halvor or halvor.exe)'
     required: true
   archive_extension:
     description: 'Archive extension (.tar.gz or .zip)'
@@ -67,7 +67,7 @@ runs:
       run: |
         PLATFORM="${{ inputs.platform }}"
         TAG="${{ steps.release_type.outputs.tag }}"
-        REPO="scottdkey/homelab"
+        REPO="scottdkey/halvor"
         REGISTRY="ghcr.io"
         IMAGE_NAME="scottdkey/pia-vpn"
         IS_EXPERIMENTAL="${{ steps.release_type.outputs.type == 'experimental' && 'true' || 'false' }}"
