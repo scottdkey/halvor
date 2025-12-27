@@ -758,17 +758,79 @@ pub fn get_kubeconfig(
 pub fn extract_server_and_token_from_kubeconfig(
     kubeconfig_content: &str,
 ) -> Result<(String, String)> {
-    // Clean up the kubeconfig content - remove trailing '=' characters that might be added
-    // These appear on multi-line values and break YAML parsing
-    let cleaned_content = kubeconfig_content
+    // Clean up the kubeconfig content from environment variable
+    // Environment variables may store multi-line values in various formats:
+    // - Escaped strings (e.g., "apiVersion: v1\nkind: Config\n...")
+    // - Quoted strings with escaped newlines
+    // - With trailing '=' characters
+    // - As base64
+    let mut cleaned_content = kubeconfig_content.to_string();
+
+    // Remove surrounding quotes if present (environment variable might be quoted)
+    cleaned_content = cleaned_content.trim().to_string();
+    if (cleaned_content.starts_with('"') && cleaned_content.ends_with('"'))
+        || (cleaned_content.starts_with('\'') && cleaned_content.ends_with('\''))
+    {
+        cleaned_content = cleaned_content[1..cleaned_content.len() - 1].to_string();
+    }
+
+    // First, try to unescape \n sequences (environment variable might escape newlines)
+    if cleaned_content.contains("\\n") && !cleaned_content.contains('\n') {
+        // Looks like it's escaped - unescape common escape sequences
+        cleaned_content = cleaned_content
+            .replace("\\n", "\n")
+            .replace("\\t", "\t")
+            .replace("\\r", "\r")
+            .replace("\\\"", "\"")
+            .replace("\\'", "'")
+            .replace("\\\\", "\\");
+    }
+
+    // Remove trailing '=' characters that might be added to multi-line values
+    cleaned_content = cleaned_content
         .lines()
         .map(|line| line.trim_end_matches('='))
         .collect::<Vec<_>>()
         .join("\n");
 
+    // Try base64 decoding if it looks like base64 (all printable base64 chars, ends with = or ==)
+    // But only if it doesn't already look like valid YAML
+    if !cleaned_content.trim_start().starts_with("apiVersion")
+        && !cleaned_content.trim_start().starts_with("kind:")
+        && cleaned_content.len() > 100
+        && cleaned_content.chars().all(|c| {
+            c.is_ascii_alphanumeric()
+                || c == '+'
+                || c == '/'
+                || c == '='
+                || c == '\n'
+                || c == '\r'
+                || c == ' '
+        })
+        && cleaned_content.trim().ends_with('=')
+    {
+        // Might be base64 encoded - try decoding
+        use base64::{Engine as _, engine::general_purpose};
+        if let Ok(decoded) = general_purpose::STANDARD.decode(cleaned_content.trim()) {
+            if let Ok(decoded_str) = String::from_utf8(decoded) {
+                cleaned_content = decoded_str;
+            }
+        }
+    }
+
+    // Validate that the content looks like YAML before parsing
+    if !cleaned_content.trim_start().starts_with("apiVersion")
+        && !cleaned_content.trim_start().starts_with("kind:")
+    {
+        // Try to find YAML content if it's embedded in something else
+        if let Some(api_start) = cleaned_content.find("apiVersion") {
+            cleaned_content = cleaned_content[api_start..].to_string();
+        }
+    }
+
     // Parse the kubeconfig YAML
-    let docs =
-        YamlLoader::load_from_str(&cleaned_content).context("Failed to parse kubeconfig YAML")?;
+    let docs = YamlLoader::load_from_str(&cleaned_content)
+        .context("Failed to parse kubeconfig YAML. The KUBE_CONFIG environment variable may be incorrectly formatted. Ensure it contains valid YAML with actual line breaks, not escaped \\n sequences.")?;
 
     let doc = docs
         .first()

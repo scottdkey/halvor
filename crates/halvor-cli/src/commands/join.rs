@@ -103,10 +103,29 @@ pub fn handle_join(
         // No server provided - try to extract from KUBE_CONFIG or auto-detect
         if let Ok(kubeconfig_content) = std::env::var("KUBE_CONFIG") {
             println!("Extracting cluster server from KUBE_CONFIG environment variable...");
-            let (extracted_server, _) = halvor_agent::apps::k3s::kubeconfig::extract_server_and_token_from_kubeconfig(&kubeconfig_content)
-                .context("Failed to extract server from KUBE_CONFIG. Ensure KUBE_CONFIG environment variable is set.")?;
-            println!("Using cluster server from kubeconfig: {}", extracted_server);
-            extracted_server
+            
+            // Debug: Show first 100 chars of KUBE_CONFIG to help diagnose issues
+            let preview = if kubeconfig_content.len() > 100 {
+                format!("{}...", &kubeconfig_content[..100])
+            } else {
+                kubeconfig_content.clone()
+            };
+            println!("  KUBE_CONFIG preview (first 100 chars): {}", preview);
+            
+            match halvor_agent::apps::k3s::kubeconfig::extract_server_and_token_from_kubeconfig(&kubeconfig_content) {
+                Ok((extracted_server, _)) => {
+                    println!("✓ Using cluster server from kubeconfig: {}", extracted_server);
+                    extracted_server
+                }
+                Err(e) => {
+                    println!("⚠ Warning: Failed to extract server from KUBE_CONFIG");
+                    println!("  Error: {}", e);
+                    println!("  KUBE_CONFIG may be incorrectly formatted (escaped newlines, quotes, etc.)");
+                    println!("  Falling back to auto-detection...");
+                    // Fall back to auto-detection
+                    auto_detect_primary_node(&config, target_host)?
+                }
+            }
         } else {
             // Try to auto-detect from local cluster
             auto_detect_primary_node(&config, target_host)?

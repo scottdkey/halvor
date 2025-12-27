@@ -352,6 +352,58 @@ pub fn join_cluster(
     println!();
     println!("Joining cluster via Tailscale...");
 
+    // Check if SSH key authentication is set up, if not, offer to set it up
+    // This avoids repeated password prompts during the join process
+    if !exec.is_local() {
+        use halvor_core::utils::ssh::SshConnection;
+        let default_user = std::env::var("USER").unwrap_or_else(|_| "root".to_string());
+        
+        // Get the target host address (Tailscale hostname or IP)
+        let target_host = exec.target_host(hostname, config)?;
+        let ssh_host = format!("{}@{}", default_user, target_host);
+        
+        let ssh_test = SshConnection::new(&ssh_host);
+        
+        if let Ok(ssh_conn) = ssh_test {
+            if !ssh_conn.use_key_auth() {
+                println!("⚠ SSH key authentication not set up for {}.", target_host);
+                println!("  This will cause repeated password prompts during the join process.");
+                println!();
+                print!("  Set up SSH keys now? (y/N): ");
+                use std::io::{self, Write};
+                io::stdout().flush()?;
+                
+                let mut input = String::new();
+                io::stdin().read_line(&mut input)?;
+                let input = input.trim();
+                
+                if input.eq_ignore_ascii_case("y") || input.eq_ignore_ascii_case("yes") {
+                    println!("  Setting up SSH keys...");
+                    use halvor_core::utils::ssh::copy_ssh_key;
+                    if let Err(e) = copy_ssh_key(&target_host, Some(&default_user), Some(&default_user)) {
+                        println!("  ⚠ Warning: Failed to set up SSH keys: {}", e);
+                        println!("  You can set them up manually with: ssh-copy-id {}", ssh_host);
+                    } else {
+                        println!("  ✓ SSH keys set up successfully!");
+                        println!("  Re-testing connection...");
+                        // Re-test to confirm key auth works now
+                        let ssh_test2 = SshConnection::new(&ssh_host);
+                        if let Ok(ssh_conn2) = ssh_test2 {
+                            if ssh_conn2.use_key_auth() {
+                                println!("  ✓ Key authentication confirmed!");
+                            }
+                        }
+                    }
+                    println!();
+                } else {
+                    println!("  Skipping SSH key setup. You'll be prompted for passwords multiple times.");
+                    println!("  To set up SSH keys later, run: ssh-copy-id {}", ssh_host);
+                    println!();
+                }
+            }
+        }
+    }
+
     // Check if node is currently part of a cluster and handle removal
     check_and_remove_from_existing_cluster(&exec, hostname, server, config)?;
 
