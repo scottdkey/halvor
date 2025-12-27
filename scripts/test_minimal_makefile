@@ -1,0 +1,12 @@
+.PHONY: test
+test:
+	@if [ "$$(uname -s)" = "Linux" ]; then \
+		if [ -f ~/.config/systemd/user/halvor-agent.service ]; then \
+			echo "Found user service"; \
+		else \
+			MIGRATE_ARG=""; \
+			if [ -f /etc/systemd/system/halvor-agent.service ]; then MIGRATE_ARG="migrate"; fi; \
+			echo "MIGRATE_ARG=$$MIGRATE_ARG"; \
+		fi; \
+	fi
+
