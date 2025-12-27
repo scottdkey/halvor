@@ -1,0 +1,26 @@
+[Unit]
+Description=Halvor Agent - Secure cluster management service
+After=network.target tailscale.service
+Wants=network.target
+
+[Service]
+Type=forking
+User=skey
+Group=skey
+ExecStart=/home/skey/.cargo/bin/halvor agent start --port 13500 --daemon
+PIDFile=/home/skey/.config/halvor/halvor-agent.pid
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment variables
+Environment="HOME=/home/skey"
+Environment="HALVOR_DB_DIR=/home/skey/.config/halvor"
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
