@@ -479,17 +479,15 @@ fn sync_with_agents_internal(sync: &ConfigSync, _force: bool) -> Result<()> {
         } else {
             // Update existing peer with discovered Tailscale information
             if host.reachable {
-                // Update Tailscale IP and hostname if discovered
-                if host.tailscale_ip.is_some() || host.tailscale_hostname.is_some() {
-                    let _ = mesh::update_peer_tailscale_info(
+                // Update Tailscale hostname if discovered
+                if let Some(ref ts_hostname) = host.tailscale_hostname {
+                    let _ = mesh::update_peer_tailscale_hostname(
                         &normalized_peer,
-                        host.tailscale_ip.clone(),
-                        host.tailscale_hostname.clone(),
+                        ts_hostname,
                     );
-                } else {
-                    // Just update last seen if no Tailscale info
-                    let _ = mesh::update_peer_last_seen(&normalized_peer);
                 }
+                // Update last seen timestamp
+                let _ = mesh::update_peer_last_seen(&normalized_peer);
             }
         }
     }

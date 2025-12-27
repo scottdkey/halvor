@@ -277,12 +277,11 @@ pub fn refresh_peer_tailscale_hostnames() -> Result<usize> {
             let normalized_peer = halvor_core::utils::hostname::normalize_hostname(peer_hostname);
             
             // Try to find matching device by normalized hostname
-            if let Some((ip, full_hostname)) = device_map.get(&normalized_peer) {
+            if let Some((_ip, full_hostname)) = device_map.get(&normalized_peer) {
                 // Use the peer_hostname as stored in database (which is already normalized)
-                let _ = update_peer_tailscale_info(
+                let _ = update_peer_tailscale_hostname(
                     peer_hostname,
-                    ip.clone(),
-                    Some(full_hostname.clone()),
+                    full_hostname,
                 );
                 updated_count += 1;
             }
