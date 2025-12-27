@@ -56,10 +56,98 @@ pub fn install_agent(hostname: &str, config: &EnvConfig) -> Result<()> {
     Ok(())
 }
 
+/// Detect if the target system is macOS
+fn is_macos<E: CommandExecutor>(exec: &E) -> bool {
+    exec.execute_shell("uname -s")
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_lowercase() == "darwin")
+        .unwrap_or(false)
+}
+
 /// Run comprehensive diagnostics for halvor agent
 fn run_agent_diagnostics<E: CommandExecutor>(exec: &E, hostname: &str) -> Result<()> {
     println!("  Checking agent status...");
 
+    if is_macos(exec) {
+        run_agent_diagnostics_macos(exec, hostname)
+    } else {
+        run_agent_diagnostics_linux(exec, hostname)
+    }
+}
+
+/// Run diagnostics on macOS
+fn run_agent_diagnostics_macos<E: CommandExecutor>(exec: &E, hostname: &str) -> Result<()> {
+    let home_dir = exec.get_home_dir().unwrap_or_else(|_| "/Users".to_string());
+    let plist_path = format!("{}/Library/LaunchAgents/com.halvor.agent.plist", home_dir);
+
+    // Check if launchd plist exists
+    let service_exists = exec.file_exists(&plist_path).unwrap_or(false);
+
+    if service_exists {
+        println!("  ✓ Launchd plist file exists");
+    } else {
+        println!("  ⚠️  Launchd plist file not found");
+    }
+
+    // Check if service is loaded
+    let service_loaded = exec
+        .execute_shell("launchctl list com.halvor.agent 2>/dev/null")
+        .ok()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if service_loaded {
+        // Check if it's actually running (PID column is not "-")
+        let service_info = exec
+            .execute_shell("launchctl list com.halvor.agent 2>/dev/null")
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .unwrap_or_default();
+
+        let parts: Vec<&str> = service_info.split_whitespace().collect();
+        let pid = parts.first().unwrap_or(&"-");
+
+        if *pid != "-" && pid.parse::<u32>().is_ok() {
+            println!("  ✓ Agent service is running (PID: {})", pid);
+        } else {
+            println!("  ⚠️  Agent service is loaded but not running");
+        }
+    } else {
+        println!("  ⚠️  Agent service is not loaded");
+    }
+
+    // Check if service will start on boot (RunAtLoad in plist)
+    if service_exists {
+        let run_at_load = exec
+            .execute_shell(&format!("defaults read {} RunAtLoad 2>/dev/null || echo 0", plist_path))
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim() == "1")
+            .unwrap_or(false);
+
+        if run_at_load {
+            println!("  ✓ Agent service will start on login");
+        } else {
+            println!("  ⚠️  Agent service will not start on login");
+        }
+    } else {
+        println!("  ⚠️  Agent service is not configured (won't start on login)");
+    }
+
+    // Check if halvor binary exists
+    check_halvor_binary(exec)?;
+
+    // Check network reachability if remote
+    if !exec.is_local() {
+        check_agent_reachability(exec, hostname)?;
+    }
+
+    Ok(())
+}
+
+/// Run diagnostics on Linux
+fn run_agent_diagnostics_linux<E: CommandExecutor>(exec: &E, hostname: &str) -> Result<()> {
     // Check if systemd service exists
     let service_exists = exec
         .file_exists("/etc/systemd/system/halvor-agent.service")
@@ -112,6 +200,18 @@ fn run_agent_diagnostics<E: CommandExecutor>(exec: &E, hostname: &str) -> Result
     }
 
     // Check if halvor binary exists
+    check_halvor_binary(exec)?;
+
+    // Check network reachability if remote
+    if !exec.is_local() {
+        check_agent_reachability(exec, hostname)?;
+    }
+
+    Ok(())
+}
+
+/// Check if halvor binary exists
+fn check_halvor_binary<E: CommandExecutor>(exec: &E) -> Result<()> {
     let halvor_exists = exec
         .execute_shell("which halvor 2>/dev/null || echo not_found")
         .ok()
@@ -131,27 +231,29 @@ fn run_agent_diagnostics<E: CommandExecutor>(exec: &E, hostname: &str) -> Result
         println!("  ⚠️  Halvor binary not found (will be installed)");
     }
 
-    // Check if agent is reachable via network
-    if !exec.is_local() {
-        // Try to get Tailscale hostname/IP for better connectivity
-        let agent_host = if let Ok(Some(ts_hostname)) =
-            crate::services::tailscale::get_tailscale_hostname_remote(exec)
-        {
-            ts_hostname
-        } else if let Ok(Some(ts_ip)) = crate::services::tailscale::get_tailscale_ip_remote(exec) {
-            ts_ip
-        } else {
-            hostname.to_string()
-        };
+    Ok(())
+}
 
-        let client = AgentClient::new(&agent_host, 13500);
-        match client.ping() {
-            Ok(true) => {
-                println!("  ✓ Agent is reachable on port 13500");
-            }
-            _ => {
-                println!("  ⚠️  Agent is not reachable on port 13500");
-            }
+/// Check if agent is reachable via network
+fn check_agent_reachability<E: CommandExecutor>(exec: &E, hostname: &str) -> Result<()> {
+    // Try to get Tailscale hostname/IP for better connectivity
+    let agent_host = if let Ok(Some(ts_hostname)) =
+        crate::services::tailscale::get_tailscale_hostname_remote(exec)
+    {
+        ts_hostname
+    } else if let Ok(Some(ts_ip)) = crate::services::tailscale::get_tailscale_ip_remote(exec) {
+        ts_ip
+    } else {
+        hostname.to_string()
+    };
+
+    let client = AgentClient::new(&agent_host, 13500);
+    match client.ping() {
+        Ok(true) => {
+            println!("  ✓ Agent is reachable on port 13500");
+        }
+        _ => {
+            println!("  ⚠️  Agent is not reachable on port 13500");
         }
     }
 
@@ -163,6 +265,49 @@ fn verify_agent_installation<E: CommandExecutor>(exec: &E, hostname: &str) -> Re
     // Wait a moment for service to start
     std::thread::sleep(std::time::Duration::from_secs(2));
 
+    if is_macos(exec) {
+        verify_agent_installation_macos(exec, hostname)
+    } else {
+        verify_agent_installation_linux(exec, hostname)
+    }
+}
+
+/// Verify agent installation on macOS
+fn verify_agent_installation_macos<E: CommandExecutor>(exec: &E, hostname: &str) -> Result<()> {
+    let home_dir = exec.get_home_dir().unwrap_or_else(|_| "/Users".to_string());
+    let log_dir = format!("{}/Library/Logs/halvor", home_dir);
+
+    // Check if service is running
+    let service_info = exec
+        .execute_shell("launchctl list com.halvor.agent 2>/dev/null")
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .unwrap_or_default();
+
+    let parts: Vec<&str> = service_info.split_whitespace().collect();
+    let pid = parts.first().unwrap_or(&"-");
+
+    if *pid != "-" && pid.parse::<u32>().is_ok() {
+        println!("  ✓ Agent service is running (PID: {})", pid);
+
+        // Try to ping agent if remote
+        if !exec.is_local() {
+            check_agent_ping(exec, hostname)?;
+        }
+    } else {
+        println!("  ⚠️  Agent service is not running");
+        println!("     Check logs: tail -f {}/halvor-agent.log", log_dir);
+        println!(
+            "     Error logs: tail -f {}/halvor-agent.error.log",
+            log_dir
+        );
+    }
+
+    Ok(())
+}
+
+/// Verify agent installation on Linux
+fn verify_agent_installation_linux<E: CommandExecutor>(exec: &E, hostname: &str) -> Result<()> {
     // Check service status
     let service_status = exec
         .execute_shell("systemctl is-active halvor-agent.service 2>/dev/null || echo inactive")
@@ -176,34 +321,39 @@ fn verify_agent_installation<E: CommandExecutor>(exec: &E, hostname: &str) -> Re
 
         // Try to ping agent if remote
         if !exec.is_local() {
-            // Try to get Tailscale hostname/IP for better connectivity
-            let agent_host = if let Ok(Some(ts_hostname)) =
-                crate::services::tailscale::get_tailscale_hostname_remote(exec)
-            {
-                ts_hostname
-            } else if let Ok(Some(ts_ip)) =
-                crate::services::tailscale::get_tailscale_ip_remote(exec)
-            {
-                ts_ip
-            } else {
-                hostname.to_string()
-            };
-
-            let client = AgentClient::new(&agent_host, 13500);
-            match client.ping() {
-                Ok(true) => {
-                    println!("  ✓ Agent is reachable and responding");
-                }
-                _ => {
-                    println!("  ⚠️  Agent service is running but not yet reachable");
-                    println!("     This may take a few more seconds...");
-                }
-            }
+            check_agent_ping(exec, hostname)?;
         }
     } else {
         println!("  ⚠️  Agent service status: {}", service_status);
         println!("     Check logs: systemctl status halvor-agent");
         println!("     View logs: journalctl -u halvor-agent -n 50");
+    }
+
+    Ok(())
+}
+
+/// Check if agent is responding to ping
+fn check_agent_ping<E: CommandExecutor>(exec: &E, hostname: &str) -> Result<()> {
+    // Try to get Tailscale hostname/IP for better connectivity
+    let agent_host = if let Ok(Some(ts_hostname)) =
+        crate::services::tailscale::get_tailscale_hostname_remote(exec)
+    {
+        ts_hostname
+    } else if let Ok(Some(ts_ip)) = crate::services::tailscale::get_tailscale_ip_remote(exec) {
+        ts_ip
+    } else {
+        hostname.to_string()
+    };
+
+    let client = AgentClient::new(&agent_host, 13500);
+    match client.ping() {
+        Ok(true) => {
+            println!("  ✓ Agent is reachable and responding");
+        }
+        _ => {
+            println!("  ⚠️  Agent service is running but not yet reachable");
+            println!("     This may take a few more seconds...");
+        }
     }
 
     Ok(())
