@@ -42,6 +42,7 @@ pub fn handle_update(
 
     // No hostname or app specified - discover mesh and let user select nodes to update
     return update_with_node_selection(experimental, force, is_dev, &config);
+}
 
 /// Update with interactive node selection
 fn update_with_node_selection(
