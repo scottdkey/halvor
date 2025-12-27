@@ -1,0 +1,21 @@
+# Private Traefik configuration
+# Runs on frigg, handles internal/Tailscale traffic
+#
+# Usage:
+#   helm install traefik-private ./charts/traefik \
+#     -f ./charts/traefik/values-private.yaml \
+#     --set domain=home.example.com \
+#     --set acme.email=admin@example.com \
+#     --set acme.dnsToken=$CF_DNS_API_TOKEN
+
+mode: private
+
+# Private ingress class - IS the default
+# All services without explicit ingressClassName use this
+ingressClass:
+  name: traefik-private
+  isDefault: true
+
+# Run on frigg (primary control plane, Tailscale accessible)
+node:
+  hostname: frigg

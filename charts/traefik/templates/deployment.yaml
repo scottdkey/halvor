@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "traefik.fullname" . }}
+  labels:
+    {{- include "traefik.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "traefik.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "traefik.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "traefik.fullname" . }}
+      containers:
+      - name: traefik
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        args:
+          - --api.insecure=true
+          - --api.dashboard={{ .Values.dashboard.enabled }}
+          - --ping=true
+          # Kubernetes Ingress provider - only watch our ingress class
+          - --providers.kubernetesingress=true
+          - --providers.kubernetesingress.ingressclass={{ include "traefik.ingressClassName" . }}
+          - --providers.kubernetesingress.allowExternalNameServices=true
+          # Also enable IngressRoute CRD
+          - --providers.kubernetescrd=true
+          - --providers.kubernetescrd.ingressclass={{ include "traefik.ingressClassName" . }}
+          # Entrypoints
+          - --entrypoints.web.address=:80
+          {{- if .Values.httpRedirect }}
+          - --entrypoints.web.http.redirections.entrypoint.to=websecure
+          - --entrypoints.web.http.redirections.entrypoint.scheme=https
+          {{- end }}
+          - --entrypoints.websecure.address=:443
+          {{- if .Values.acme.enabled }}
+          # ACME/Let's Encrypt via DNS challenge
+          - --certificatesresolvers.{{ .Values.acme.dnsProvider }}.acme.dnschallenge=true
+          - --certificatesresolvers.{{ .Values.acme.dnsProvider }}.acme.dnschallenge.provider={{ .Values.acme.dnsProvider }}
+          - --certificatesresolvers.{{ .Values.acme.dnsProvider }}.acme.email={{ .Values.acme.email }}
+          - --certificatesresolvers.{{ .Values.acme.dnsProvider }}.acme.storage=/data/acme.json
+          {{- end }}
+          # Logging
+          - --log.level={{ .Values.logLevel }}
+          {{- if .Values.accessLog }}
+          - --accesslog=true
+          {{- end }}
+        ports:
+        - name: web
+          containerPort: 80
+          protocol: TCP
+        - name: websecure
+          containerPort: 443
+          protocol: TCP
+        - name: dashboard
+          containerPort: 8080
+          protocol: TCP
+        {{- if .Values.acme.enabled }}
+        env:
+        - name: CF_DNS_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "traefik.fullname" . }}-secrets
+              key: cf-dns-api-token
+        {{- end }}
+        volumeMounts:
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          mountPath: /data
+        {{- end }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /ping
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ping
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      {{- if .Values.persistence.enabled }}
+      - name: data
+        persistentVolumeClaim:
+          claimName: {{ include "traefik.fullname" . }}-data
+      {{- end }}
+      nodeSelector:
+        kubernetes.io/hostname: {{ include "traefik.nodeHostname" . }}
+        {{- with .Values.nodeSelector }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

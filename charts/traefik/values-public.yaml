@@ -1,0 +1,21 @@
+# Public Traefik configuration
+# Runs on oak, handles internet-facing traffic
+#
+# Usage:
+#   helm install traefik-public ./charts/traefik \
+#     -f ./charts/traefik/values-public.yaml \
+#     --set domain=example.com \
+#     --set acme.email=admin@example.com \
+#     --set acme.dnsToken=$CF_DNS_API_TOKEN
+
+mode: public
+
+# Public ingress class - NOT the default
+# Services must explicitly use ingressClassName: traefik-public
+ingressClass:
+  name: traefik-public
+  isDefault: false
+
+# Run on oak (the node with public IP)
+node:
+  hostname: oak

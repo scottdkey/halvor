@@ -1,0 +1,10 @@
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: {{ include "traefik.ingressClassName" . }}
+  labels:
+    {{- include "traefik.labels" . | nindent 4 }}
+  annotations:
+    ingressclass.kubernetes.io/is-default-class: {{ include "traefik.isDefaultIngressClass" . | quote }}
+spec:
+  controller: {{ include "traefik.controllerName" . }}

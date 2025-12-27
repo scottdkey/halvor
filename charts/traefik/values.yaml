@@ -1,0 +1,93 @@
+# Traefik Helm Chart - Unified for public and private deployments
+#
+# Deploy as public (on oak, internet-facing):
+#   helm install traefik-public ./charts/traefik -f ./charts/traefik/values-public.yaml
+#
+# Deploy as private (on frigg, Tailscale only):
+#   helm install traefik-private ./charts/traefik -f ./charts/traefik/values-private.yaml
+
+# Mode: "public" or "private"
+# - public: Runs on oak, handles internet traffic, NOT default ingress class
+# - private: Runs on frigg, handles internal traffic, IS default ingress class
+mode: private
+
+image:
+  repository: traefik
+  tag: v3.2
+  pullPolicy: IfNotPresent
+
+# Domain configuration
+domain: "" # Set via --set domain=example.com
+
+# ACME/Let's Encrypt configuration
+acme:
+  enabled: true
+  email: "" # Set via --set acme.email=...
+  dnsProvider: cloudflare
+  dnsToken: "" # Set via --set acme.dnsToken=...
+
+# Service configuration
+service:
+  type: LoadBalancer
+  ports:
+    http: 80
+    https: 443
+    dashboard: 8080
+  annotations: {}
+
+# Dashboard configuration
+dashboard:
+  enabled: true
+  # Domain for dashboard (e.g., traefik.example.com)
+  domain: ""
+
+# Ingress class configuration
+# These are auto-set based on mode, but can be overridden
+ingressClass:
+  # Name of the ingress class
+  name: ""  # Auto: traefik-public or traefik-private based on mode
+  # Whether this is the default ingress class
+  isDefault: null  # Auto: false for public, true for private
+
+# Node placement
+# Auto-set based on mode, but can be overridden
+node:
+  # Hostname of the node to run on
+  hostname: ""  # Auto: oak for public, frigg for private
+
+# Resources
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Additional node selector labels (merged with node.hostname)
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity rules (in addition to node hostname)
+affinity: {}
+
+# Persistent storage for ACME certificates
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""  # Use default storage class
+
+# Network policy
+networkPolicy:
+  enabled: false
+
+# Log level: DEBUG, INFO, WARN, ERROR
+logLevel: INFO
+
+# Enable access logging
+accessLog: true
+
+# HTTP to HTTPS redirect
+httpRedirect: true

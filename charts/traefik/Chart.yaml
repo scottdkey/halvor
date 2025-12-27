@@ -1,0 +1,11 @@
+apiVersion: v2
+name: traefik
+description: Traefik reverse proxy for Kubernetes ingress (supports public and private modes)
+type: application
+version: 0.1.0
+appVersion: "3.2"
+keywords:
+  - traefik
+  - reverse-proxy
+  - ingress
+  - load-balancer
