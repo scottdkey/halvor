@@ -87,22 +87,29 @@ pub fn join_cluster(
     };
     println!();
 
-    // Now connect to the remote node
+    // Now connect to the target node
     println!("Connecting to node: {}", hostname);
-    
-    // Try to use agent first (avoids password prompts), fall back to SSH if agent not available
-    // Use a trait object so we can use either AgentExecutor or Executor
-    let exec: Box<dyn CommandExecutor> = if let Ok(agent_exec) = create_agent_executor(hostname, config) {
-        println!("✓ Using halvor agent for remote execution (encrypted, no SSH/password required)");
-        Box::new(agent_exec)
+
+    // First, check if we're running locally using the standard Executor logic
+    // This avoids expensive network discovery when running on the target machine
+    let standard_exec = Executor::new(hostname, config)
+        .with_context(|| format!("Failed to create executor for hostname: {}", hostname))?;
+
+    let (exec, is_local): (Box<dyn CommandExecutor>, bool) = if standard_exec.is_local() {
+        // Running locally - use local executor directly, no network discovery needed
+        println!("✓ Running locally on {}", hostname);
+        (Box::new(standard_exec), true)
     } else {
-        // Agent not available, fall back to SSH
-        println!("⚠ Agent not available, using SSH (may require password prompts)");
-        let ssh_exec = Executor::new(hostname, config)
-            .with_context(|| format!("Failed to create executor for hostname: {}", hostname))?;
-        Box::new(ssh_exec)
+        // Running remotely - try agent first (avoids password prompts), fall back to SSH
+        if let Ok(agent_exec) = create_agent_executor(hostname, config) {
+            println!("✓ Using halvor agent for remote execution (encrypted, no SSH/password required)");
+            (Box::new(agent_exec), false)
+        } else {
+            // Agent not available, use the SSH executor we already created
+            println!("⚠ Agent not available, using SSH (may require password prompts)");
+            (Box::new(standard_exec), false)
+        }
     };
-    let is_local = false; // Both agent and SSH executors are remote for join operations
 
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     if control_plane {
