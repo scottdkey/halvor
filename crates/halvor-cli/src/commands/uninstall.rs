@@ -5,6 +5,7 @@ use anyhow::Result;
 use std::env;
 use std::io::{self, Write};
 use std::path::Path;
+use glob;
 
 /// Handle uninstall command for a service on a host
 /// hostname: None = local, Some(hostname) = remote host
@@ -161,9 +162,11 @@ fn handle_local_guided_uninstall() -> Result<()> {
     // Use glob to find backup files
     for pattern in &backup_patterns {
         if let Ok(entries) = glob::glob(pattern) {
-            for entry in entries.flatten() {
-                if entry.is_file() {
-                    backups_to_remove.push(entry.to_string_lossy().to_string());
+            for entry_result in entries {
+                if let Ok(entry) = entry_result {
+                    if entry.is_file() {
+                        backups_to_remove.push(entry.to_string_lossy().to_string());
+                    }
                 }
             }
         }
@@ -244,7 +247,7 @@ fn handle_local_guided_uninstall() -> Result<()> {
 
     // Remove backup files
     for backup_path in &backups_to_remove {
-        let path = Path::new(backup_path);
+        let path = Path::new(backup_path.as_str());
         if path.exists() {
             if backup_path.starts_with("/usr") {
                 // System path, need sudo

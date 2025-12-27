@@ -73,12 +73,12 @@ pub enum Commands {
         #[arg(long)]
         db: bool,
         #[command(subcommand)]
-        command: Option<commands::config::ConfigCommands>,
+        command: Option<crate::commands::config::ConfigCommands>,
     },
     /// Database operations (migrations, backup, generate)
     Db {
         #[command(subcommand)]
-        command: commands::config::DbCommands,
+        command: crate::commands::config::DbCommands,
     },
     /// Update halvor or installed apps
     Update {
@@ -94,7 +94,7 @@ pub enum Commands {
     /// Generate build artifacts (migrations, FFI bindings)
     Generate {
         #[command(subcommand)]
-        command: commands::generate::GenerateCommands,
+        command: crate::commands::generate::GenerateCommands,
     },
     /// Initialize K3s cluster (primary control plane node) or prepare a node for joining
     Init {
@@ -126,11 +126,11 @@ pub enum Commands {
     /// Show status of services (mesh overview by default)
     Status {
         #[command(subcommand)]
-        command: Option<commands::status::StatusCommands>,
+        command: Option<crate::commands::status::StatusCommands>,
     },
     /// Manage halvor agent (start, stop, discover, sync)
     Agent {
         #[command(subcommand)]
-        command: commands::agent::AgentCommands,
+        command: crate::commands::agent::AgentCommands,
     },
 }

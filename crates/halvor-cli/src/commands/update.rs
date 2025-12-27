@@ -1,8 +1,7 @@
 //! Update halvor or installed apps
 
 use halvor_core::config;
-use halvor_agent::apps::{AppCategory, find_app, k3s};
-use halvor_core::services::helm;
+use halvor_agent::apps::{AppCategory, find_app};
 use halvor_core::utils::exec::{CommandExecutor, Executor};
 use halvor_core::utils::update;
 use anyhow::{Context, Result};

@@ -20,8 +20,8 @@ pub mod uninstall;
 pub mod update;
 pub mod utils;
 
-use crate::Commands;
-use crate::Commands::*;
+use crate::cli_types::Commands;
+use crate::cli_types::Commands::*;
 use anyhow::Result;
 use std::mem;
 

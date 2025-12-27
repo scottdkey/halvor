@@ -28,3 +28,4 @@ whoami.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 rusqlite.workspace = true
+glob = "0.3"

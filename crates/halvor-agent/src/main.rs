@@ -8,10 +8,9 @@ struct Args {
     /// Port for agent API
     #[arg(long, default_value = "13500")]
     port: u16,
-
-    /// Port for web UI (enables UI if provided)
+    /// Enable web UI on the same port (requires halvor CLI with web UI support)
     #[arg(long)]
-    web_port: Option<u16>,
+    ui: bool,
 }
 
 #[tokio::main]
@@ -20,9 +19,12 @@ async fn main() -> Result<()> {
 
     println!("Starting Halvor Agent");
     println!("  Agent API: http://0.0.0.0:{}", args.port);
-    if let Some(web_port) = args.web_port {
-        println!("  Web UI: http://0.0.0.0:{}", web_port);
+    
+    if args.ui {
+        println!("  Note: Web UI requires 'halvor agent start --ui' (CLI integration)");
+        println!("  This binary only runs the agent server. Use the CLI for web UI.");
     }
 
-    halvor_agent::start(args.port, args.web_port).await
+    // Just start agent server (web UI integration is handled by CLI)
+    halvor_agent::start(args.port, None).await
 }

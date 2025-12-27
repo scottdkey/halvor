@@ -13,12 +13,9 @@ pub enum AgentCommands {
         /// Port to listen on (default: 13500)
         #[arg(long, default_value = "13500")]
         port: u16,
-        /// Also start web server on this port (serves UI and API)
+        /// Enable web UI on the same port as agent API
         #[arg(long)]
-        web_port: Option<u16>,
-        /// Alias for --web-port (enables web UI)
-        #[arg(long)]
-        ui: Option<u16>,
+        ui: bool,
         /// Run as daemon in background
         #[arg(long)]
         daemon: bool,
@@ -71,13 +68,10 @@ pub async fn handle_agent(command: AgentCommands) -> Result<()> {
     match command {
         AgentCommands::Start {
             port,
-            web_port,
             ui,
             daemon,
         } => {
-            // Use --ui if provided, otherwise use --web-port
-            let web_port = ui.or(web_port);
-            start_agent(port, web_port, daemon).await?;
+            start_agent(port, ui, daemon).await?;
         }
         AgentCommands::Stop => {
             stop_agent()?;
@@ -111,14 +105,33 @@ pub async fn handle_agent(command: AgentCommands) -> Result<()> {
 }
 
 /// Start the agent daemon
-async fn start_agent(port: u16, web_port: Option<u16>, daemon: bool) -> Result<()> {
+async fn start_agent(port: u16, ui: bool, daemon: bool) -> Result<()> {
     use std::fs;
+    use std::path::PathBuf;
 
     // Check if already running
     if is_agent_running()? {
         println!("Agent is already running");
         return Ok(());
     }
+
+    // Check for web UI files only if --ui flag is provided
+    let static_dir = if ui {
+        let web_dir = std::env::var("HALVOR_WEB_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("projects/web"));
+        let build_dir = web_dir.join("build");
+        if build_dir.exists() {
+            Some(build_dir)
+        } else if web_dir.exists() {
+            Some(web_dir)
+        } else {
+            anyhow::bail!("Web UI requested but web files not found. Expected at: {}", web_dir.display());
+        }
+    } else {
+        None
+    };
+    let enable_web_ui = ui && static_dir.is_some();
 
     if daemon {
         // Daemon mode - spawn as background process
@@ -139,8 +152,8 @@ async fn start_agent(port: u16, web_port: Option<u16>, daemon: bool) -> Result<(
                 .arg("start")
                 .arg("--port")
                 .arg(port.to_string());
-            if let Some(wp) = web_port {
-                cmd.arg("--web-port").arg(wp.to_string());
+            if ui {
+                cmd.arg("--ui");
             }
             // Don't pass --daemon flag to spawned process - it runs in foreground
             // but we spawn it in background, so it becomes a daemon
@@ -183,9 +196,10 @@ async fn start_agent(port: u16, web_port: Option<u16>, daemon: bool) -> Result<(
 
     // Foreground mode - start server with background sync
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("Starting halvor agent on port {}...", port);
-    if let Some(wp) = web_port {
-        println!("Starting halvor web server on port {}...", wp);
+    if enable_web_ui {
+        println!("Starting halvor agent with web UI on port {}...", port);
+    } else {
+        println!("Starting halvor agent on port {}...", port);
     }
     println!();
     println!("All output will be shown below (including join requests and debug info).");
@@ -208,42 +222,17 @@ async fn start_agent(port: u16, web_port: Option<u16>, daemon: bool) -> Result<(
         }
     });
 
-    // If web_port is provided, start both agent and web server
-    if let Some(web_port) = web_port {
+    // If web UI is available, start web server on the same port (which includes agent API)
+    if let Some(static_dir) = static_dir {
         use halvor_web;
         use std::net::SocketAddr;
-        use std::path::PathBuf;
-        use tokio::task;
 
-        let agent_port = port;
-        let server = AgentServer::new(agent_port, None);
+        let addr = SocketAddr::from(([0, 0, 0, 0], port));
+        println!("🌐 Web UI and Agent API available at http://localhost:{}", port);
+        println!("🔌 Agent API endpoints: http://localhost:{}/api/*", port);
 
-        // Start agent server in background task
-        let agent_handle = task::spawn_blocking(move || server.start());
-
-        // Start web server in foreground
-        let web_dir = std::env::var("HALVOR_WEB_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("projects/web"));
-        let build_dir = web_dir.join("build");
-        let static_dir = if build_dir.exists() {
-            build_dir
-        } else {
-            web_dir.clone()
-        };
-
-        let addr = SocketAddr::from(([0, 0, 0, 0], web_port));
-        println!("🌐 Web UI available at http://localhost:{}", web_port);
-        println!(
-            "🔌 Agent API available on port {} (for CLI connections)",
-            agent_port
-        );
-
-        // Start web server (this will block)
-        halvor_web::start_server(addr, static_dir, Some(agent_port)).await?;
-
-        // If web server exits, wait for agent
-        let _ = agent_handle.await;
+        // Start web server (this will block) - it includes agent API endpoints
+        halvor_web::start_server(addr, static_dir, Some(port)).await?;
         Ok(())
     } else {
         // Just start agent server (blocking, so run in spawn_blocking)
@@ -397,7 +386,7 @@ fn sync_with_agents_internal(sync: &ConfigSync, _force: bool) -> Result<()> {
         }
 
         // Add this peer to local database if not already present
-        if let Err(e) = mesh::add_peer(
+        if let Err(_e) = mesh::add_peer(
             &normalized_peer,
             host.tailscale_ip.clone(),
             host.tailscale_hostname.clone(),

@@ -100,8 +100,9 @@ install-agent:
 	@mkdir -p ~/.cargo/bin
 	@cp -f target/release/halvor-agent ~/.cargo/bin/halvor-agent
 	@echo "✓ Agent installed to ~/.cargo/bin/halvor-agent (available as 'halvor-agent')"
-	@echo "  Start with: halvor-agent --port 13500 --web-port 3030"
-	@echo "  Or use CLI: halvor agent start --port 13500 --ui 3030 --daemon"
+	@echo "  Start with: halvor-agent --port 13500"
+	@echo "  Or use CLI: halvor agent start --port 13500 --daemon"
+	@echo "  For web UI: halvor agent start --port 13500 --ui --daemon"
 
 # Install Rust toolchain
 install-rust:

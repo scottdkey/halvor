@@ -1,8 +1,9 @@
+mod cli_types;
 mod commands;
 
 use anyhow::Result;
 use clap::Parser;
-use crate::Commands;
+use cli_types::Commands;
 
 #[derive(Parser)]
 #[command(name = "halvor")]

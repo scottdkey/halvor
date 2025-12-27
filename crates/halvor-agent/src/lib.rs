@@ -16,8 +16,8 @@ use anyhow::Result;
 ///
 /// # Arguments
 /// * `port` - Agent API port (default: 13500)
-/// * `web_port` - Optional web UI port (enables UI if Some)
-pub async fn start(port: u16, web_port: Option<u16>) -> Result<()> {
+/// * `_web_port` - Optional web UI port (deprecated - web UI now uses same port)
+pub async fn start(port: u16, _web_port: Option<u16>) -> Result<()> {
     let server = AgentServer::new(port, None);
     server.start()
 }
