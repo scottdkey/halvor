@@ -55,6 +55,12 @@ pub enum AgentCommands {
     },
     /// List peers in the mesh
     Peers,
+    /// Remove a peer from the mesh
+    Remove {
+        /// Hostname of the peer to remove (if not provided, will show interactive selection)
+        #[arg(value_name = "HOSTNAME")]
+        hostname: Option<String>,
+    },
     /// Verify mesh connectivity and communication
     Verify,
     /// Update hostname and sync across mesh
@@ -98,6 +104,9 @@ pub async fn handle_agent(command: AgentCommands) -> Result<()> {
         }
         AgentCommands::Peers => {
             list_peers()?;
+        }
+        AgentCommands::Remove { hostname } => {
+            remove_peer(hostname.as_deref())?;
         }
         AgentCommands::Verify => {
             verify_mesh_connectivity()?;
@@ -994,6 +1003,125 @@ fn list_peers() -> Result<()> {
         println!();
         for peer in peers {
             println!("  - {}", peer);
+        }
+    }
+
+    Ok(())
+}
+
+/// Remove a peer from the mesh
+fn remove_peer(hostname: Option<&str>) -> Result<()> {
+    use halvor_agent::agent::mesh;
+    use halvor_core::utils::hostname::normalize_hostname;
+    use halvor_db::generated::agent_peers;
+
+    let peers = mesh::get_active_peers()?;
+
+    if peers.is_empty() {
+        println!("No peers in mesh to remove.");
+        return Ok(());
+    }
+
+    let hostname_to_remove = if let Some(hostname) = hostname {
+        // Try to find exact match first
+        let normalized_input = normalize_hostname(hostname);
+        let mut found_hostname = None;
+        
+        for peer_hostname in &peers {
+            // Try exact match
+            if peer_hostname.eq_ignore_ascii_case(hostname) {
+                found_hostname = Some(peer_hostname.clone());
+                break;
+            }
+            // Try normalized match
+            if normalize_hostname(peer_hostname) == normalized_input {
+                found_hostname = Some(peer_hostname.clone());
+                break;
+            }
+        }
+        
+        match found_hostname {
+            Some(h) => h,
+            None => {
+                return Err(anyhow::anyhow!(
+                    "Peer '{}' not found in mesh. Available peers: {}",
+                    hostname,
+                    peers.join(", ")
+                ));
+            }
+        }
+    } else {
+        // Interactive selection
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!("Select peer to remove:");
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!();
+
+        let mut peer_list: Vec<(usize, String, Option<String>, Option<String>)> = Vec::new();
+        for (idx, peer_hostname) in peers.iter().enumerate() {
+            let peer_row = agent_peers::select_one(
+                "hostname = ?1",
+                &[&peer_hostname as &dyn rusqlite::types::ToSql],
+            )
+            .ok()
+            .flatten();
+
+            let ip = peer_row.as_ref().and_then(|r| r.tailscale_ip.clone());
+            let ts_hostname = peer_row.as_ref().and_then(|r| r.tailscale_hostname.clone());
+
+            peer_list.push((idx + 1, peer_hostname.clone(), ip, ts_hostname));
+        }
+
+        for (num, hostname, ip, ts_hostname) in &peer_list {
+            let ip_str = ip.as_deref().unwrap_or("N/A");
+            let ts_str = ts_hostname.as_deref().unwrap_or("N/A");
+            println!("  [{}] {} (IP: {}, TS: {})", num, hostname, ip_str, ts_str);
+        }
+        println!();
+        print!("Enter number to remove (or 'q' to cancel): ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+
+        if input.eq_ignore_ascii_case("q") || input.is_empty() {
+            println!("Cancelled.");
+            return Ok(());
+        }
+
+        match input.parse::<usize>() {
+            Ok(num) if num > 0 && num <= peer_list.len() => {
+                peer_list[num - 1].1.clone()
+            }
+            _ => {
+                println!("Invalid selection.");
+                return Ok(());
+            }
+        }
+    };
+
+    // Confirm removal
+    println!();
+    print!("Remove peer '{}' from mesh? (y/N): ", hostname_to_remove);
+    io::stdout().flush()?;
+
+    let mut confirm = String::new();
+    io::stdin().read_line(&mut confirm)?;
+    let confirm = confirm.trim();
+
+    if !confirm.eq_ignore_ascii_case("y") && !confirm.eq_ignore_ascii_case("yes") {
+        println!("Cancelled.");
+        return Ok(());
+    }
+
+    // Remove the peer
+    match mesh::remove_peer(&hostname_to_remove) {
+        Ok(()) => {
+            println!("✓ Removed peer '{}' from mesh.", hostname_to_remove);
+        }
+        Err(e) => {
+            return Err(anyhow::anyhow!("Failed to remove peer: {}", e));
         }
     }
 
