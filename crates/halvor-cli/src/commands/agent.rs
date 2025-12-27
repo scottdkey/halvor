@@ -78,6 +78,8 @@ pub enum AgentCommands {
         /// Arguments for the command
         args: Vec<String>,
     },
+    /// Set up SSH keys for all mesh peers
+    SetupSsh,
 }
 
 /// Handle agent commands
@@ -130,11 +132,238 @@ pub async fn handle_agent(command: AgentCommands) -> Result<()> {
         } => {
             execute_on_agent(&hostname, &command, &args)?;
         }
+        AgentCommands::SetupSsh => {
+            setup_ssh_keys_for_mesh_peers()?;
+        }
     }
     Ok(())
 }
 
+/// Set up SSH keys for all mesh peers
+/// This ensures all peers in the mesh can SSH to each other without passwords
+fn setup_ssh_keys_for_mesh_peers() -> Result<()> {
+    use halvor_agent::agent::mesh;
+    use halvor_db::generated::agent_peers;
+    use halvor_core::utils::ssh::copy_ssh_key;
+    use halvor_core::utils::hostname::normalize_hostname;
+    
+    let local_hostname = get_current_hostname()?;
+    let normalized_local = normalize_hostname(&local_hostname);
+    
+    // Get all active peers from database
+    let peers = mesh::get_active_peers()?;
+    
+    if peers.is_empty() {
+        println!("No peers in mesh to set up SSH keys for.");
+        return Ok(());
+    }
+    
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("Setting up SSH keys for mesh peers");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+    
+    let mut success_count = 0;
+    let mut skip_count = 0;
+    let mut error_count = 0;
+    
+    for peer_hostname in &peers {
+        let normalized_peer = normalize_hostname(peer_hostname);
+        
+        // Skip self
+        if normalized_peer == normalized_local {
+            continue;
+        }
+        
+        // Get peer details from database
+        let peer_row = match agent_peers::select_one(
+            "hostname = ?1",
+            &[&peer_hostname as &dyn rusqlite::types::ToSql],
+        ) {
+            Ok(Some(row)) => row,
+            Ok(None) => {
+                eprintln!("  ⚠️  Peer {} not found in database, skipping", peer_hostname);
+                error_count += 1;
+                continue;
+            }
+            Err(e) => {
+                eprintln!("  ⚠️  Error getting peer {}: {}, skipping", peer_hostname, e);
+                error_count += 1;
+                continue;
+            }
+        };
+        
+        // Determine target host (prefer Tailscale hostname, fallback to IP)
+        let target_host = peer_row.tailscale_hostname
+            .as_ref()
+            .map(|h| h.trim_end_matches('.').to_string())
+            .or(peer_row.tailscale_ip.clone())
+            .ok_or_else(|| anyhow::anyhow!("No IP or hostname for peer {}", peer_hostname))?;
+        
+        // Check if SSH key auth already works
+        use halvor_core::utils::ssh::SshConnection;
+        let default_user = std::env::var("USER").unwrap_or_else(|_| "root".to_string());
+        let test_host = format!("{}@{}", default_user, target_host);
+        if let Ok(ssh_conn) = SshConnection::new(&test_host) {
+            if ssh_conn.use_key_auth() {
+                // SSH key auth already works, skip
+                println!("  ✓ {} - SSH keys already configured", peer_hostname);
+                skip_count += 1;
+                continue;
+            }
+        }
+        
+        // Try to set up SSH keys
+        print!("  Setting up SSH keys for {} ({})... ", peer_hostname, target_host);
+        std::io::stdout().flush()?;
+        
+        match copy_ssh_key(&target_host, None, None) {
+            Ok(()) => {
+                println!("✓");
+                success_count += 1;
+            }
+            Err(e) => {
+                println!("✗");
+                eprintln!("     Error: {}", e);
+                error_count += 1;
+                // Continue with other peers even if one fails
+            }
+        }
+    }
+    
+    println!();
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    if success_count > 0 {
+        println!("✓ Set up SSH keys for {} peer(s)", success_count);
+    }
+    if skip_count > 0 {
+        println!("⊘ Skipped {} peer(s) (SSH keys already configured)", skip_count);
+    }
+    if error_count > 0 {
+        println!("⚠️  Failed to set up SSH keys for {} peer(s)", error_count);
+        println!("   You can retry with: halvor agent setup-ssh");
+    }
+    if success_count == 0 && skip_count == 0 && error_count == 0 {
+        println!("No peers to set up (only localhost)");
+    }
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    
+    Ok(())
+}
+
 /// Execute a command on a remote agent
+/// Set up SSH keys for all mesh peers
+/// This ensures all peers in the mesh can SSH to each other without passwords
+fn setup_ssh_keys_for_mesh_peers() -> Result<()> {
+    use halvor_agent::agent::mesh;
+    use halvor_db::generated::agent_peers;
+    use halvor_core::utils::ssh::copy_ssh_key;
+    use halvor_core::utils::hostname::normalize_hostname;
+    
+    let local_hostname = get_current_hostname()?;
+    let normalized_local = normalize_hostname(&local_hostname);
+    
+    // Get all active peers from database
+    let peers = mesh::get_active_peers()?;
+    
+    if peers.is_empty() {
+        println!("No peers in mesh to set up SSH keys for.");
+        return Ok(());
+    }
+    
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("Setting up SSH keys for mesh peers");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+    
+    let mut success_count = 0;
+    let mut skip_count = 0;
+    let mut error_count = 0;
+    
+    for peer_hostname in &peers {
+        let normalized_peer = normalize_hostname(peer_hostname);
+        
+        // Skip self
+        if normalized_peer == normalized_local {
+            continue;
+        }
+        
+        // Get peer details from database
+        let peer_row = match agent_peers::select_one(
+            "hostname = ?1",
+            &[&peer_hostname as &dyn rusqlite::types::ToSql],
+        ) {
+            Ok(Some(row)) => row,
+            Ok(None) => {
+                eprintln!("  ⚠️  Peer {} not found in database, skipping", peer_hostname);
+                error_count += 1;
+                continue;
+            }
+            Err(e) => {
+                eprintln!("  ⚠️  Error getting peer {}: {}, skipping", peer_hostname, e);
+                error_count += 1;
+                continue;
+            }
+        };
+        
+        // Determine target host (prefer Tailscale hostname, fallback to IP)
+        let target_host = peer_row.tailscale_hostname
+            .as_ref()
+            .map(|h| h.trim_end_matches('.').to_string())
+            .or(peer_row.tailscale_ip.clone())
+            .ok_or_else(|| anyhow::anyhow!("No IP or hostname for peer {}", peer_hostname))?;
+        
+        // Check if SSH key auth already works
+        use halvor_core::utils::ssh::SshConnection;
+        let default_user = std::env::var("USER").unwrap_or_else(|_| "root".to_string());
+        let test_host = format!("{}@{}", default_user, target_host);
+        if let Ok(ssh_conn) = SshConnection::new(&test_host) {
+            if ssh_conn.use_key_auth() {
+                // SSH key auth already works, skip
+                println!("  ✓ {} - SSH keys already configured", peer_hostname);
+                skip_count += 1;
+                continue;
+            }
+        }
+        
+        // Try to set up SSH keys
+        print!("  Setting up SSH keys for {} ({})... ", peer_hostname, target_host);
+        std::io::stdout().flush()?;
+        
+        match copy_ssh_key(&target_host, None, None) {
+            Ok(()) => {
+                println!("✓");
+                success_count += 1;
+            }
+            Err(e) => {
+                println!("✗");
+                eprintln!("     Error: {}", e);
+                error_count += 1;
+                // Continue with other peers even if one fails
+            }
+        }
+    }
+    
+    println!();
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    if success_count > 0 {
+        println!("✓ Set up SSH keys for {} peer(s)", success_count);
+    }
+    if skip_count > 0 {
+        println!("⊘ Skipped {} peer(s) (SSH keys already configured)", skip_count);
+    }
+    if error_count > 0 {
+        println!("⚠️  Failed to set up SSH keys for {} peer(s)", error_count);
+        println!("   You can retry with: halvor agent setup-ssh");
+    }
+    if success_count == 0 && skip_count == 0 && error_count == 0 {
+        println!("No peers to set up (only localhost)");
+    }
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    
+    Ok(())
+}
+
 fn execute_on_agent(hostname: &str, command: &str, args: &[String]) -> Result<()> {
     use halvor_agent::agent::api::AgentClient;
     
@@ -584,6 +813,9 @@ fn sync_with_agents_internal(sync: &ConfigSync, _force: bool) -> Result<()> {
             println!("  ✓ Refreshed Tailscale hostnames for {} peer(s)", updated_count);
         }
     }
+
+    // Set up SSH keys for all mesh peers
+    setup_ssh_keys_for_mesh_peers()?;
 
     // Count total peers after sync (including self-healed peers)
     let final_peers = mesh::get_active_peers().unwrap_or_default();
