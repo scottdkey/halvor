@@ -232,6 +232,18 @@ pub fn update_peer_last_seen(hostname: &str) -> Result<()> {
     Ok(())
 }
 
+/// Update peer Tailscale hostname
+pub fn update_peer_tailscale_hostname(hostname: &str, tailscale_hostname: &str) -> Result<()> {
+    let conn = db::get_connection()?;
+
+    conn.execute(
+        "UPDATE agent_peers SET tailscale_hostname = ?1 WHERE hostname = ?2",
+        rusqlite::params![tailscale_hostname, hostname],
+    )?;
+
+    Ok(())
+}
+
 /// Remove a peer from the mesh
 pub fn remove_peer(hostname: &str) -> Result<()> {
     agent_peers::delete_by_hostname(hostname)?;
