@@ -123,7 +123,7 @@ pub fn join_cluster(
 
     // Ensure Tailscale is installed and running (required for cluster communication)
     println!("Checking for Tailscale (required for cluster communication)...");
-    if !tailscale::is_tailscale_installed(&exec) {
+    if !tailscale::is_tailscale_installed(exec.as_ref()) {
         println!("Tailscale not found. Installing Tailscale...");
         if is_local {
             tailscale::install_tailscale()?;
@@ -193,9 +193,9 @@ pub fn join_cluster(
 
     // Get Tailscale IP for this node (for TLS SANs)
     println!("Getting Tailscale IP for this node...");
-    let tailscale_ip = tailscale::get_tailscale_ip_with_fallback(&exec, hostname, config)?;
+    let tailscale_ip = tailscale::get_tailscale_ip_with_fallback(exec.as_ref(), hostname, config)?;
 
-    let tailscale_hostname = tailscale::get_tailscale_hostname_remote(&exec)
+    let tailscale_hostname = tailscale::get_tailscale_hostname_remote(exec.as_ref())
         .ok()
         .flatten();
 
@@ -370,8 +370,16 @@ pub fn join_cluster(
         use halvor_core::utils::ssh::SshConnection;
         let default_user = std::env::var("USER").unwrap_or_else(|_| "root".to_string());
         
-        // Get the target host address (Tailscale hostname or IP)
-        let target_host = exec.target_host(hostname, config)?;
+        // Get the target host address (Tailscale hostname or IP) from config
+        let host_config = config.hosts.get(hostname)
+            .ok_or_else(|| anyhow::anyhow!("Host '{}' not found in config", hostname))?;
+        let target_host = if let Some(ip) = &host_config.ip {
+            ip.clone()
+        } else if let Some(hostname_val) = &host_config.hostname {
+            hostname_val.clone()
+        } else {
+            anyhow::bail!("No IP or hostname configured for {}", hostname);
+        };
         let ssh_host = format!("{}@{}", default_user, target_host);
         
         let ssh_test = SshConnection::new(&ssh_host);
@@ -417,7 +425,7 @@ pub fn join_cluster(
     }
 
     // Check if node is currently part of a cluster and handle removal
-    check_and_remove_from_existing_cluster(&exec, hostname, server, config)?;
+    check_and_remove_from_existing_cluster(exec.as_ref(), hostname, server, config)?;
 
     // Check if K3s is already installed
     println!("Checking if K3s is installed...");
@@ -454,7 +462,7 @@ pub fn join_cluster(
             println!("⚠ K3s service found but binary missing");
             println!("  Cleaning up existing installation...");
         }
-        cleanup::cleanup_existing_k3s(&exec)?;
+        cleanup::cleanup_existing_k3s(exec.as_ref())?;
         
         // Double-check that service file is removed
         println!("  Verifying service file removal...");
@@ -485,13 +493,13 @@ pub fn join_cluster(
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!();
     println!("Checking for halvor (required for remote operations)...");
-    tools::check_and_install_halvor(&exec)?;
+    tools::check_and_install_halvor(exec.as_ref())?;
 
     // Ensure kubectl and helm are installed
     println!();
     println!("Checking for required tools...");
-    tools::check_and_install_kubectl(&exec)?;
-    tools::check_and_install_helm(&exec)?;
+    tools::check_and_install_kubectl(exec.as_ref())?;
+    tools::check_and_install_helm(exec.as_ref())?;
 
     // Note: SMB mounts are set up separately for cluster storage, not for K3s data directory
     // K3s will use default local data directory (/var/lib/rancher/k3s)
@@ -1465,7 +1473,7 @@ Requires=network-online.target
     
     // Get baulder's Tailscale hostname if available for more accurate matching
     let baulder_tailscale_hostname = if is_local {
-        tailscale::get_tailscale_hostname_remote(&exec)
+        tailscale::get_tailscale_hostname_remote(exec.as_ref())
             .ok()
             .flatten()
     } else {
@@ -1746,7 +1754,7 @@ Requires=network-online.target
             None
         };
         
-        if let Err(e) = agent_service::setup_agent_service(&exec, web_port) {
+        if let Err(e) = agent_service::setup_agent_service(exec.as_ref(), web_port) {
             eprintln!("⚠️  Warning: Failed to setup halvor agent service: {}", e);
             eprintln!("   You can set it up manually later with: halvor agent start --daemon");
         } else {
@@ -1764,8 +1772,8 @@ Requires=network-online.target
 
 /// Check if node is part of an existing cluster and remove it if user confirms
 /// This ensures proper cleanup before joining a new cluster
-fn check_and_remove_from_existing_cluster<E: CommandExecutor>(
-    exec: &E,
+fn check_and_remove_from_existing_cluster(
+    exec: &dyn CommandExecutor,
     hostname: &str,
     new_server: &str,
     _config: &EnvConfig,
@@ -2042,12 +2050,12 @@ impl CommandExecutor for AgentExecutor {
     
     fn file_exists(&self, path: &str) -> Result<bool> {
         let output = self.client.execute_command("test", &["-f", path]).ok();
-        Ok(output.is_ok())
+        Ok(output.is_some())
     }
     
     fn is_directory(&self, path: &str) -> Result<bool> {
         let output = self.client.execute_command("test", &["-d", path]).ok();
-        Ok(output.is_ok())
+        Ok(output.is_some())
     }
     
     #[cfg(unix)]

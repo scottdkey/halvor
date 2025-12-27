@@ -10,7 +10,7 @@ use std::io::Write;
 /// In development mode: copies local binary to remote
 /// In production mode: downloads from GitHub releases
 /// If halvor exists but is outdated, replaces it with the newer version
-pub fn check_and_install_halvor<E: CommandExecutor>(exec: &E) -> Result<()> {
+pub fn check_and_install_halvor(exec: &dyn CommandExecutor) -> Result<()> {
     // Skip installation if running on localhost (we're already running halvor)
     if exec.is_local() {
         println!("✓ Running on localhost - halvor installation not needed");
@@ -265,8 +265,8 @@ pub fn check_and_install_halvor<E: CommandExecutor>(exec: &E) -> Result<()> {
 
 /// Download and install halvor from GitHub releases for a specific platform
 /// release_tag: "latest" for production, "experimental" for development
-fn download_halvor_from_github<E: CommandExecutor>(
-    exec: &E,
+fn download_halvor_from_github(
+    exec: &dyn CommandExecutor,
     platform: &str,
     release_tag: &str,
 ) -> Result<()> {
@@ -350,7 +350,7 @@ fn download_halvor_from_github<E: CommandExecutor>(
 }
 
 /// Check if kubectl is installed and install it if not
-pub fn check_and_install_kubectl<E: CommandExecutor>(exec: &E) -> Result<()> {
+pub fn check_and_install_kubectl(exec: &dyn CommandExecutor) -> Result<()> {
     if exec.check_command_exists("kubectl")? {
         println!("✓ kubectl is already installed");
         return Ok(());
@@ -473,7 +473,7 @@ EOF"
 }
 
 /// Check if helm is installed and install it if not
-pub fn check_and_install_helm<E: CommandExecutor>(exec: &E) -> Result<()> {
+pub fn check_and_install_helm(exec: &dyn CommandExecutor) -> Result<()> {
     if exec.check_command_exists("helm")? {
         println!("✓ helm is already installed");
         return Ok(());

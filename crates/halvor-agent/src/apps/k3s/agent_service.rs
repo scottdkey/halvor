@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use std::path::PathBuf;
 
 /// Detect if the target system is macOS
-fn is_macos<E: CommandExecutor>(exec: &E) -> bool {
+fn is_macos(exec: &dyn CommandExecutor) -> bool {
     exec.execute_shell("uname -s")
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
@@ -13,7 +13,7 @@ fn is_macos<E: CommandExecutor>(exec: &E) -> bool {
 }
 
 /// Create and enable halvor agent service (auto-detects platform)
-pub fn setup_agent_service<E: CommandExecutor>(exec: &E, web_port: Option<u16>) -> Result<()> {
+pub fn setup_agent_service(exec: &dyn CommandExecutor, web_port: Option<u16>) -> Result<()> {
     if is_macos(exec) {
         setup_agent_service_macos(exec, web_port)
     } else {
@@ -22,7 +22,7 @@ pub fn setup_agent_service<E: CommandExecutor>(exec: &E, web_port: Option<u16>) 
 }
 
 /// Create and enable halvor agent launchd service on macOS
-fn setup_agent_service_macos<E: CommandExecutor>(exec: &E, web_port: Option<u16>) -> Result<()> {
+fn setup_agent_service_macos(exec: &dyn CommandExecutor, web_port: Option<u16>) -> Result<()> {
     println!("Setting up halvor agent launchd service...");
 
     let home_dir = exec.get_home_dir().unwrap_or_else(|_| "/root".to_string());
@@ -207,7 +207,7 @@ fn setup_agent_service_macos<E: CommandExecutor>(exec: &E, web_port: Option<u16>
 }
 
 /// Create and enable halvor agent systemd service on Linux
-fn setup_agent_service_linux<E: CommandExecutor>(exec: &E, web_port: Option<u16>) -> Result<()> {
+fn setup_agent_service_linux(exec: &dyn CommandExecutor, web_port: Option<u16>) -> Result<()> {
     println!("Setting up halvor agent systemd service...");
 
     // Check if service is already configured and running

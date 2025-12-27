@@ -232,7 +232,7 @@ pub enum PackageManager {
 
 impl PackageManager {
     /// Detect the package manager available on the system
-    pub fn detect<E: CommandExecutor>(exec: &E) -> Result<Self> {
+    pub fn detect(exec: &dyn CommandExecutor) -> Result<Self> {
         if exec.check_command_exists("apt-get")? {
             Ok(PackageManager::Apt)
         } else if exec.check_command_exists("yum")? {
@@ -247,7 +247,7 @@ impl PackageManager {
     }
 
     /// Install a package using the detected package manager
-    pub fn install_package<E: CommandExecutor>(&self, exec: &E, package: &str) -> Result<()> {
+    pub fn install_package(&self, exec: &dyn CommandExecutor, package: &str) -> Result<()> {
         match self {
             PackageManager::Apt => {
                 // Use execute_shell_interactive which handles sudo password injection better
@@ -274,7 +274,7 @@ impl PackageManager {
     }
 
     /// Install multiple packages at once
-    pub fn _install_packages<E: CommandExecutor>(&self, exec: &E, packages: &[&str]) -> Result<()> {
+    pub fn install_packages(&self, exec: &dyn CommandExecutor, packages: &[&str]) -> Result<()> {
         match self {
             PackageManager::Apt => {
                 exec.execute_interactive("sudo", &["apt-get", "update"])?;

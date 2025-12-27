@@ -6,7 +6,7 @@ use reqwest;
 use std::process::Command;
 
 /// Check if Tailscale is installed
-pub fn is_tailscale_installed<E: CommandExecutor>(exec: &E) -> bool {
+pub fn is_tailscale_installed(exec: &dyn CommandExecutor) -> bool {
     exec.check_command_exists("tailscale").unwrap_or(false)
 }
 
@@ -102,7 +102,7 @@ fn install_tailscale_windows() -> Result<()> {
 }
 
 /// Check if Tailscale is installed and install it if not (for remote execution)
-pub fn check_and_install_remote<E: CommandExecutor>(exec: &E) -> Result<()> {
+pub fn check_and_install_remote(exec: &dyn CommandExecutor) -> Result<()> {
     println!();
     println!("=== Checking Tailscale installation ===");
 
@@ -485,7 +485,7 @@ pub fn get_tailscale_ip() -> Result<Option<String>> {
 }
 
 /// Get Tailscale IP on a remote host via executor
-pub fn get_tailscale_ip_remote<E: CommandExecutor>(exec: &E) -> Result<Option<String>> {
+pub fn get_tailscale_ip_remote(exec: &dyn CommandExecutor) -> Result<Option<String>> {
     // Try tailscale ip -4 first
     let output = exec.execute_shell("tailscale ip -4 2>/dev/null")?;
 
@@ -565,8 +565,8 @@ pub fn get_tailscale_ip_remote<E: CommandExecutor>(exec: &E) -> Result<Option<St
 /// Get Tailscale IP with fallback to connection IP from config
 /// This is the main function to use when you need a Tailscale IP and want automatic fallback
 /// to the connection IP if commands fail (e.g., when connecting via Tailscale but commands have issues)
-pub fn get_tailscale_ip_with_fallback<E: CommandExecutor>(
-    exec: &E,
+pub fn get_tailscale_ip_with_fallback(
+    exec: &dyn CommandExecutor,
     hostname: &str,
     config: &EnvConfig,
 ) -> Result<String> {
@@ -639,7 +639,7 @@ pub fn get_tailscale_ip_with_fallback<E: CommandExecutor>(
 }
 
 /// Get Tailscale hostname on a remote host via executor
-pub fn get_tailscale_hostname_remote<E: CommandExecutor>(exec: &E) -> Result<Option<String>> {
+pub fn get_tailscale_hostname_remote(exec: &dyn CommandExecutor) -> Result<Option<String>> {
     let output = exec.execute_shell("tailscale status --json 2>/dev/null")?;
 
     if output.status.success() {

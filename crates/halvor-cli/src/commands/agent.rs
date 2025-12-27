@@ -134,6 +134,65 @@ pub async fn handle_agent(command: AgentCommands) -> Result<()> {
     Ok(())
 }
 
+/// Execute a command on a remote agent
+fn execute_on_agent(hostname: &str, command: &str, args: &[String]) -> Result<()> {
+    use halvor_agent::agent::api::AgentClient;
+    
+    // Discover the agent
+    let discovery = HostDiscovery::default();
+    let hosts = discovery.discover_all()?;
+    
+    // Find the host by hostname (normalize for comparison)
+    let normalized_target = halvor_core::utils::hostname::normalize_hostname(hostname);
+    let host = hosts.iter().find(|h| {
+        let normalized_h = halvor_core::utils::hostname::normalize_hostname(&h.hostname);
+        normalized_h == normalized_target || h.hostname == hostname
+    });
+    
+    let (ip, port) = if let Some(host) = host {
+        let ip = host
+            .tailscale_ip
+            .as_ref()
+            .or(host.local_ip.as_ref())
+            .ok_or_else(|| anyhow::anyhow!("No IP address found for host {}", hostname))?;
+        (ip.clone(), host.agent_port)
+    } else {
+        // Not discovered, try to use hostname as IP/hostname directly
+        // Check if it looks like an IP or hostname:port
+        if hostname.contains(':') {
+            let parts: Vec<&str> = hostname.split(':').collect();
+            if parts.len() == 2 {
+                let ip = parts[0].to_string();
+                let port = parts[1].parse::<u16>()
+                    .map_err(|_| anyhow::anyhow!("Invalid port in hostname: {}", hostname))?;
+                (ip, port)
+            } else {
+                anyhow::bail!("Invalid hostname format. Use 'hostname' or 'hostname:port'");
+            }
+        } else {
+            // Try hostname as IP/hostname with default port
+            (hostname.to_string(), 13500)
+        }
+    };
+    
+    println!("Executing '{}' on {}:{}...", command, ip, port);
+    println!();
+    
+    let client = AgentClient::new(&ip, port);
+    let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    
+    match client.execute_command(command, &args_refs) {
+        Ok(output) => {
+            print!("{}", output);
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Error executing command: {}", e);
+            Err(e.into())
+        }
+    }
+}
+
 /// Start the agent daemon
 async fn start_agent(port: u16, ui: bool, daemon: bool) -> Result<()> {
     use std::fs;

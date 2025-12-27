@@ -5,13 +5,13 @@ use anyhow::{Context, Result};
 use std::io::{self, Write};
 
 /// Clean up existing K3s installation
-pub fn cleanup_existing_k3s<E: CommandExecutor>(exec: &E) -> Result<()> {
+pub fn cleanup_existing_k3s(exec: &dyn CommandExecutor) -> Result<()> {
     cleanup_existing_k3s_with_prompt(exec, true)
 }
 
 /// Clean up existing K3s installation with optional prompt
-pub fn cleanup_existing_k3s_with_prompt<E: CommandExecutor>(
-    exec: &E,
+pub fn cleanup_existing_k3s_with_prompt(
+    exec: &dyn CommandExecutor,
     prompt: bool,
 ) -> Result<()> {
     // Check for existing K3s installation
