@@ -256,13 +256,13 @@ fn show_mesh_status(hostname: &str, config: &config::EnvConfig) -> Result<()> {
         println!("K3s Version: {}", version_str);
         println!();
 
-        // Check service status
+        // Check service status (never use sudo - systemctl is-active works without sudo)
         let service_status_tmp = "/tmp/k3s_service_status";
-        let _ = exec.execute_shell_interactive(&format!(
-            "sudo systemctl is-active k3s > {} 2>&1 || sudo systemctl is-active k3s-agent > {} 2>&1 || echo 'not_running' > {}",
+        let _ = exec.execute_shell(&format!(
+            "systemctl is-active k3s > {} 2>&1 || systemctl is-active k3s-agent > {} 2>&1 || echo 'not_running' > {}",
             service_status_tmp, service_status_tmp, service_status_tmp
         ));
-
+        
         let service_status = exec
             .read_file(service_status_tmp)
             .unwrap_or_else(|_| "unknown".to_string())
@@ -273,12 +273,16 @@ fn show_mesh_status(hostname: &str, config: &config::EnvConfig) -> Result<()> {
             println!("  ✓ K3s service is running");
             println!();
 
-            // Show nodes
+            // Show nodes (k3s kubectl works without sudo for all users)
             let tmp_file = "/tmp/k3s_nodes_status";
-            let _ = exec.execute_shell_interactive(&format!(
-                "sudo k3s kubectl get nodes -o wide > {} 2>&1 || echo 'Unable to get nodes' > {}",
+            let _ = exec.execute_shell(&format!(
+                "k3s kubectl get nodes -o wide > {} 2>&1 || echo 'Unable to get nodes' > {}",
                 tmp_file, tmp_file
             ));
+            
+            let nodes_output = exec
+                .read_file(tmp_file)
+                .unwrap_or_else(|_| "Unable to get nodes".to_string());
             let nodes_output = exec
                 .read_file(tmp_file)
                 .unwrap_or_else(|_| "Unable to get nodes".to_string());
