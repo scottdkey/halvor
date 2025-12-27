@@ -4,9 +4,12 @@ use halvor_core::config::EnvConfig;
 use crate::apps::k3s::{agent_service, cleanup, kubeconfig, tools, verify};
 use crate::apps::tailscale;
 use halvor_core::utils::exec::{CommandExecutor, Executor};
+use crate::agent::api::AgentClient;
+use crate::agent::discovery::HostDiscovery;
 use anyhow::{Context, Result};
 use serde_json;
 use std::io::{self, Write};
+use std::process::Output;
 
 /// Join a node to the cluster
 ///
@@ -86,11 +89,20 @@ pub fn join_cluster(
 
     // Now connect to the remote node
     println!("Connecting to node: {}", hostname);
-    println!("  [DEBUG] Creating executor for {}...", hostname);
-    let exec = Executor::new(hostname, config)
-        .with_context(|| format!("Failed to create executor for hostname: {}", hostname))?;
-    let is_local = exec.is_local();
-    println!("  [DEBUG] Executor created (local: {})", is_local);
+    
+    // Try to use agent first (avoids password prompts), fall back to SSH if agent not available
+    // Use a trait object so we can use either AgentExecutor or Executor
+    let exec: Box<dyn CommandExecutor> = if let Ok(agent_exec) = create_agent_executor(hostname, config) {
+        println!("✓ Using halvor agent for remote execution (encrypted, no SSH/password required)");
+        Box::new(agent_exec)
+    } else {
+        // Agent not available, fall back to SSH
+        println!("⚠ Agent not available, using SSH (may require password prompts)");
+        let ssh_exec = Executor::new(hostname, config)
+            .with_context(|| format!("Failed to create executor for hostname: {}", hostname))?;
+        Box::new(ssh_exec)
+    };
+    let is_local = false; // Both agent and SSH executors are remote for join operations
 
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     if control_plane {
@@ -1948,4 +1960,174 @@ fn find_hostname_from_server(server: &str, config: &EnvConfig) -> Option<String>
     }
 
     None
+}
+
+/// Agent-based executor that uses the halvor agent API instead of SSH
+/// This avoids password prompts by using encrypted agent communication
+struct AgentExecutor {
+    client: AgentClient,
+    hostname: String,
+}
+
+impl CommandExecutor for AgentExecutor {
+    fn execute_shell(&self, command: &str) -> Result<Output> {
+        // Execute command via agent
+        let output_str = self.client.execute_command("sh", &["-c", command])?;
+        
+        // Convert string output to Output struct
+        // Note: Agent doesn't return exit status separately, so we assume success
+        // If command fails, agent returns error response which we handle
+        #[cfg(unix)]
+        use std::os::unix::process::ExitStatusExt;
+        Ok(Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: output_str.into_bytes(),
+            stderr: Vec::new(),
+        })
+    }
+    
+    fn execute_interactive(&self, program: &str, args: &[&str]) -> Result<()> {
+        let args_str: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let args_refs: Vec<&str> = args_str.iter().map(|s| s.as_str()).collect();
+        let output = self.client.execute_command(program, &args_refs)?;
+        print!("{}", output);
+        Ok(())
+    }
+    
+    fn execute_shell_interactive(&self, command: &str) -> Result<()> {
+        let output = self.execute_shell(command)?;
+        print!("{}", String::from_utf8_lossy(&output.stdout));
+        Ok(())
+    }
+    
+    fn get_username(&self) -> Result<String> {
+        let output = self.client.execute_command("whoami", &[])?;
+        Ok(output.trim().to_string())
+    }
+    
+    fn list_directory(&self, path: &str) -> Result<Vec<String>> {
+        let output = self.client.execute_command("ls", &["-1", path])?;
+        Ok(output.lines().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+    }
+    
+    fn read_file(&self, path: &str) -> Result<String> {
+        self.client.execute_command("cat", &[path])
+    }
+    
+    fn write_file(&self, path: &str, content: &[u8]) -> Result<()> {
+        use base64::Engine as _;
+        let base64_content = base64::engine::general_purpose::STANDARD.encode(content);
+        let cmd = format!("echo {} | base64 -d > {}", 
+            halvor_core::utils::ssh::shell_escape(&base64_content),
+            halvor_core::utils::ssh::shell_escape(path)
+        );
+        self.client.execute_command("sh", &["-c", &cmd])?;
+        Ok(())
+    }
+    
+    fn check_command_exists(&self, command: &str) -> Result<bool> {
+        let output = self.client.execute_command("which", &[command]).ok();
+        Ok(output.map(|s| !s.trim().is_empty()).unwrap_or(false))
+    }
+    
+    fn is_linux(&self) -> Result<bool> {
+        let output = self.client.execute_command("uname", &["-s"])?;
+        Ok(output.trim() == "Linux")
+    }
+    
+    fn mkdir_p(&self, path: &str) -> Result<()> {
+        self.client.execute_command("mkdir", &["-p", path])?;
+        Ok(())
+    }
+    
+    fn file_exists(&self, path: &str) -> Result<bool> {
+        let output = self.client.execute_command("test", &["-f", path]).ok();
+        Ok(output.is_ok())
+    }
+    
+    fn is_directory(&self, path: &str) -> Result<bool> {
+        let output = self.client.execute_command("test", &["-d", path]).ok();
+        Ok(output.is_ok())
+    }
+    
+    #[cfg(unix)]
+    fn get_uid(&self) -> Result<u32> {
+        let output = self.client.execute_command("id", &["-u"])?;
+        output.trim().parse().map_err(|e| anyhow::anyhow!("Failed to parse UID: {}", e))
+    }
+    
+    #[cfg(unix)]
+    fn get_gid(&self) -> Result<u32> {
+        let output = self.client.execute_command("id", &["-g"])?;
+        output.trim().parse().map_err(|e| anyhow::anyhow!("Failed to parse GID: {}", e))
+    }
+    
+    fn get_home_dir(&self) -> Result<String> {
+        let output = self.client.execute_command("echo", &["$HOME"])?;
+        Ok(output.trim().to_string())
+    }
+    
+    fn is_local(&self) -> bool {
+        false
+    }
+}
+
+impl AgentExecutor {
+    fn is_local(&self) -> bool {
+        false
+    }
+    
+    fn target_host(&self, _hostname: &str, _config: &EnvConfig) -> Result<String> {
+        // For agent executor, return the hostname as-is
+        Ok(self.hostname.clone())
+    }
+}
+
+fn create_agent_executor(hostname: &str, config: &EnvConfig) -> Result<AgentExecutor> {
+    // Discover agent on the network
+    let discovery = HostDiscovery::default();
+    let discovered_hosts = discovery.discover_all()
+        .context("Failed to discover agents on network")?;
+    
+    // Find the target host in discovered agents
+    let target_host = halvor_core::utils::hostname::find_hostname_in_config(hostname, config)
+        .ok_or_else(|| anyhow::anyhow!("Host '{}' not found in config", hostname))?;
+    
+    let host_config = config.hosts.get(&target_host)
+        .ok_or_else(|| anyhow::anyhow!("Host '{}' not found in config", target_host))?;
+    
+    // Get target address
+    let target_addr = if let Some(hostname_val) = &host_config.hostname {
+        hostname_val.trim_end_matches('.').to_string()
+    } else if let Some(ip) = &host_config.ip {
+        ip.clone()
+    } else {
+        anyhow::bail!("No IP or Tailscale hostname configured for {}", hostname);
+    };
+    
+    // Find matching discovered host
+    let discovered = discovered_hosts.iter()
+        .find(|h| {
+            let normalized_discovered = halvor_core::utils::hostname::normalize_hostname(&h.hostname);
+            let normalized_target = halvor_core::utils::hostname::normalize_hostname(hostname);
+            normalized_discovered == normalized_target ||
+            h.tailscale_ip.as_ref().map(|ip| ip == &target_addr).unwrap_or(false) ||
+            h.tailscale_hostname.as_ref().map(|h| h.trim_end_matches('.') == target_addr).unwrap_or(false)
+        })
+        .ok_or_else(|| anyhow::anyhow!("Agent not found for hostname: {}", hostname))?;
+    
+    // Get agent IP
+    let agent_ip = discovered.tailscale_ip.as_ref()
+        .or(discovered.local_ip.as_ref())
+        .ok_or_else(|| anyhow::anyhow!("No IP found for discovered agent: {}", discovered.hostname))?;
+    
+    // Test agent connection
+    let client = AgentClient::new(agent_ip, discovered.agent_port);
+    client.ping()
+        .with_context(|| format!("Agent at {}:{} is not responding", agent_ip, discovered.agent_port))?;
+    
+    Ok(AgentExecutor {
+        client,
+        hostname: hostname.to_string(),
+    })
 }

@@ -69,6 +69,15 @@ pub enum AgentCommands {
         #[arg(value_name = "HOSTNAME")]
         new_hostname: String,
     },
+    /// Execute a command on a remote agent
+    Execute {
+        /// Hostname of the agent to execute command on
+        hostname: String,
+        /// Command to execute
+        command: String,
+        /// Arguments for the command
+        args: Vec<String>,
+    },
 }
 
 /// Handle agent commands
@@ -113,6 +122,13 @@ pub async fn handle_agent(command: AgentCommands) -> Result<()> {
         }
         AgentCommands::Hostname { new_hostname } => {
             update_hostname(&new_hostname)?;
+        }
+        AgentCommands::Execute {
+            hostname,
+            command,
+            args,
+        } => {
+            execute_on_agent(&hostname, &command, &args)?;
         }
     }
     Ok(())
