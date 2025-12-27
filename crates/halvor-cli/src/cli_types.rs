@@ -130,4 +130,10 @@ pub enum Commands {
         #[command(subcommand)]
         command: crate::commands::agent::AgentCommands,
     },
+    /// Kubernetes context management (switch between direct and tailscale)
+    #[command(name = "k8s", alias = "kube")]
+    K8s {
+        #[command(subcommand)]
+        command: crate::commands::k8s::K8sCommands,
+    },
 }
