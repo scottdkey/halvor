@@ -814,8 +814,8 @@ fn sync_with_agents_internal(sync: &ConfigSync, _force: bool) -> Result<()> {
         }
     }
 
-    // Set up SSH keys for all mesh peers
-    setup_ssh_keys_for_mesh_peers()?;
+    // Set up SSH keys for all mesh peers (non-blocking, continues on errors)
+    let _ = setup_ssh_keys_for_mesh_peers();
 
     // Count total peers after sync (including self-healed peers)
     let final_peers = mesh::get_active_peers().unwrap_or_default();
