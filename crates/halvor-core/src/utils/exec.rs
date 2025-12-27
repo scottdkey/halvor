@@ -8,35 +8,6 @@ use std::process::{Command, Output, Stdio};
 use crate::utils::ssh::SshConnection;
 // Agent-based execution is handled in halvor-agent crate
 
-// Helper function to escape shell arguments
-// Uses the same logic as ssh module but we need it here
-fn shell_escape(s: &str) -> String {
-    if s.is_empty() {
-        return "''".to_string();
-    }
-
-    // If string contains no special characters, return as-is
-    if s.chars()
-        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '/' || c == '.' || c == '$')
-    {
-        return s.to_string();
-    }
-
-    // Escape single quotes by ending quote, adding escaped quote, starting new quote
-    let escaped: String = s
-        .chars()
-        .flat_map(|c| {
-            if c == '\'' {
-                vec!['\'', '\\', '\'', '\'']
-            } else {
-                vec![c]
-            }
-        })
-        .collect();
-
-    format!("'{}'", escaped)
-}
-
 /// Local command execution helpers
 pub mod local {
     use super::*;
