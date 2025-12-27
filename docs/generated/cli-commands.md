@@ -16,13 +16,11 @@ Commands:
   config     Configure halvor settings (environment file location, etc.)
   db         Database operations (migrations, backup, generate)
   update     Update halvor or installed apps
-  build      Build applications for different platforms
-  dev        Development mode for different platforms
   generate   Generate build artifacts (migrations, FFI bindings)
-  init       Initialize K3s cluster (primary control plane node)
+  init       Initialize K3s cluster (primary control plane node) or prepare a node for joining
   join       Join a node to the K3s cluster
-  status     Show status of services
-  configure  Configure Tailscale integration for K3s cluster
+  status     Show status of services (mesh overview by default)
+  agent      Manage halvor agent (start, stop, discover, sync)
   help       Print this message or the help of the given subcommand(s)
 
 Options:
@@ -106,9 +104,12 @@ Arguments:
   [APP]  App to install (e.g., docker, sonarr, portainer). Use --list to see all
 
 Options:
-  -H, --hostname <HOSTNAME>  Hostname to operate on (defaults to localhost if not provided)
-      --list                 List all available apps
-  -h, --help                 Print help
+  -H, --hostname <HOSTNAME>    Hostname to operate on (defaults to localhost if not provided)
+      --list                   List all available apps
+      --repo <REPO>            Helm repository URL for external charts (e.g., https://pkgs.tailscale.com/helmcharts)
+      --repo-name <REPO_NAME>  Helm repository name (defaults to chart name if not provided)
+      --name <NAME>            Custom release name for Helm charts (allows multiple instances of the same app, e.g., radarr-4k)
+  -h, --help                   Print help
 ```
 
 ### `halvor uninstall`
@@ -146,7 +147,7 @@ Options:
 ### `halvor init`
 
 ```
-Initialize K3s cluster (primary control plane node)
+Initialize K3s cluster (primary control plane node) or prepare a node for joining
 
 Usage: halvor init [OPTIONS]
 
@@ -154,6 +155,7 @@ Options:
   -H, --hostname <HOSTNAME>  Hostname to operate on (defaults to localhost if not provided)
       --token <TOKEN>        Token for cluster join (generated if not provided)
   -y, --yes                  Skip confirmation prompts
+      --skip-k3s             Skip K3s initialization - only install tools and configure node (useful for nodes that will join an existing cluster)
   -h, --help                 Print help
 ```
 
@@ -178,14 +180,15 @@ Options:
 ### `halvor status`
 
 ```
-Show status of services
+Show status of services (mesh overview by default)
 
-Usage: halvor status [OPTIONS] <COMMAND>
+Usage: halvor status [OPTIONS] [COMMAND]
 
 Commands:
-  k3s   Show K3s cluster status (nodes, etcd health)
-  helm  List Helm releases
-  help  Print this message or the help of the given subcommand(s)
+  k3s        Show K3s cluster status (nodes, etcd health)
+  helm       List Helm releases
+  tailscale  Show Tailscale nodes available on the tailnet
+  help       Print this message or the help of the given subcommand(s)
 
 Options:
   -H, --hostname <HOSTNAME>  Hostname to operate on (defaults to localhost if not provided)
@@ -195,15 +198,13 @@ Options:
 ### `halvor configure`
 
 ```
-Configure Tailscale integration for K3s cluster
+error: unrecognized subcommand 'configure'
 
-Usage: halvor configure [HOSTNAME]
+  tip: a similar subcommand exists: 'config'
 
-Arguments:
-  [HOSTNAME]  Target hostname (default: localhost)
+Usage: halvor [OPTIONS] <COMMAND>
 
-Options:
-  -h, --help  Print help
+For more information, try '--help'.
 ```
 
 ### `halvor config`
@@ -229,6 +230,8 @@ Commands:
   hostname      Set hostname (typically Tailscale hostname)
   backup-path   Set backup path for hostname
   diff          Show differences between .env and database configurations
+  kubeconfig    Get kubeconfig for K3s cluster
+  regenerate    Regenerate K3s certificates with Tailscale integration
   help          Print this message or the help of the given subcommand(s)
 
 Options:
@@ -261,41 +264,21 @@ Options:
 ### `halvor build`
 
 ```
-Build applications for different platforms
+error: unrecognized subcommand 'build'
 
-Usage: halvor build [OPTIONS] <COMMAND>
+Usage: halvor [OPTIONS] <COMMAND>
 
-Commands:
-  ios      Build iOS app (always signed)
-  mac      Build macOS app (always signed)
-  android  Build Android app (always signed)
-  web      Build Web app (Rust server + Svelte frontend)
-  cli      Build CLI binary
-  pia-vpn  Build PIA VPN Docker container
-  help     Print this message or the help of the given subcommand(s)
-
-Options:
-  -H, --hostname <HOSTNAME>  Hostname to operate on (defaults to localhost if not provided)
-  -h, --help                 Print help
+For more information, try '--help'.
 ```
 
 ### `halvor dev`
 
 ```
-Development mode for different platforms
+error: unrecognized subcommand 'dev'
 
-Usage: halvor dev [OPTIONS] <COMMAND>
+Usage: halvor [OPTIONS] <COMMAND>
 
-Commands:
-  mac   macOS development mode
-  ios   iOS development mode
-  web   Web development mode
-  cli   CLI development mode (with watch)
-  help  Print this message or the help of the given subcommand(s)
-
-Options:
-  -H, --hostname <HOSTNAME>  Hostname to operate on (defaults to localhost if not provided)
-  -h, --help                 Print help
+For more information, try '--help'.
 ```
 
 ### `halvor generate`
@@ -308,7 +291,8 @@ Usage: halvor generate [OPTIONS] <COMMAND>
 Commands:
   ffi-bindings  Generate FFI bindings for all platforms
   migrations    Generate migration declarations
-  all           Generate everything (migrations + FFI bindings)
+  api-clients   Generate API client libraries (TypeScript, Kotlin, Swift)
+  all           Generate everything (migrations + FFI bindings + API clients)
   help          Print this message or the help of the given subcommand(s)
 
 Options:
