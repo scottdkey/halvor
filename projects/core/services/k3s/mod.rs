@@ -18,7 +18,7 @@ mod utils;
 mod verify;
 
 // Re-export public functions from modules
-pub use agent_service::{setup_agent_service, stop_agent_service, restart_agent_service};
+pub use agent_service::setup_agent_service;
 pub use init::{init_control_plane, prepare_node};
 pub use join::join_cluster;
 pub use maintenance::regenerate_certificates;

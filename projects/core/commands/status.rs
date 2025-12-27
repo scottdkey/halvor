@@ -27,7 +27,7 @@ pub enum StatusCommands {
 pub fn handle_status(hostname: Option<&str>, command: Option<StatusCommands>) -> Result<()> {
     let halvor_dir = config::find_halvor_dir()?;
     let config = config::load_env_config(&halvor_dir)?;
-    
+
     // Detect current machine's hostname if not provided
     // This ensures we can find the host in config or use local execution
     let target_host = if let Some(host) = hostname {
@@ -37,7 +37,9 @@ pub fn handle_status(hostname: Option<&str>, command: Option<StatusCommands>) ->
         match crate::config::service::get_current_hostname() {
             Ok(current_host) => {
                 // Try to find it in config (with normalization)
-                if let Some(found_host) = crate::config::service::find_hostname_in_config(&current_host, &config) {
+                if let Some(found_host) =
+                    crate::config::service::find_hostname_in_config(&current_host, &config)
+                {
                     found_host
                 } else {
                     // Not in config, but we can still use it - Executor will detect it's local
@@ -76,7 +78,7 @@ pub fn handle_status(hostname: Option<&str>, command: Option<StatusCommands>) ->
 /// Show comprehensive mesh status (Tailscale + K3s)
 fn show_mesh_status(hostname: &str, config: &config::EnvConfig) -> Result<()> {
     use crate::utils::exec::Executor;
-    
+
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("Mesh Status Overview");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -111,16 +113,18 @@ fn show_mesh_status(hostname: &str, config: &config::EnvConfig) -> Result<()> {
 
         if let Some(output) = status_output {
             if output.status.success() {
-                if let Ok(status_json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                if let Ok(status_json) = serde_json::from_slice::<serde_json::Value>(&output.stdout)
+                {
                     // Get current node info
                     let mut current_node_name = "unknown".to_string();
                     let mut current_node_ip: Option<String> = None;
-                    
+
                     if let Some(self_data) = status_json.get("Self") {
                         if let Some(dns_name) = self_data.get("DNSName").and_then(|v| v.as_str()) {
                             current_node_name = dns_name.trim_end_matches('.').to_string();
                         }
-                        if let Some(ips) = self_data.get("TailscaleIPs").and_then(|v| v.as_array()) {
+                        if let Some(ips) = self_data.get("TailscaleIPs").and_then(|v| v.as_array())
+                        {
                             if let Some(ip) = ips.iter().find_map(|v| {
                                 v.as_str().and_then(|s| {
                                     if s.starts_with("100.") {
@@ -159,15 +163,17 @@ fn show_mesh_status(hostname: &str, config: &config::EnvConfig) -> Result<()> {
                                 let ip = peer_data
                                     .get("TailscaleIPs")
                                     .and_then(|v| v.as_array())
-                                    .and_then(|arr| arr.iter().find_map(|v| {
-                                        v.as_str().and_then(|s| {
-                                            if s.starts_with("100.") {
-                                                Some(s.to_string())
-                                            } else {
-                                                None
-                                            }
+                                    .and_then(|arr| {
+                                        arr.iter().find_map(|v| {
+                                            v.as_str().and_then(|s| {
+                                                if s.starts_with("100.") {
+                                                    Some(s.to_string())
+                                                } else {
+                                                    None
+                                                }
+                                            })
                                         })
-                                    }))
+                                    })
                                     .or_else(|| {
                                         peer_data
                                             .get("TailscaleIPs")
@@ -221,11 +227,15 @@ fn show_mesh_status(hostname: &str, config: &config::EnvConfig) -> Result<()> {
     // Use shell_escape to properly quote the temp file path
     use crate::utils::ssh::shell_escape;
     let escaped_tmp = shell_escape(&version_tmp);
-    let version_cmd = format!("k3s -v 2>&1 | head -1 | tee {} || echo 'not installed' | tee {}", escaped_tmp, escaped_tmp);
+    let version_cmd = format!(
+        "k3s -v 2>&1 | head -1 | tee {} || echo 'not installed' | tee {}",
+        escaped_tmp, escaped_tmp
+    );
     let version_output = exec.execute_shell(&version_cmd).ok();
-    
+
     // Read from temp file to get the version
-    let version_str = exec.read_file(&version_tmp)
+    let version_str = exec
+        .read_file(&version_tmp)
         .ok()
         .unwrap_or_else(|| {
             // Fallback: try to get from command output
@@ -235,10 +245,10 @@ fn show_mesh_status(hostname: &str, config: &config::EnvConfig) -> Result<()> {
         })
         .trim()
         .to_string();
-    
+
     // Clean up temp file (use shell_escape for safety)
     let _ = exec.execute_shell(&format!("rm -f {}", escaped_tmp));
-    
+
     if version_str.contains("not installed") || version_str.is_empty() || version_str == "unknown" {
         println!("✗ K3s is not installed on this node.");
     } else {
@@ -251,7 +261,7 @@ fn show_mesh_status(hostname: &str, config: &config::EnvConfig) -> Result<()> {
             "sudo systemctl is-active k3s > {} 2>&1 || sudo systemctl is-active k3s-agent > {} 2>&1 || echo 'not_running' > {}",
             service_status_tmp, service_status_tmp, service_status_tmp
         ));
-        
+
         let service_status = exec
             .read_file(service_status_tmp)
             .unwrap_or_else(|_| "unknown".to_string())
@@ -279,8 +289,105 @@ fn show_mesh_status(hostname: &str, config: &config::EnvConfig) -> Result<()> {
                 println!("{}", nodes_output);
             }
         } else {
-            println!("  ✗ K3s service is not running (status: {})", service_status);
+            println!(
+                "  ✗ K3s service is not running (status: {})",
+                service_status
+            );
         }
+    }
+    println!();
+
+    // Show Agent Mesh status
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("Halvor Agent Mesh");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+
+    // Check if agent is running locally
+    use crate::agent::api::AgentClient;
+    let agent_running = if is_local {
+        let client = AgentClient::new("127.0.0.1", 13500);
+        client.ping().is_ok()
+    } else {
+        false // For remote hosts, we'd need to check via SSH
+    };
+
+    if agent_running {
+        println!("  ✓ Agent is running");
+        println!();
+
+        // Get mesh peers from database
+        use crate::agent::mesh;
+        use crate::db::generated::agent_peers;
+
+        match mesh::get_active_peers() {
+            Ok(peers) => {
+                if peers.is_empty() {
+                    println!("  No peers in mesh.");
+                    println!();
+                    println!("  To add peers:");
+                    println!("    1. Generate a token: halvor agent token");
+                    println!("    2. On another machine: halvor agent join <token>");
+                } else {
+                    // Get detailed peer information
+                    let mut peer_details = Vec::new();
+                    for peer_hostname in &peers {
+                        if let Ok(Some(peer_row)) = agent_peers::select_one(
+                            "hostname = ?1",
+                            &[&peer_hostname as &dyn rusqlite::types::ToSql],
+                        ) {
+                            peer_details.push((
+                                peer_hostname.clone(),
+                                peer_row.tailscale_ip.clone(),
+                                peer_row.tailscale_hostname.clone(),
+                                peer_row.last_seen_at,
+                            ));
+                        } else {
+                            peer_details.push((peer_hostname.clone(), None, None, None));
+                        }
+                    }
+
+                    peer_details.sort_by(|a, b| a.0.cmp(&b.0));
+
+                    println!("  Mesh Peers ({}):", peer_details.len());
+                    println!();
+                    println!(
+                        "  {:<30} {:<20} {:<30}",
+                        "Hostname", "IP Address", "Tailscale Hostname"
+                    );
+                    println!("  {}", "-".repeat(80));
+
+                    for (hostname, ip, ts_hostname, last_seen) in &peer_details {
+                        let ip_str = ip.as_deref().unwrap_or("N/A");
+                        let ts_str = ts_hostname.as_deref().unwrap_or("N/A");
+                        let status = if let Some(seen) = last_seen {
+                            let age = chrono::Utc::now().timestamp() - seen;
+                            if age < 300 {
+                                "✓"
+                            } else if age < 3600 {
+                                "⚠"
+                            } else {
+                                "✗"
+                            }
+                        } else {
+                            "?"
+                        };
+                        println!(
+                            "  {:<30} {:<20} {:<30} {}",
+                            hostname, ip_str, ts_str, status
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                println!("  ⚠️  Unable to get mesh peers: {}", e);
+            }
+        }
+    } else {
+        println!("  ✗ Agent is not running");
+        println!();
+        println!("  To start the agent:");
+        println!("    halvor agent start --daemon");
     }
     println!();
 
@@ -290,8 +397,9 @@ fn show_mesh_status(hostname: &str, config: &config::EnvConfig) -> Result<()> {
     println!("  halvor status tailscale  - Show detailed Tailscale status");
     println!("  halvor status k3s       - Show detailed K3s cluster status");
     println!("  halvor status helm      - Show Helm releases");
+    println!("  halvor agent status     - Show detailed agent status");
+    println!("  halvor agent peers      - List all mesh peers");
     println!();
 
     Ok(())
 }
-

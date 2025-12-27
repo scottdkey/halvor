@@ -55,6 +55,12 @@ pub enum AgentCommands {
     },
     /// List peers in the mesh
     Peers,
+    /// Update hostname and sync across mesh
+    Hostname {
+        /// New hostname to use
+        #[arg(value_name = "HOSTNAME")]
+        new_hostname: String,
+    },
 }
 
 /// Handle agent commands
@@ -90,6 +96,9 @@ pub async fn handle_agent(command: AgentCommands) -> Result<()> {
         }
         AgentCommands::Peers => {
             list_peers()?;
+        }
+        AgentCommands::Hostname { new_hostname } => {
+            update_hostname(&new_hostname)?;
         }
     }
     Ok(())
@@ -451,7 +460,24 @@ fn generate_join_token() -> Result<()> {
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!();
 
-    let hostname = get_current_hostname()?;
+    // Try to get Tailscale hostname first (e.g., "mint" or "mint.bombay-pinecone.ts.net")
+    // If not available, normalize system hostname (e.g., "mint.local" -> "mint")
+    let hostname = crate::services::tailscale::get_tailscale_hostname()
+        .ok()
+        .flatten()
+        .map(|ts_hostname| {
+            // Extract short hostname from Tailscale FQDN (e.g., "mint.bombay-pinecone.ts.net" -> "mint")
+            ts_hostname
+                .split('.')
+                .next()
+                .unwrap_or(&ts_hostname)
+                .to_string()
+        })
+        .unwrap_or_else(|| {
+            // Fallback: normalize system hostname
+            let system_hostname = get_current_hostname().unwrap_or_else(|_| "unknown".to_string());
+            crate::config::service::normalize_hostname(&system_hostname)
+        });
 
     // Get Tailscale IP if available, otherwise use local IP
     let ip = tailscale::get_tailscale_ip()
@@ -563,10 +589,17 @@ fn join_mesh(token: Option<String>, host: Option<String>) -> Result<()> {
     }
 
     // Filter to only reachable hosts (excluding self)
+    // Normalize hostname for comparison (e.g., "mint.local" -> "mint")
     let local_hostname = get_current_hostname()?;
+    let normalized_local = crate::config::service::normalize_hostname(&local_hostname);
     let available_hosts: Vec<_> = hosts
         .iter()
-        .filter(|h| h.reachable && h.hostname != local_hostname)
+        .filter(|h| {
+            h.reachable && {
+                let normalized_peer = crate::config::service::normalize_hostname(&h.hostname);
+                normalized_peer != normalized_local && h.hostname != local_hostname
+            }
+        })
         .collect();
 
     if available_hosts.is_empty() {
@@ -691,7 +724,24 @@ fn perform_join(host: &str, port: u16, token: &str) -> Result<()> {
 
     println!("Connecting to {}:{}...", host, port);
 
-    let local_hostname = get_current_hostname()?;
+    // Try to get Tailscale hostname first (e.g., "mint" or "mint.bombay-pinecone.ts.net")
+    // If not available, normalize system hostname (e.g., "mint.local" -> "mint")
+    let local_hostname = crate::services::tailscale::get_tailscale_hostname()
+        .ok()
+        .flatten()
+        .map(|ts_hostname| {
+            // Extract short hostname from Tailscale FQDN (e.g., "mint.bombay-pinecone.ts.net" -> "mint")
+            ts_hostname
+                .split('.')
+                .next()
+                .unwrap_or(&ts_hostname)
+                .to_string()
+        })
+        .unwrap_or_else(|| {
+            // Fallback: normalize system hostname
+            let system_hostname = get_current_hostname().unwrap_or_else(|_| "unknown".to_string());
+            crate::config::service::normalize_hostname(&system_hostname)
+        });
 
     // Generate a public key for this node (for future encrypted communication)
     let public_key = format!("pk_{}", uuid::Uuid::new_v4());
@@ -779,6 +829,170 @@ fn list_peers() -> Result<()> {
             println!("  - {}", peer);
         }
     }
+
+    Ok(())
+}
+
+/// Update hostname and sync across mesh
+fn update_hostname(new_hostname: &str) -> Result<()> {
+    use crate::agent::api::AgentClient;
+    use crate::agent::discovery::HostDiscovery;
+    use crate::services::tailscale;
+
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("Update Hostname");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+
+    // Get current hostname
+    let current_hostname = get_current_hostname()?;
+    let normalized_current = crate::config::service::normalize_hostname(&current_hostname);
+
+    // Normalize new hostname
+    let normalized_new = crate::config::service::normalize_hostname(new_hostname);
+
+    if normalized_current == normalized_new {
+        println!("Hostname is already '{}'", normalized_new);
+        return Ok(());
+    }
+
+    println!("Current hostname: {}", normalized_current);
+    println!("New hostname: {}", normalized_new);
+    println!();
+
+    // Get Tailscale IP and hostname for the update
+    let tailscale_ip = tailscale::get_tailscale_ip().ok().flatten();
+    let tailscale_hostname = tailscale::get_tailscale_hostname().ok().flatten();
+
+    // Update local database entry
+    println!("[1/3] Updating local hostname in database...");
+
+    // Get current peer entry
+    use crate::db::generated::agent_peers;
+    let current_peer = agent_peers::select_one(
+        "hostname = ?1",
+        &[&normalized_current as &dyn rusqlite::types::ToSql],
+    )?;
+
+    if let Some(peer) = current_peer {
+        // Update existing peer entry with new hostname
+        // We need to delete the old entry and create a new one since hostname is unique
+        let peer_data = crate::db::generated::AgentPeersRowData {
+            hostname: normalized_new.clone(),
+            tailscale_ip: tailscale_ip.clone(),
+            tailscale_hostname: tailscale_hostname.clone(),
+            public_key: peer.public_key.clone(),
+            status: peer.status.clone(),
+            last_seen_at: peer.last_seen_at,
+            joined_at: peer.joined_at,
+        };
+
+        // Delete old entry
+        agent_peers::delete_by_hostname(&normalized_current)?;
+
+        // Create new entry
+        agent_peers::upsert_one(
+            "hostname = ?1",
+            &[&normalized_new as &dyn rusqlite::types::ToSql],
+            peer_data,
+        )?;
+
+        // Update peer_keys table
+        let conn = crate::db::get_connection()?;
+        conn.execute(
+            "UPDATE peer_keys SET peer_hostname = ?1 WHERE peer_hostname = ?2",
+            rusqlite::params![&normalized_new, &normalized_current],
+        )?;
+
+        println!("  ✓ Local database updated");
+    } else {
+        // No existing peer entry, create new one
+        let now = chrono::Utc::now().timestamp();
+        let peer_data = crate::db::generated::AgentPeersRowData {
+            hostname: normalized_new.clone(),
+            tailscale_ip: tailscale_ip.clone(),
+            tailscale_hostname: tailscale_hostname.clone(),
+            public_key: format!("pk_{}", uuid::Uuid::new_v4()),
+            status: "active".to_string(),
+            last_seen_at: Some(now),
+            joined_at: now,
+        };
+
+        agent_peers::upsert_one(
+            "hostname = ?1",
+            &[&normalized_new as &dyn rusqlite::types::ToSql],
+            peer_data,
+        )?;
+
+        println!("  ✓ Local database updated (new entry)");
+    }
+    println!();
+
+    // Discover and notify all peers
+    println!("[2/3] Notifying peers in mesh...");
+    let discovery = HostDiscovery::default();
+    let hosts = discovery.discover_all()?;
+
+    let mut notified = 0;
+    let mut failed = 0;
+
+    for host in &hosts {
+        if !host.reachable {
+            continue;
+        }
+
+        // Skip self
+        let normalized_peer = crate::config::service::normalize_hostname(&host.hostname);
+        if normalized_peer == normalized_current || normalized_peer == normalized_new {
+            continue;
+        }
+
+        let agent_host = host
+            .tailscale_ip
+            .as_ref()
+            .or(host.local_ip.as_ref())
+            .ok_or_else(|| anyhow::anyhow!("No IP for host {}", host.hostname))?;
+
+        let client = AgentClient::new(agent_host, host.agent_port);
+
+        // Use sync_database to notify peer about hostname change
+        // The peer will receive the updated hostname in the sync data
+        match client.sync_database(&normalized_new, None) {
+            Ok(_) => {
+                println!("  ✓ Notified {}", host.hostname);
+                notified += 1;
+            }
+            Err(e) => {
+                println!("  ⚠️  Failed to notify {}: {}", host.hostname, e);
+                failed += 1;
+            }
+        }
+    }
+
+    if notified == 0 && failed == 0 {
+        println!("  (No other peers in mesh)");
+    } else {
+        println!("  Notified {} peer(s), {} failed", notified, failed);
+    }
+    println!();
+
+    // Optionally update system hostname (requires sudo)
+    println!("[3/3] System hostname update (optional)...");
+    println!("  To update system hostname, run:");
+    println!("    sudo hostnamectl set-hostname {}", normalized_new);
+    println!(
+        "    (or on macOS: sudo scutil --set ComputerName {})",
+        normalized_new
+    );
+    println!();
+
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("✓ Hostname updated to '{}'", normalized_new);
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+    println!("Note: You may need to restart the agent for changes to fully propagate:");
+    println!("  halvor agent stop");
+    println!("  halvor agent start --daemon");
 
     Ok(())
 }
