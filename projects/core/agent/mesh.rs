@@ -71,6 +71,9 @@ pub fn generate_join_token(
 
     let encoded = token.encode()?;
 
+    eprintln!("[DEBUG] Generating token - token_id: {}", token_id);
+    eprintln!("[DEBUG] Database path: {:?}", db::get_db_path()?);
+
     // Store token in database
     let data = JoinTokensRowData {
         token: encoded.clone(),
@@ -81,7 +84,15 @@ pub fn generate_join_token(
         used_at: None,
     };
 
-    join_tokens::insert_one(data)?;
+    let result = join_tokens::insert_one(data)?;
+    eprintln!("[DEBUG] Token inserted into database with ID: {}", result);
+
+    // Verify it was stored
+    let verify = join_tokens::select_many(
+        "token = ?1",
+        &[&encoded as &dyn rusqlite::types::ToSql],
+    )?;
+    eprintln!("[DEBUG] Verification: Found {} tokens matching this token immediately after insert", verify.len());
 
     Ok((encoded, token))
 }
@@ -96,6 +107,7 @@ pub fn validate_join_token(encoded_token: &str) -> Result<JoinToken> {
 
     // Check if token exists in database and hasn't been used
     eprintln!("[DEBUG] Validating token_id: {}", token.token_id);
+    eprintln!("[DEBUG] Database path: {:?}", db::get_db_path()?);
     eprintln!("[DEBUG] Searching for encoded token in database (first 50 chars): {}", &encoded_token[..50.min(encoded_token.len())]);
 
     let rows = join_tokens::select_many(
