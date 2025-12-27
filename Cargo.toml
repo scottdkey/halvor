@@ -1,8 +1,14 @@
 [workspace]
 members = [
-    "projects/core",
-    "projects/ffi-macro",
-    "projects/vpn-container",
+    "crates/halvor-ffi-macro",
+    "crates/halvor-openvpn",
+    "crates/halvor-db",
+    "crates/halvor-core",
+    "crates/halvor-agent",
+    "crates/halvor-cli",
+    "crates/halvor-build",
+    "crates/halvor-docker",
+    "crates/halvor-web",
 ]
 resolver = "2"
 

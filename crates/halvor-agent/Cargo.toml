@@ -1,0 +1,32 @@
+[package]
+name = "halvor-agent"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Halvor Agent Server - Mesh networking and API server"
+license.workspace = true
+
+[lib]
+name = "halvor_agent"
+path = "src/lib.rs"
+
+[[bin]]
+name = "halvor-agent"
+path = "src/main.rs"
+
+[dependencies]
+halvor-core = { path = "../halvor-core" }
+halvor-db = { path = "../halvor-db" }
+
+anyhow.workspace = true
+tokio.workspace = true
+axum.workspace = true
+tower-http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+base64.workspace = true
+chrono.workspace = true
+clap.workspace = true
+whoami.workspace = true
+reqwest.workspace = true

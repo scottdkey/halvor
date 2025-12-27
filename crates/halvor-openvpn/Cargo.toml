@@ -1,0 +1,35 @@
+[package]
+name = "halvor-openvpn"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "PIA VPN Container Entrypoint and Service - OpenVPN and Privoxy management"
+license.workspace = true
+
+[lib]
+name = "halvor_openvpn"
+path = "src/lib.rs"
+
+[[bin]]
+name = "entrypoint"
+path = "src/bin/entrypoint.rs"
+
+[dependencies]
+halvor-core = { path = "../halvor-core" }
+halvor-docker = { path = "../halvor-docker" }
+anyhow.workspace = true
+reqwest = { version = "0.12", default-features = false, features = [
+  "blocking",
+  "rustls-tls",
+  "rustls-tls-webpki-roots",
+] }
+zip.workspace = true
+regex.workspace = true
+nix.workspace = true
+tempfile.workspace = true
+ctrlc.workspace = true
+clap.workspace = true
+if-addrs.workspace = true
+resolv-conf.workspace = true
+dotenv.workspace = true
+

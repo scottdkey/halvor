@@ -1,0 +1,27 @@
+[package]
+name = "halvor-web"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Halvor Web Service - Web server for serving SolidJS app and exposing FFI functions via HTTP API"
+license.workspace = true
+
+[lib]
+name = "halvor_web"
+path = "src/lib.rs"
+
+[dependencies]
+halvor-agent = { path = "../halvor-agent", optional = true }
+
+# Web server dependencies
+axum.workspace = true
+tower-http.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+
+[features]
+default = []
+agent = ["halvor-agent"]
+

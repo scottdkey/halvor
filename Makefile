@@ -15,20 +15,22 @@ help:
 	@echo "  make install-web          - Install Web dependencies (Node.js, wasm-pack)"
 	@echo "  make install-tools         - Install development tools (Docker, Fastlane)"
 	@echo "  make install-cli          - Build and install CLI to system"
+	@echo "  make install-agent        - Build and install agent binary to system"
 	@echo ""
-	@echo "Build targets (use 'halvor build' commands):"
-	@echo "  halvor build ios          - Build iOS Swift app"
-	@echo "  halvor build mac          - Build macOS Swift app"
-	@echo "  halvor build android      - Build Android library and app"
-	@echo "  halvor build web          - Build WASM module and web app"
+	@echo "Build targets (use 'make build <subcommand>'):"
+	@echo "  make build cli            - Build CLI binary"
+	@echo "  make build ios            - Build iOS Swift app"
+	@echo "  make build mac             - Build macOS Swift app"
+	@echo "  make build android         - Build Android library and app"
+	@echo "  make build web             - Build WASM module and web app"
 	@echo ""
-	@echo "Development (use 'halvor dev' commands):"
-	@echo "  halvor dev mac            - macOS development with hot reload"
-	@echo "  halvor dev ios            - iOS development with simulator"
-	@echo "  halvor dev web            - Web development with hot reload (Docker)"
-	@echo "  halvor dev web --bare-metal - Web development (Rust server + Svelte dev)"
-	@echo "  halvor dev web --prod     - Web production mode (Docker)"
-	@echo "  halvor dev cli            - CLI development mode with watch (auto-rebuild on changes)"
+	@echo "Development (use 'make dev <subcommand>'):"
+	@echo "  make dev mac               - macOS development with hot reload"
+	@echo "  make dev ios               - iOS development with simulator"
+	@echo "  make dev web               - Web development with hot reload (Docker)"
+	@echo "  make dev web-bare-metal    - Web development (Rust server + Svelte dev)"
+	@echo "  make dev web-prod          - Web production mode (Docker)"
+	@echo "  make dev cli               - CLI development mode with watch (auto-rebuild on changes)"
 	@echo ""
 	@echo "Documentation:"
 	@echo "  make docs                 - Generate documentation (CLI commands, Docker containers, Helm charts)"
@@ -67,7 +69,7 @@ install-cli:
 			sleep 1; \
 		fi; \
 	fi
-	@cargo build --release --bin halvor --manifest-path projects/core/Cargo.toml
+	@cargo build --release --bin halvor --manifest-path crates/halvor-cli/Cargo.toml
 	@mkdir -p ~/.cargo/bin
 	@cp -f target/release/halvor ~/.cargo/bin/halvor
 	@echo "✓ CLI installed to ~/.cargo/bin/halvor (available as 'halvor')"
@@ -89,6 +91,17 @@ install-cli:
 			echo "✓ Agent service restarted"; \
 		fi; \
 	fi
+
+# Install agent binary to system (agent only, no CLI)
+.PHONY: install-agent
+install-agent:
+	@echo "Building and installing agent binary to system..."
+	@cargo build --release --bin halvor-agent --manifest-path crates/halvor-agent/Cargo.toml
+	@mkdir -p ~/.cargo/bin
+	@cp -f target/release/halvor-agent ~/.cargo/bin/halvor-agent
+	@echo "✓ Agent installed to ~/.cargo/bin/halvor-agent (available as 'halvor-agent')"
+	@echo "  Start with: halvor-agent --port 13500 --web-port 3030"
+	@echo "  Or use CLI: halvor agent start --port 13500 --ui 3030 --daemon"
 
 # Install Rust toolchain
 install-rust:

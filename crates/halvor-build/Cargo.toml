@@ -1,0 +1,40 @@
+[package]
+name = "halvor-build"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Halvor Build Services - Build operations for all platforms"
+license.workspace = true
+
+[lib]
+name = "halvor_build"
+path = "src/lib.rs"
+
+[[bin]]
+name = "halvor-build"
+path = "src/main.rs"
+
+[dependencies]
+halvor-core = { path = "../halvor-core" }
+halvor-web = { path = "../halvor-web" }
+
+# CLI dependencies
+clap.workspace = true
+
+# Build and dev dependencies
+anyhow.workspace = true
+which.workspace = true
+chrono.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+glob.workspace = true
+uuid.workspace = true
+zip.workspace = true
+tar.workspace = true
+flate2.workspace = true
+regex.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+

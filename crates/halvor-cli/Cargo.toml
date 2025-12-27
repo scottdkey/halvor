@@ -1,0 +1,27 @@
+[package]
+name = "halvor-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Halvor CLI - Command-line interface for homelab management"
+license.workspace = true
+
+[[bin]]
+name = "halvor"
+path = "src/main.rs"
+
+[dependencies]
+halvor-core = { path = "../halvor-core" }
+halvor-db = { path = "../halvor-db" }
+halvor-agent = { path = "../halvor-agent" }
+halvor-build = { path = "../halvor-build" }
+halvor-docker = { path = "../halvor-docker" }
+halvor-web = { path = "../halvor-web", features = ["agent"] }
+
+clap.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+whoami.workspace = true
+chrono.workspace = true
