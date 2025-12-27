@@ -356,36 +356,101 @@ fn sync_with_agents(force: bool) -> Result<()> {
 
 fn sync_with_agents_internal(sync: &ConfigSync, _force: bool) -> Result<()> {
     use halvor_agent::agent::mesh;
+    use halvor_agent::agent::api::AgentClient;
+    use halvor_db::generated::agent_peers;
 
+    let local_hostname = get_current_hostname()?;
+    let normalized_local = halvor_core::utils::hostname::normalize_hostname(&local_hostname);
+
+    // Discover agents on network
     let discovery = HostDiscovery::default();
-    let hosts = discovery.discover_all()?;
+    let discovered_hosts = discovery.discover_all()?;
 
-    if hosts.is_empty() {
-        println!("No agents discovered. Run 'halvor agent discover' to find agents.");
+    // Get all peers from database
+    let db_peers = mesh::get_active_peers()?;
+    
+    // Build comprehensive list of hosts to sync with:
+    // 1. Discovered hosts (currently reachable)
+    // 2. Database peers with IP addresses (may be temporarily offline but should still sync when available)
+    let mut hosts_to_sync = discovered_hosts.clone();
+    let mut synced_peers = std::collections::HashSet::new();
+    
+    // Add discovered hosts to set
+    for host in &discovered_hosts {
+        let normalized = halvor_core::utils::hostname::normalize_hostname(&host.hostname);
+        synced_peers.insert(normalized);
+    }
+
+    // Add database peers that aren't in discovered hosts but have IP addresses
+    for peer_hostname in &db_peers {
+        let normalized_peer = halvor_core::utils::hostname::normalize_hostname(peer_hostname);
+        
+        // Skip self
+        if normalized_peer == normalized_local {
+            continue;
+        }
+
+        // Skip if already in discovered hosts
+        if synced_peers.contains(&normalized_peer) {
+            continue;
+        }
+
+        // Get peer info from database
+        let peer_rows = agent_peers::select_many(
+            "hostname = ?1",
+            &[&normalized_peer as &dyn rusqlite::types::ToSql],
+        )?;
+
+        if let Some(peer_row) = peer_rows.first() {
+            // If peer has a Tailscale IP, try to add it to sync list
+            if let Some(ref ts_ip) = peer_row.tailscale_ip {
+                // Create a DiscoveredHost-like entry for database peer
+                use halvor_agent::agent::discovery::DiscoveredHost;
+                hosts_to_sync.push(DiscoveredHost {
+                    hostname: normalized_peer.clone(),
+                    tailscale_ip: Some(ts_ip.clone()),
+                    tailscale_hostname: peer_row.tailscale_hostname.clone(),
+                    local_ip: None,
+                    agent_port: 13500,
+                    reachable: false, // Will be tested during sync
+                });
+                synced_peers.insert(normalized_peer);
+            }
+        }
+    }
+
+    if hosts_to_sync.is_empty() {
+        println!("No agents to sync with.");
+        println!();
+        println!("To add peers:");
+        println!("  1. Generate a token: halvor agent token");
+        println!("  2. On another machine: halvor agent join <token>");
+        println!("  3. Or discover agents: halvor agent discover");
         return Ok(());
     }
 
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("Syncing with {} agent(s)...", hosts.len());
+    println!("Syncing with {} agent(s) ({} discovered, {} from database)...", 
+        hosts_to_sync.len(), 
+        discovered_hosts.len(),
+        hosts_to_sync.len().saturating_sub(discovered_hosts.len()));
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!();
 
-    // Sync host information
+    // Sync host information (only with reachable discovered hosts)
     println!("[1/3] Syncing host information...");
-    sync.sync_host_info(&hosts)?;
+    sync.sync_host_info(&discovered_hosts)?;
 
-    // Sync encrypted data
-    println!("[2/3] Syncing encrypted data...");
-    sync.sync_encrypted_data(&hosts)?;
+    // Sync encrypted data and mesh peers (with all hosts, including database peers)
+    println!("[2/3] Syncing encrypted data and mesh peers...");
+    sync.sync_encrypted_data(&hosts_to_sync)?;
 
     // Sync mesh peer information - ensure all hosts know about each other
     // This is now handled in sync_encrypted_data which extracts peer info from sync responses
-    println!("[3/3] Syncing mesh peer information...");
-    let local_hostname = get_current_hostname()?;
-    let normalized_local = halvor_core::utils::hostname::normalize_hostname(&local_hostname);
-
+    println!("[3/3] Updating peer information...");
+    
     // Add discovered hosts to local database (if not already present)
-    for host in &hosts {
+    for host in &discovered_hosts {
         // Skip self
         let normalized_peer = halvor_core::utils::hostname::normalize_hostname(&host.hostname);
         if normalized_peer == normalized_local {
@@ -413,8 +478,10 @@ fn sync_with_agents_internal(sync: &ConfigSync, _force: bool) -> Result<()> {
                 println!("  ✓ Added new peer: {}", normalized_peer);
             }
         } else {
-            // Update last seen timestamp
-            let _ = mesh::update_peer_last_seen(&normalized_peer);
+            // Update last seen timestamp for reachable peers
+            if host.reachable {
+                let _ = mesh::update_peer_last_seen(&normalized_peer);
+            }
         }
     }
 
@@ -1013,16 +1080,9 @@ fn verify_mesh_connectivity() -> Result<()> {
     for (i, (hostname, ip, ts_hostname, discovered, _reachable, _ping_ok)) in peer_info.iter().enumerate() {
         println!("[{}/{}] Testing {}...", i + 1, peer_info.len(), hostname);
         
-        if !*discovered {
-            println!("  ⚠️  Not discovered on network");
-            ping_failed += 1;
-            sync_failed += 1;
-            println!();
-            continue;
-        }
-
+        // Try to connect even if not discovered (may have IP from database)
         let connect_ip = match ip {
-            Some(ip) => ip,
+            Some(ip) => ip.clone(),
             None => {
                 println!("  ✗ No IP address available");
                 ping_failed += 1;
@@ -1031,6 +1091,10 @@ fn verify_mesh_connectivity() -> Result<()> {
                 continue;
             }
         };
+
+        if !*discovered {
+            println!("  ⚠️  Not discovered on network (trying database IP: {})", connect_ip);
+        }
 
         // Test ping
         print!("  Testing ping... ");
