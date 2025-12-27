@@ -63,49 +63,44 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Build { subcommand } => {
-            match subcommand {
-                BuildCommands::Cli => {
-                    halvor_build::build_cli()?;
-                }
-                BuildCommands::Ios => {
-                    halvor_build::build_and_sign_ios()?;
-                }
-                BuildCommands::Mac => {
-                    halvor_build::build_and_sign_mac()?;
-                }
-                BuildCommands::Android => {
-                    halvor_build::build_android()?;
-                }
-                BuildCommands::Web => {
-                    halvor_build::build_web(true)?;
-                }
+        Commands::Build { subcommand } => match subcommand {
+            BuildCommands::Cli => {
+                halvor_build::build_cli(None, None, false)?;
             }
-        }
-        Commands::Dev { subcommand } => {
-            match subcommand {
-                DevCommands::Cli => {
-                    halvor_build::dev_cli().await?;
-                }
-                DevCommands::Mac => {
-                    halvor_build::dev_mac().await?;
-                }
-                DevCommands::Ios => {
-                    halvor_build::dev_ios().await?;
-                }
-                DevCommands::Web => {
-                    halvor_build::dev_web_docker(8080).await?;
-                }
-                DevCommands::WebBareMetal => {
-                    halvor_build::dev_web_bare_metal(8080, None).await?;
-                }
-                DevCommands::WebProd => {
-                    halvor_build::dev_web_prod().await?;
-                }
+            BuildCommands::Ios => {
+                halvor_build::build_and_sign_ios()?;
             }
-        }
+            BuildCommands::Mac => {
+                halvor_build::build_and_sign_mac()?;
+            }
+            BuildCommands::Android => {
+                halvor_build::build_android()?;
+            }
+            BuildCommands::Web => {
+                halvor_build::build_web(true)?;
+            }
+        },
+        Commands::Dev { subcommand } => match subcommand {
+            DevCommands::Cli => {
+                halvor_build::dev_cli().await?;
+            }
+            DevCommands::Mac => {
+                halvor_build::dev_mac()?;
+            }
+            DevCommands::Ios => {
+                halvor_build::dev_ios()?;
+            }
+            DevCommands::Web => {
+                halvor_build::dev_web_docker(8080).await?;
+            }
+            DevCommands::WebBareMetal => {
+                halvor_build::dev_web_bare_metal(8080, None).await?;
+            }
+            DevCommands::WebProd => {
+                halvor_build::dev_web_prod().await?;
+            }
+        },
     }
 
     Ok(())
 }
-

@@ -1,7 +1,9 @@
 //! Process management utilities
 
-use anyhow::{Context, Result};
-use nix::sys::signal::{self, Signal};
+use anyhow::Result;
+#[cfg(unix)]
+use nix::sys::signal::Signal;
+#[cfg(unix)]
 use nix::unistd::Pid;
 use std::fs;
 use std::io::Write;
@@ -16,8 +18,15 @@ const OPENVPN_LOG: &str = "/var/log/openvpn/openvpn.log";
 const PRIVOXY_CONFIG: &str = "/etc/privoxy/config";
 
 /// Check if a process is running by PID
+#[cfg(unix)]
 pub fn is_process_running(pid: u32) -> bool {
     nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok()
+}
+
+#[cfg(not(unix))]
+pub fn is_process_running(_pid: u32) -> bool {
+    // Windows stub - this code is meant for Linux containers
+    false
 }
 
 /// Find process ID by command pattern
@@ -197,6 +206,7 @@ fn update_resolv_conf(dns_ip: &str) -> Result<()> {
 }
 
 /// Monitor OpenVPN and Privoxy processes
+#[cfg(unix)]
 pub fn monitor_processes(
     running: Arc<AtomicBool>,
     openvpn_pid: u32,
@@ -239,7 +249,19 @@ pub fn monitor_processes(
     Ok(())
 }
 
+#[cfg(not(unix))]
+pub fn monitor_processes(
+    _running: Arc<AtomicBool>,
+    _openvpn_pid: u32,
+    _privoxy_pid: u32,
+    _config_path: &Path,
+) -> Result<()> {
+    // Windows stub - this code is meant for Linux containers
+    anyhow::bail!("Process monitoring not supported on Windows");
+}
+
 /// Cleanup processes on shutdown
+#[cfg(unix)]
 fn cleanup(openvpn_pid: u32, privoxy_pid: u32, _config_path: &Path) -> Result<()> {
     println!("Stopping OpenVPN (PID: {})...", openvpn_pid);
     if let Err(e) = nix::sys::signal::kill(Pid::from_raw(openvpn_pid as i32), Signal::SIGTERM) {
@@ -261,3 +283,8 @@ fn cleanup(openvpn_pid: u32, privoxy_pid: u32, _config_path: &Path) -> Result<()
     Ok(())
 }
 
+#[cfg(not(unix))]
+fn cleanup(_openvpn_pid: u32, _privoxy_pid: u32, _config_path: &Path) -> Result<()> {
+    // Windows stub - this code is meant for Linux containers
+    anyhow::bail!("Process cleanup not supported on Windows");
+}

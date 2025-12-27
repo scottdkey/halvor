@@ -25,7 +25,6 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 zip.workspace = true
 regex.workspace = true
-nix.workspace = true
 tempfile.workspace = true
 ctrlc.workspace = true
 clap.workspace = true
@@ -33,3 +32,5 @@ if-addrs.workspace = true
 resolv-conf.workspace = true
 dotenv.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+nix.workspace = true

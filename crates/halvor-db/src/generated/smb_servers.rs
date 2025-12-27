@@ -156,11 +156,7 @@ pub fn delete_by_server_name(server_name_value: &str) -> Result<usize> {
     )
 }
 
-// NOTE: Config-dependent functions moved to halvor core crate
-// These functions depend on config::SmbServerConfig which is in halvor-core
-// They are now in halvor-cli/src/config/service.rs
 
-use serde_json;
 
 /// List all SMB server names in database
 pub fn list_smb_servers() -> Result<Vec<String>> {

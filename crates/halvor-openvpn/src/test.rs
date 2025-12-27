@@ -3,12 +3,10 @@
 use anyhow::{Context, Result};
 use if_addrs::get_if_addrs;
 use std::net::TcpStream;
-use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
 const PROXY_PORT_ENV: &str = "PROXY_PORT";
-const OPENVPN_LOG: &str = "/var/log/openvpn/openvpn.log";
 
 /// Run comprehensive VPN connection tests
 pub fn run_vpn_tests() -> Result<()> {
@@ -489,8 +487,9 @@ pub fn show_vpn_status() -> Result<()> {
 /// Run startup tests
 pub fn run_startup_tests(proxy_port: &str) -> Result<()> {
     // Run comprehensive VPN tests
-    unsafe { std::env::set_var("PROXY_PORT", proxy_port); }
+    unsafe {
+        std::env::set_var("PROXY_PORT", proxy_port);
+    }
     run_vpn_tests()?;
     Ok(())
 }
-

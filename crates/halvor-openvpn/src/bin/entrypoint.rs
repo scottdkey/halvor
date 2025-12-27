@@ -2,26 +2,19 @@
 //! Rust-based entrypoint that replaces the bash entrypoint.sh script
 //! Manages OpenVPN and Privoxy processes, downloads configs, and tails logs
 
-use halvor_openvpn::{config, download, logs, process, test};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
-use nix::sys::signal::{self, Signal};
-use nix::unistd::Pid;
+use halvor_openvpn::{config, download, logs, process, test};
+
 use std::env;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
-const PIA_CONFIG_URL: &str = "https://www.privateinternetaccess.com/openvpn/openvpn.zip";
-const CONFIG_DIR: &str = "/config";
 const OPENVPN_LOG: &str = "/var/log/openvpn/openvpn.log";
-const PRIVOXY_LOG: &str = "/var/log/privoxy/logfile";
-const PRIVOXY_CONFIG: &str = "/etc/privoxy/config";
 
 #[derive(Parser)]
 #[command(name = "entrypoint")]
@@ -41,7 +34,9 @@ fn main() -> Result<()> {
     // Handle test command
     if cli.test {
         let proxy_port = env::var("PROXY_PORT").unwrap_or_else(|_| "8888".to_string());
-        std::env::set_var("PROXY_PORT", &proxy_port);
+        unsafe {
+            std::env::set_var("PROXY_PORT", &proxy_port);
+        }
         return test::run_vpn_tests();
     }
 
@@ -212,4 +207,3 @@ fn run_entrypoint() -> Result<()> {
 
     Ok(())
 }
-
