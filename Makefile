@@ -89,11 +89,21 @@ install-cli:
 	fi
 	@# Restart agent service if service file exists (Linux)
 	@if [ "$$(uname -s)" = "Linux" ]; then \
-		if [ -f /etc/systemd/system/halvor-agent.service ]; then \
-			echo "Restarting halvor agent service..."; \
+		# Try user service first (no sudo needed)
+		if [ -f ~/.config/systemd/user/halvor-agent.service ]; then \
+			echo "Restarting halvor agent service (user service)..."; \
+			systemctl --user daemon-reload 2>/dev/null || true; \
+			systemctl --user restart halvor-agent.service 2>/dev/null || true; \
+			echo "✓ Agent service restarted"; \
+		# Fall back to system service (requires sudo)
+		elif [ -f /etc/systemd/system/halvor-agent.service ]; then \
+			echo "Restarting halvor agent service (system service, requires sudo)..."; \
 			sudo systemctl daemon-reload; \
 			sudo systemctl start halvor-agent.service 2>/dev/null || true; \
 			echo "✓ Agent service restarted"; \
+			echo ""; \
+			echo "ℹ️  Note: Service is installed as a system service, which requires sudo."; \
+			echo "   To avoid sudo, reinstall the service: halvor agent start --daemon"; \
 		fi; \
 	fi
 
