@@ -344,29 +344,26 @@ fn show_mesh_status(hostname: &str, config: &config::EnvConfig) -> Result<()> {
                             "hostname = ?1",
                             &[&peer_hostname as &dyn rusqlite::types::ToSql],
                         ) {
-                            // If Tailscale hostname is missing but we have an IP, try to look it up
-                            if peer_row.tailscale_hostname.is_none() {
-                                if let Some(ref peer_ip) = peer_row.tailscale_ip {
-                                    // Try to find matching device by IP
-                                    if let Some(device) = tailscale_devices.iter().find(|d| {
-                                        d.ip.as_ref().map(|ip| ip == peer_ip).unwrap_or(false)
-                                    }) {
-                                        // Found matching device, update database
-                                        let ts_hostname = device.name.trim_end_matches('.').to_string();
-                                        if let Ok(()) = mesh::update_peer_tailscale_hostname(peer_hostname, &ts_hostname) {
-                                            peer_row.tailscale_hostname = Some(ts_hostname);
-                                        }
-                                    } else {
-                                         // Try to match by hostname (short name before first dot)
-                                         let short_name = peer_hostname.split('.').next().unwrap_or(peer_hostname);
-                                         if let Some(device) = tailscale_devices.iter().find(|d| {
-                                             let device_short = d.name.split('.').next().unwrap_or(&d.name);
-                                             device_short == short_name || d.name == *peer_hostname
-                                         }) {
-                                            let ts_hostname = device.name.trim_end_matches('.').to_string();
-                                            if let Ok(()) = mesh::update_peer_tailscale_hostname(peer_hostname, &ts_hostname) {
-                                                peer_row.tailscale_hostname = Some(ts_hostname);
-                                            }
+                            // Try to update missing Tailscale information from devices
+                            let short_name = peer_hostname.split('.').next().unwrap_or(peer_hostname);
+                            if let Some(device) = tailscale_devices.iter().find(|d| {
+                                let device_short = d.name.split('.').next().unwrap_or(&d.name);
+                                device_short == short_name || d.name == *peer_hostname || 
+                                d.name.trim_end_matches('.').eq_ignore_ascii_case(peer_hostname)
+                            }) {
+                                // Update Tailscale hostname if missing or different
+                                let ts_hostname = device.name.trim_end_matches('.').to_string();
+                                if peer_row.tailscale_hostname.as_ref().map(|h| h != &ts_hostname).unwrap_or(true) {
+                                    if let Ok(()) = mesh::update_peer_tailscale_hostname(peer_hostname, &ts_hostname) {
+                                        peer_row.tailscale_hostname = Some(ts_hostname.clone());
+                                    }
+                                }
+                                
+                                // Update Tailscale IP if missing or different
+                                if let Some(ref device_ip) = device.ip {
+                                    if peer_row.tailscale_ip.as_ref().map(|ip| ip != device_ip).unwrap_or(true) {
+                                        if let Ok(()) = mesh::update_peer_tailscale_ip(peer_hostname, device_ip) {
+                                            peer_row.tailscale_ip = Some(device_ip.clone());
                                         }
                                     }
                                 }

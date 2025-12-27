@@ -244,6 +244,18 @@ pub fn update_peer_tailscale_hostname(hostname: &str, tailscale_hostname: &str) 
     Ok(())
 }
 
+/// Update peer Tailscale IP address
+pub fn update_peer_tailscale_ip(hostname: &str, tailscale_ip: &str) -> Result<()> {
+    let conn = db::get_connection()?;
+
+    conn.execute(
+        "UPDATE agent_peers SET tailscale_ip = ?1 WHERE hostname = ?2",
+        rusqlite::params![tailscale_ip, hostname],
+    )?;
+
+    Ok(())
+}
+
 /// Remove a peer from the mesh
 pub fn remove_peer(hostname: &str) -> Result<()> {
     agent_peers::delete_by_hostname(hostname)?;
@@ -277,12 +289,18 @@ pub fn refresh_peer_tailscale_hostnames() -> Result<usize> {
             let normalized_peer = halvor_core::utils::hostname::normalize_hostname(peer_hostname);
             
             // Try to find matching device by normalized hostname
-            if let Some((_ip, full_hostname)) = device_map.get(&normalized_peer) {
-                // Use the peer_hostname as stored in database (which is already normalized)
+            if let Some((device_ip, full_hostname)) = device_map.get(&normalized_peer) {
+                // Update Tailscale hostname
                 let _ = update_peer_tailscale_hostname(
                     peer_hostname,
                     full_hostname,
                 );
+                
+                // Update Tailscale IP if available
+                if let Some(ip) = device_ip {
+                    let _ = update_peer_tailscale_ip(peer_hostname, ip);
+                }
+                
                 updated_count += 1;
             }
         }
