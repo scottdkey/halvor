@@ -5,9 +5,10 @@ on:
     branches:
       - main
     paths:
-      - 'core/**'
+      - 'crates/**'
       - 'charts/**'
-      - 'vpn-container/**'
+      - 'compose/pia-vpn/**'
+      - 'crates/halvor-openvpn/**'
       - 'scripts/generate-docs.sh'
   workflow_dispatch:
 
@@ -42,7 +43,7 @@ jobs:
 
       - name: Build halvor CLI
         run: |
-          cargo build --release --bin halvor --manifest-path projects/core/Cargo.toml
+          cargo build --release --bin halvor --manifest-path crates/halvor-cli/Cargo.toml
           sudo mv target/release/halvor /usr/local/bin/halvor || cp target/release/halvor /tmp/halvor && sudo mv /tmp/halvor /usr/local/bin/halvor
 
       - name: Generate documentation

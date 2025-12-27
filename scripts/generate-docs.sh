@@ -211,14 +211,21 @@ halvor install sonarr -H <hostname>
 halvor install radarr -H <hostname>
 ```
 
-### radarr-4k
+### radarr (multiple instances)
 
 **Namespace**: `default`  
-**Description**: Radarr 4K - Movie collection manager (4K focus)
+**Description**: Radarr - Movie collection manager. Deploy multiple instances with different release names using the `--name` flag.
 
 **Installation**:
 ```bash
-halvor install radarr-4k -H <hostname>
+# Default instance
+halvor install radarr -H <hostname>
+
+# 4K instance
+halvor install radarr --name radarr-4k -H <hostname>
+
+# Anime instance
+halvor install radarr --name radarr-anime -H <hostname>
 ```
 
 ### prowlarr

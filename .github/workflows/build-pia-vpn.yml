@@ -5,7 +5,8 @@ on:
     branches:
       - main
     paths:
-      - 'vpn-container/**'
+      - 'compose/pia-vpn/**'
+      - 'crates/halvor-openvpn/**'
   workflow_dispatch:
     inputs:
       build:
@@ -107,8 +108,8 @@ jobs:
           registry: ${{ env.REGISTRY }}
           image_name: ${{ env.IMAGE_NAME }}
           docker_tag: ${{ steps.release_type.outputs.docker_tag }}
-          context: ./vpn-container
-          dockerfile: ./vpn-container/Dockerfile
+          context: ./compose/pia-vpn
+          dockerfile: ./compose/pia-vpn/Dockerfile
           push: 'false'
           outputs: type=oci,dest=/tmp/image.tar
 
@@ -147,8 +148,8 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           image_name: ${{ env.IMAGE_NAME }}
-          context: ./vpn-container
-          dockerfile: ./vpn-container/Dockerfile
+          context: ./compose/pia-vpn
+          dockerfile: ./compose/pia-vpn/Dockerfile
           version_input: ${{ github.event.inputs.version }}
           event_name: ${{ github.event_name }}
           experimental_input: 'true'
@@ -240,8 +241,8 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           image_name: ${{ env.IMAGE_NAME }}
-          context: ./vpn-container
-          dockerfile: ./vpn-container/Dockerfile
+          context: ./compose/pia-vpn
+          dockerfile: ./compose/pia-vpn/Dockerfile
           version_input: ${{ github.event.inputs.version }}
           event_name: ${{ github.event_name }}
           experimental_input: 'false'

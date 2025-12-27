@@ -6,15 +6,15 @@ inputs:
     description: 'Paths to check for source code changes (newline-separated)'
     required: false
     default: |
-      projects/core/**
+      crates/**
       Cargo.toml
-      projects/core/Cargo.toml
       Cargo.lock
   docker_paths:
     description: 'Paths to check for docker changes (newline-separated)'
     required: false
     default: |
-      projects/vpn-container/**
+      compose/pia-vpn/**
+      crates/halvor-openvpn/**
 
 outputs:
   src:
