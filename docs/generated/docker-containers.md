@@ -7,7 +7,7 @@ This document lists all Docker containers that can be built using halvor.
 ### pia-vpn
 
 **Image**: `ghcr.io/scottdkey/pia-vpn`  
-**Build Directory**: `projects/vpn-container/`  
+**Build Directory**: `vpn-container/`  
 **Description**: Private Internet Access VPN container with Rust-based entrypoint
 
 **Build Command**:
