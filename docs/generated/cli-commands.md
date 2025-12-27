@@ -9,7 +9,6 @@ Usage: halvor [OPTIONS] <COMMAND>
 Commands:
   backup     Backup services, config, and database
   restore    Restore services, config, or database
-  sync       Sync encrypted data between hal installations
   list       List services or hosts
   install    Install an app on a host
   uninstall  Uninstall a service from a host or halvor itself
@@ -65,6 +64,16 @@ Options:
   -H, --hostname <HOSTNAME>  Hostname to operate on (defaults to localhost if not provided)
       --backup <BACKUP>      Specific backup timestamp to restore (required when service is specified)
   -h, --help                 Print help
+```
+
+### `halvor sync`
+
+```
+error: unrecognized subcommand 'sync'
+
+Usage: halvor [OPTIONS] <COMMAND>
+
+For more information, try '--help'.
 ```
 
 ### `halvor list`
