@@ -8,11 +8,27 @@
 
 pub mod registry;
 pub mod helm_app; // Trait for Helm chart apps
-pub mod npm;
+pub mod npm; // NPM API functions (not HelmApp)
+pub mod nginx_proxy_manager; // Nginx Proxy Manager HelmApp
 pub mod portainer;
 pub mod smb;
 pub mod tailscale;
 pub mod k3s;
+
+// Helm app implementations
+pub mod traefik_public;
+pub mod traefik_private;
+pub mod gitea;
+pub mod pia_vpn;
+pub mod sabnzbd;
+pub mod qbittorrent;
+pub mod radarr;
+pub mod sonarr;
+pub mod prowlarr;
+pub mod bazarr;
+pub mod smb_storage;
+pub mod halvor_server;
+pub mod portainer_helm;
 
 // Re-export registry
 pub use registry::{AppCategory, AppDefinition, APPS, find_app, list_apps};
@@ -21,7 +37,7 @@ pub use registry::{AppCategory, AppDefinition, APPS, find_app, list_apps};
 pub use helm_app::{HelmApp, install_helm_app, upgrade_helm_app, uninstall_helm_app};
 
 // Re-export commonly used app functions
-pub use npm::*;
+pub use npm::*; // NPM API functions
 pub use portainer::{install_agent, install_host};
 pub use smb::{setup_smb_mounts, uninstall_smb_mounts};
 pub use tailscale::{

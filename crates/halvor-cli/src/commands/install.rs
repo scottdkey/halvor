@@ -10,6 +10,23 @@
 use halvor_core::config;
 use halvor_agent::apps::{AppCategory, find_app, list_apps, k3s};
 use halvor_agent::apps::{smb, tailscale};
+use halvor_agent::apps::helm_app::HelmApp;
+use halvor_agent::apps::{
+    nginx_proxy_manager::NginxProxyManager,
+    traefik_public::TraefikPublic,
+    traefik_private::TraefikPrivate,
+    gitea::Gitea,
+    pia_vpn::PiaVpn,
+    sabnzbd::Sabnzbd,
+    qbittorrent::Qbittorrent,
+    radarr::Radarr,
+    sonarr::Sonarr,
+    prowlarr::Prowlarr,
+    bazarr::Bazarr,
+    smb_storage::SmbStorage,
+    halvor_server::HalvorServer,
+    portainer_helm::Portainer,
+};
 use halvor_core::services::helm;
 use halvor_docker;
 use anyhow::Result;
@@ -21,6 +38,7 @@ pub fn handle_install(
     list: bool,
     repo: Option<&str>,
     repo_name: Option<&str>,
+    name: Option<&str>,
 ) -> Result<()> {
     // Handle --list flag
     if list {
@@ -105,19 +123,30 @@ pub fn handle_install(
             install_platform_tool(target_host, app_def.name, &config)?;
         }
         AppCategory::HelmChart => {
-            // Get namespace from app definition (defaults to "default" if not specified)
-            let namespace = app_def.namespace.unwrap_or("default");
-            halvor_core::services::helm::install_chart(
-                target_host,
-                app_def.name,
-                None, // Use chart name as release name
-                Some(namespace),
-                None, // No values file - will generate from env vars
-                &[],  // No --set flags - will generate from env vars
-                repo,
-                repo_name,
-                &config,
-            )?;
+            // Get the appropriate HelmApp implementation
+            let helm_app: Box<dyn HelmApp> = get_helm_app(app_def.name)?;
+            
+            // Use custom release name if provided, otherwise use default
+            let release_name = name.unwrap_or(helm_app.release_name());
+            
+            // Use the HelmApp implementation to install
+            if repo.is_some() {
+                // External repo - use direct helm service
+                halvor_core::services::helm::install_chart(
+                    target_host,
+                    helm_app.chart_name(),
+                    Some(release_name),
+                    Some(helm_app.namespace()),
+                    None,
+                    &helm_app.generate_values()?,
+                    repo,
+                    repo_name,
+                    &config,
+                )?;
+            } else {
+                // Use HelmApp trait method with custom release name
+                install_helm_app_with_name(&*helm_app, target_host, Some(release_name), &config)?;
+            }
         }
     }
 
@@ -160,4 +189,54 @@ fn install_platform_tool(hostname: &str, tool: &str, config: &config::EnvConfig)
         }
     }
     Ok(())
+}
+
+/// Install a Helm app with an optional custom release name
+fn install_helm_app_with_name(
+    app: &dyn HelmApp,
+    hostname: &str,
+    release_name: Option<&str>,
+    config: &config::EnvConfig,
+) -> Result<()> {
+    use halvor_core::services::helm;
+    
+    let final_release_name = release_name.unwrap_or_else(|| app.release_name());
+    
+    helm::install_chart(
+        hostname,
+        app.chart_name(),
+        Some(final_release_name),
+        Some(app.namespace()),
+        None, // No values file - will generate from env vars
+        &app.generate_values()?,
+        None, // No external repo
+        None, // No repo name
+        config,
+    )
+}
+
+/// Get the appropriate HelmApp implementation for an app name
+fn get_helm_app(name: &str) -> Result<Box<dyn HelmApp>> {
+    match name {
+        "nginx-proxy-manager" | "npm" => Ok(Box::new(NginxProxyManager)),
+        "portainer" => Ok(Box::new(Portainer)),
+        "traefik-public" => Ok(Box::new(TraefikPublic)),
+        "traefik-private" => Ok(Box::new(TraefikPrivate)),
+        "gitea" => Ok(Box::new(Gitea)),
+        "pia-vpn" | "pia" | "vpn" => Ok(Box::new(PiaVpn)),
+        "sabnzbd" | "sab" => Ok(Box::new(Sabnzbd)),
+        "qbittorrent" | "qbt" | "torrent" => Ok(Box::new(Qbittorrent)),
+        "radarr" => Ok(Box::new(Radarr)),
+        "sonarr" => Ok(Box::new(Sonarr)),
+        "prowlarr" => Ok(Box::new(Prowlarr)),
+        "bazarr" => Ok(Box::new(Bazarr)),
+        "smb-storage" | "smb" | "storage" => Ok(Box::new(SmbStorage)),
+        "halvor-server" | "halvor" | "server" => Ok(Box::new(HalvorServer)),
+        _ => {
+            // Fall back to generic AppDefinition implementation
+            let app_def = find_app(name)
+                .ok_or_else(|| anyhow::anyhow!("App '{}' not found", name))?;
+            Ok(Box::new(app_def))
+        }
+    }
 }

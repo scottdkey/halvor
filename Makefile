@@ -17,12 +17,17 @@ help:
 	@echo "  make install-cli          - Build and install CLI to system"
 	@echo "  make install-agent        - Build and install agent binary to system"
 	@echo ""
-	@echo "Build targets (use 'make build <subcommand>'):"
-	@echo "  make build cli            - Build CLI binary"
-	@echo "  make build ios            - Build iOS Swift app"
-	@echo "  make build mac             - Build macOS Swift app"
-	@echo "  make build android         - Build Android library and app"
-	@echo "  make build web             - Build WASM module and web app"
+	@echo "Build targets (use 'halvor build <subcommand>' or 'make build-<target>'):"
+	@echo "  make build-cli            - Build CLI binary (uses halvor-build)"
+	@echo "  make build-agent          - Build agent binary"
+	@echo "  make build-ios            - Build iOS Swift app (uses halvor-build)"
+	@echo "  make build-mac            - Build macOS Swift app (uses halvor-build)"
+	@echo "  make build-android        - Build Android library and app (uses halvor-build)"
+	@echo "  make build-web            - Build WASM module and web app (uses halvor-build)"
+	@echo "  make build-docker-pia-vpn - Build PIA VPN Docker container (uses halvor-build)"
+	@echo "  make build-docker-agent   - Build agent server Docker container"
+	@echo "  make build-helm-<chart>   - Build/package Helm chart (e.g., make build-helm-portainer)"
+	@echo "  make build-all            - Build all CLIs, containers, and Helm charts"
 	@echo ""
 	@echo "Development (use 'make dev <subcommand>'):"
 	@echo "  make dev mac               - macOS development with hot reload"
@@ -681,6 +686,68 @@ install-tools:
 		echo "ℹ️  Ruby/Fastlane only needed on macOS for iOS/macOS builds (skipping)"; \
 	fi; \
 	echo "✓ Development tools installation complete"
+
+# Build targets using halvor-build crate
+.PHONY: build-cli build-agent build-ios build-mac build-android build-web build-docker-pia-vpn build-docker-agent build-helm build-all
+
+build-cli:
+	@echo "Building CLI using halvor-build..."
+	@cargo run --release --bin halvor -- build cli || cargo run --bin halvor -- build cli
+
+build-agent:
+	@echo "Building agent binary..."
+	@cargo build --release --bin halvor-agent --manifest-path crates/halvor-agent/Cargo.toml
+
+build-ios:
+	@echo "Building iOS app using halvor-build..."
+	@cargo run --release --bin halvor -- build ios || cargo run --bin halvor -- build ios
+
+build-mac:
+	@echo "Building macOS app using halvor-build..."
+	@cargo run --release --bin halvor -- build mac || cargo run --bin halvor -- build mac
+
+build-android:
+	@echo "Building Android app using halvor-build..."
+	@cargo run --release --bin halvor -- build android || cargo run --bin halvor -- build android
+
+build-web:
+	@echo "Building web app using halvor-build..."
+	@cargo run --release --bin halvor -- build web || cargo run --bin halvor -- build web
+
+build-docker-pia-vpn:
+	@echo "Building PIA VPN Docker container using halvor-build..."
+	@cargo run --release --bin halvor -- build pia-vpn || cargo run --bin halvor -- build pia-vpn
+
+build-docker-agent:
+	@echo "Building agent server Docker container..."
+	@if [ ! -f "projects/agent/Dockerfile" ]; then \
+		echo "⚠️  Agent Dockerfile not found. Skipping agent container build."; \
+	else \
+		docker build -t ghcr.io/scottdkey/halvor-agent:experimental -f projects/agent/Dockerfile . || \
+		echo "⚠️  Failed to build agent container. Ensure Dockerfile exists."; \
+	fi
+
+build-helm-%:
+	@echo "Packaging Helm chart: $*"
+	@if [ ! -d "charts/$*" ]; then \
+		echo "⚠️  Chart directory not found: charts/$*"; \
+		exit 1; \
+	fi
+	@mkdir -p charts/packages
+	@helm package charts/$* --destination charts/packages/ || \
+		(echo "⚠️  Helm not installed. Install with: brew install helm (macOS) or apt-get install helm (Linux)"; exit 1)
+
+build-all: build-cli build-agent build-docker-pia-vpn
+	@echo "Building all Helm charts..."
+	@mkdir -p charts/packages
+	@for chart in charts/*/; do \
+		if [ -f "$$chart/Chart.yaml" ]; then \
+			chart_name=$$(basename $$chart); \
+			echo "Packaging $$chart_name..."; \
+			$(MAKE) build-helm-$$chart_name || true; \
+		fi; \
+	done
+	@echo "✓ All builds complete"
 
 # Generate documentation
 docs:

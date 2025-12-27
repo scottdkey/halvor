@@ -161,20 +161,11 @@ pub static APPS: &[AppDefinition] = &[
     AppDefinition {
         name: "radarr",
         category: AppCategory::HelmChart,
-        description: "Movie management and automation",
+        description: "Movie management and automation (use --name to deploy multiple instances)",
         requires_vpn: true,
         aliases: &[],
         namespace: Some("default"),
         helm_chart_name: Some("radarr"),
-    },
-    AppDefinition {
-        name: "radarr-4k",
-        category: AppCategory::HelmChart,
-        description: "Movie management for 4K content",
-        requires_vpn: true,
-        aliases: &["radarr4k"],
-        namespace: Some("default"),
-        helm_chart_name: Some("radarr-4k"),
     },
     AppDefinition {
         name: "sonarr",

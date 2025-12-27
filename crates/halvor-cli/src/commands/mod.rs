@@ -67,6 +67,7 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
             list,
             repo,
             repo_name,
+            name,
         } => {
             install::handle_install(
                 hostname.as_deref(),
@@ -74,6 +75,7 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
                 list,
                 repo.as_deref(),
                 repo_name.as_deref(),
+                name.as_deref(),
             )?;
         }
         Uninstall { service } => {

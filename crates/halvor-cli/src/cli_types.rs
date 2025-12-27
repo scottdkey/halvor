@@ -58,6 +58,9 @@ pub enum Commands {
         /// Helm repository name (defaults to chart name if not provided)
         #[arg(long)]
         repo_name: Option<String>,
+        /// Custom release name for Helm charts (allows multiple instances of the same app, e.g., radarr-4k)
+        #[arg(long)]
+        name: Option<String>,
     },
     /// Uninstall a service from a host or halvor itself
     Uninstall {
