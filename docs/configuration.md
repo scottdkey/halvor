@@ -19,13 +19,27 @@ Halvor uses environment variables loaded from a `.env` file. The `.env` file is 
 
 2. **Configure `.envrc`** to load secrets from 1Password:
    ```bash
-   # Copy example
+   # Copy example (if it exists)
    cp .envrc.example .envrc
    
    # Edit .envrc with your 1Password vault reference
+   # Example .envrc content:
+   #   eval $(op signin)
+   #   export $(op inject -i .env.template)
+   
+   # If you have multiple 1Password accounts, use a specific account:
+   #   eval $(op signin --account <account-url-or-uuid>)
+   #   # Or list accounts first: op account list
+   #   # Then use the full account URL or UUID
+   
    # Then allow direnv
    direnv allow
    ```
+   
+   **Note:** If you get "found multiple accounts for filter" error:
+   - List your accounts: `op account list`
+   - Use the full account URL or UUID instead of a short name
+   - Example: `eval $(op signin --account my.1password.com)` or `eval $(op signin --account <uuid>)`
 
 3. **Environment variables are automatically loaded** when you enter the directory.
 

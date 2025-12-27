@@ -136,24 +136,25 @@ fn values_to_set_flags(values: &HashMap<String, String>) -> Vec<String> {
 fn check_cluster_available<E: CommandExecutor>(exec: &E) -> Result<()> {
     // Try kubectl first (if kubeconfig is set up)
     let kubectl_check = exec.execute_shell("kubectl cluster-info --request-timeout=5s 2>&1");
-    
+
     if let Ok(output) = kubectl_check {
         if output.status.success() {
             // Cluster is accessible via kubectl
             return Ok(());
         }
     }
-    
+
     // Try k3s kubectl (k3s provides kubectl via k3s kubectl)
-    let k3s_kubectl_check = exec.execute_shell("sudo k3s kubectl cluster-info --request-timeout=5s 2>&1");
-    
+    let k3s_kubectl_check =
+        exec.execute_shell("sudo k3s kubectl cluster-info --request-timeout=5s 2>&1");
+
     if let Ok(output) = k3s_kubectl_check {
         if output.status.success() {
             // Cluster is accessible via k3s kubectl
             return Ok(());
         }
     }
-    
+
     // Check if k3s is installed but cluster might not be initialized
     let k3s_check = exec.execute_shell("k3s --version 2>&1 || echo 'not_installed'");
     if let Ok(k3s_output) = k3s_check {
@@ -164,7 +165,7 @@ fn check_cluster_available<E: CommandExecutor>(exec: &E) -> Result<()> {
             );
         }
     }
-    
+
     anyhow::bail!(
         "Kubernetes cluster is not accessible. Please ensure:\n  - K3s cluster is initialized (halvor init -H <hostname>)\n  - Cluster is running and healthy\n  - You're connecting to the correct host"
     )
@@ -178,6 +179,8 @@ pub fn install_chart(
     namespace: Option<&str>,
     values: Option<&str>,
     set: &[String],
+    repo: Option<&str>,
+    repo_name: Option<&str>,
     config: &EnvConfig,
 ) -> Result<()> {
     let exec = Executor::new(hostname, config)?;
@@ -199,13 +202,73 @@ pub fn install_chart(
     println!("✓ Cluster is accessible");
     println!();
 
-    // Try to find chart locally first, then fall back to GitHub
-    let (chart_path, is_temp_file) = {
+    // Handle external Helm repository if provided
+    let (chart_path, is_temp_file, use_external_repo) = if let Some(repo_url) = repo {
+        // External Helm repository provided
+        let repo_name = repo_name.unwrap_or_else(|| {
+            // Generate a repo name from the URL (e.g., tailscale from https://pkgs.tailscale.com/helmcharts)
+            repo_url
+                .trim_end_matches('/')
+                .split('/')
+                .last()
+                .unwrap_or("external")
+        });
+
+        println!("Using external Helm repository: {}", repo_url);
+        println!("Repository name: {}", repo_name);
+        println!();
+
+        // Add Helm repository if not already added
+        println!("Adding Helm repository...");
+        let repo_add_cmd = format!(
+            "helm repo add {} {} 2>&1 || helm repo update",
+            repo_name, repo_url
+        );
+        let repo_add_output = exec.execute_shell(&repo_add_cmd)?;
+
+        if !repo_add_output.status.success() {
+            let stderr = String::from_utf8_lossy(&repo_add_output.stderr);
+            // If repo already exists, that's fine - just update
+            if stderr.contains("already exists") {
+                println!("  Repository already exists, updating...");
+                exec.execute_shell(&format!("helm repo update {}", repo_name))?;
+            } else {
+                anyhow::bail!("Failed to add Helm repository: {}", stderr);
+            }
+        } else {
+            println!("  ✓ Added Helm repository");
+        }
+
+        // Update repository
+        println!("Updating Helm repository...");
+        exec.execute_shell(&format!("helm repo update {}", repo_name))?;
+        println!("  ✓ Repository updated");
+        println!();
+
+        // Use repo/chart format for installation
+        let chart_ref = if chart.contains('/') {
+            // Chart already in repo/chart format
+            chart.to_string()
+        } else {
+            // Prepend repo name
+            format!("{}/{}", repo_name, chart)
+        };
+
+        (chart_ref, false, true)
+    } else if chart.contains('/') {
+        // Chart is in repo/chart format but no repo URL provided
+        // Try to use it as-is (assumes repo is already added)
+        println!("Using chart reference: {}", chart);
+        println!("  (Assuming Helm repository is already configured)");
+        println!();
+        (chart.to_string(), false, true)
+    } else {
+        // Try to find chart locally first, then fall back to GitHub
         let halvor_dir = crate::config::find_halvor_dir()?;
         let local_path = halvor_dir.join("charts").join(chart);
 
         if local_path.exists() {
-            (local_path.to_string_lossy().to_string(), false)
+            (local_path.to_string_lossy().to_string(), false, false)
         } else {
             // Try to install from GitHub releases
             println!("  Chart not found locally, attempting to install from GitHub...");
@@ -235,12 +298,12 @@ pub fn install_chart(
                     std::io::copy(&mut bytes.as_ref(), &mut file)
                         .context("Failed to write chart file")?;
                     println!("  ✓ Downloaded chart from GitHub");
-                    (chart_tgz.to_string_lossy().to_string(), true)
+                    (chart_tgz.to_string_lossy().to_string(), true, false)
                 }
                 Ok(resp) => {
                     let status = resp.status();
                     anyhow::bail!(
-                        "Chart '{}' not found locally at {} and could not be downloaded from {} (HTTP {}). Use 'halvor install --list' to list available charts.",
+                        "Chart '{}' not found locally at {} and could not be downloaded from {} (HTTP {}). Use 'halvor install --list' to list available charts, or use --repo to install from an external repository.",
                         chart,
                         local_path.display(),
                         chart_url,
@@ -249,7 +312,7 @@ pub fn install_chart(
                 }
                 Err(e) => {
                     anyhow::bail!(
-                        "Chart '{}' not found locally at {} and could not be downloaded from {} (Error: {}). Use 'halvor install --list' to list available charts.",
+                        "Chart '{}' not found locally at {} and could not be downloaded from {} (Error: {}). Use 'halvor install --list' to list available charts, or use --repo to install from an external repository.",
                         chart,
                         local_path.display(),
                         chart_url,
@@ -275,10 +338,19 @@ pub fn install_chart(
     }
 
     // Build helm install command
-    let mut cmd = format!(
-        "helm install {} {} --namespace {} --create-namespace --wait --timeout 10m",
-        release_name, chart_path, ns
-    );
+    let mut cmd = if use_external_repo {
+        // For external repos, chart_path is already in repo/chart format
+        format!(
+            "helm upgrade --install {} {} --namespace {} --create-namespace --wait --timeout 10m",
+            release_name, chart_path, ns
+        )
+    } else {
+        // For local/GitHub charts, use chart path
+        format!(
+            "helm install {} {} --namespace {} --create-namespace --wait --timeout 10m",
+            release_name, chart_path, ns
+        )
+    };
 
     // Add values file if provided
     if let Some(v) = values {

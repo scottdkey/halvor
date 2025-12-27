@@ -26,7 +26,7 @@ impl HostDiscovery {
     }
 
     pub fn default() -> Self {
-        Self { agent_port: 13001 }
+        Self { agent_port: 13500 }
     }
 
     /// Discover hosts via Tailscale

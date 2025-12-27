@@ -63,6 +63,9 @@ pub enum ConfigCommands {
         /// Set up local kubectl context (named 'halvor')
         #[arg(long)]
         setup: bool,
+        /// Run diagnostics to check API server accessibility
+        #[arg(long)]
+        diagnose: bool,
         /// Primary control plane hostname (defaults to first k3s node in config)
         #[arg(short = 'H', long)]
         hostname: Option<String>,

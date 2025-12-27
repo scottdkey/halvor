@@ -10,8 +10,7 @@ use anyhow::{Context, Result};
 /// 1. Tailscale is installed and running
 /// 2. K3s service depends on Tailscale
 /// 3. K3s uses Tailscale IP for cluster communication
-#[allow(dead_code)]
-fn configure_tailscale_for_k3s(hostname: &str, config: &EnvConfig) -> Result<()> {
+pub fn configure_tailscale_for_k3s(hostname: &str, config: &EnvConfig) -> Result<()> {
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("Configuring Tailscale integration for K3s cluster");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -76,10 +75,12 @@ fn configure_tailscale_for_k3s(hostname: &str, config: &EnvConfig) -> Result<()>
     // Step 3: Configure K3s service to depend on Tailscale
     println!();
     println!("[3/4] Configuring K3s service dependency on Tailscale...");
-    
+
     // Check if K3s is installed
     let k3s_service_exists = exec
-        .execute_shell("systemctl list-unit-files | grep -q '^k3s.service' && echo exists || echo not_exists")
+        .execute_shell(
+            "systemctl list-unit-files | grep -q '^k3s.service' && echo exists || echo not_exists",
+        )
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim() == "exists")
@@ -97,12 +98,8 @@ fn configure_tailscale_for_k3s(hostname: &str, config: &EnvConfig) -> Result<()>
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim() == "active")
         .unwrap_or(false);
-    
-    let service_name = if k3s_running {
-        "k3s"
-    } else {
-        "k3s-agent"
-    };
+
+    let service_name = if k3s_running { "k3s" } else { "k3s-agent" };
 
     let service_override_dir = format!("/etc/systemd/system/{}.service.d", service_name);
     let override_content = r#"[Unit]
@@ -134,36 +131,34 @@ Requires=network-online.target
 
     // Read existing config if it exists
     let config_yaml = if exec.file_exists(&k3s_config_file).unwrap_or(false) {
-        exec.read_file(&k3s_config_file)
-            .ok()
-            .unwrap_or_default()
+        exec.read_file(&k3s_config_file).ok().unwrap_or_default()
     } else {
         String::new()
     };
 
     // Parse or create YAML config using yaml-rust
-    use yaml_rust::{yaml::Hash, Yaml, YamlEmitter, YamlLoader};
-    
+    use yaml_rust::{Yaml, YamlEmitter, YamlLoader, yaml::Hash};
+
     let mut docs = if !config_yaml.is_empty() {
-        YamlLoader::load_from_str(&config_yaml)
-            .unwrap_or_else(|_| vec![Yaml::Hash(Hash::new())])
+        YamlLoader::load_from_str(&config_yaml).unwrap_or_else(|_| vec![Yaml::Hash(Hash::new())])
     } else {
         vec![Yaml::Hash(Hash::new())]
     };
 
     // Get existing hash or create new one
-    let existing_hash = docs.get(0)
+    let existing_hash = docs
+        .get(0)
         .and_then(|d| d.as_hash())
         .cloned()
         .unwrap_or_else(Hash::new);
-    
+
     // Create new hash with updated values
     let mut new_hash = existing_hash;
-    
+
     // Update or add advertise-address
     new_hash.insert(
         Yaml::String("advertise-address".to_string()),
-        Yaml::String(tailscale_ip.clone())
+        Yaml::String(tailscale_ip.clone()),
     );
 
     // Update or add tls-san
@@ -176,15 +171,13 @@ Requires=network-online.target
     // Remove duplicates
     tls_sans.sort();
     tls_sans.dedup();
-    
+
     // Convert to YAML array
-    let tls_san_array: Vec<Yaml> = tls_sans.into_iter()
-        .map(|s| Yaml::String(s))
-        .collect();
-    
+    let tls_san_array: Vec<Yaml> = tls_sans.into_iter().map(|s| Yaml::String(s)).collect();
+
     new_hash.insert(
         Yaml::String("tls-san".to_string()),
-        Yaml::Array(tls_san_array)
+        Yaml::Array(tls_san_array),
     );
 
     // Replace the first document with our updated hash
@@ -193,9 +186,10 @@ Requires=network-online.target
     // Write updated config
     let mut out_str = String::new();
     let mut emitter = YamlEmitter::new(&mut out_str);
-    emitter.dump(&docs[0])
+    emitter
+        .dump(&docs[0])
         .context("Failed to serialize K3s config")?;
-    
+
     let updated_yaml = out_str;
 
     exec.write_file(&k3s_config_file, updated_yaml.as_bytes())
@@ -209,7 +203,7 @@ Requires=network-online.target
     tls_sans_display.push(hostname.to_string());
     tls_sans_display.sort();
     tls_sans_display.dedup();
-    
+
     println!("✓ Updated K3s configuration: {}", k3s_config_file);
     println!("  advertise-address: {}", tailscale_ip);
     println!("  tls-san: {}", tls_sans_display.join(", "));
@@ -218,7 +212,7 @@ Requires=network-online.target
     println!();
     println!("Restarting K3s service to apply Tailscale configuration...");
     exec.execute_shell(&format!("sudo systemctl restart {}.service", service_name))?;
-    
+
     // Wait a moment for service to restart
     std::thread::sleep(std::time::Duration::from_secs(5));
 
@@ -234,7 +228,10 @@ Requires=network-online.target
         println!("✓ K3s service restarted successfully");
     } else {
         println!("⚠️  Warning: K3s service status: {}", service_status);
-        println!("   Please check service logs: sudo journalctl -u {} -n 50", service_name);
+        println!(
+            "   Please check service logs: sudo journalctl -u {} -n 50",
+            service_name
+        );
     }
 
     println!();
@@ -245,4 +242,3 @@ Requires=network-online.target
 
     Ok(())
 }
-

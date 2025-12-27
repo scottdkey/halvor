@@ -18,6 +18,8 @@ pub fn handle_install(
     hostname: Option<&str>,
     app: Option<&str>,
     list: bool,
+    repo: Option<&str>,
+    repo_name: Option<&str>,
 ) -> Result<()> {
     // Handle --list flag
     if list {
@@ -36,6 +38,35 @@ pub fn handle_install(
     };
 
     let config = config::load_config()?;
+
+    // If --repo is provided, skip app registry and install directly as Helm chart
+    if repo.is_some() {
+        // External Helm repository - install directly without app registry check
+        // Default to frigg (primary control plane) for external Helm charts
+        let target_host = if let Some(host) = hostname {
+            host
+        } else {
+            println!("⚠️  No hostname specified for external Helm chart deployment.");
+            println!("   Defaulting to 'frigg' (primary cluster node).");
+            println!("   Use '-H <hostname>' to specify a different node.\n");
+            "frigg"
+        };
+
+        println!("Installing from external Helm repository...");
+        helm::install_chart(
+            target_host,
+            app_name,
+            None,            // Use chart name as release name
+            Some("default"), // Default namespace
+            None,            // No values file
+            &[],             // No --set flags
+            repo,
+            repo_name,
+            &config,
+        )?;
+        return Ok(());
+    }
+
     // For Helm charts, default to primary cluster node (frigg) instead of localhost
     // This ensures we deploy to the cluster, not local machine
     let target_host = if let Some(host) = hostname {
@@ -82,6 +113,8 @@ pub fn handle_install(
                 Some(namespace),
                 None, // No values file - will generate from env vars
                 &[],  // No --set flags - will generate from env vars
+                repo,
+                repo_name,
                 &config,
             )?;
         }

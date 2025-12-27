@@ -67,12 +67,12 @@ pub mod local {
     /// List directory contents using native Rust
     pub fn list_directory(path: impl AsRef<std::path::Path>) -> Result<Vec<String>> {
         let path_ref = path.as_ref();
-        
+
         // Check if directory exists first - if not, return empty vector
         if !path_ref.exists() || !path_ref.is_dir() {
             return Ok(Vec::new());
         }
-        
+
         let mut entries = Vec::new();
         let dir = std::fs::read_dir(path_ref)
             .with_context(|| format!("Failed to read directory: {}", path_ref.display()))?;
@@ -467,12 +467,42 @@ impl Executor {
         if let Ok(current_hostname) = crate::config::service::get_current_hostname() {
             let normalized_current = crate::config::service::normalize_hostname(&current_hostname);
             let normalized_input = crate::config::service::normalize_hostname(hostname);
-            
+
             // Check if hostname matches current machine (exact or normalized)
+            // Also check if the base hostname (before first dot) matches
+            let current_base = current_hostname
+                .split('.')
+                .next()
+                .unwrap_or(&current_hostname);
+            let input_base = hostname.split('.').next().unwrap_or(hostname);
+
             if hostname.eq_ignore_ascii_case(&current_hostname)
                 || hostname.eq_ignore_ascii_case(&normalized_current)
                 || normalized_input.eq_ignore_ascii_case(&normalized_current)
                 || normalized_input.eq_ignore_ascii_case(&current_hostname)
+                || input_base.eq_ignore_ascii_case(current_base)
+                || normalized_input.eq_ignore_ascii_case(current_base)
+                || normalized_current.eq_ignore_ascii_case(input_base)
+            {
+                return Ok(Executor::Local);
+            }
+        }
+
+        // Also check against Tailscale hostname if available
+        // This handles cases where the system hostname is "mint.local" but Tailscale hostname is "mint.bombay-pinecone.ts.net"
+        if let Ok(Some(ts_hostname)) = crate::services::tailscale::get_tailscale_hostname() {
+            let normalized_ts = crate::config::service::normalize_hostname(&ts_hostname);
+            let normalized_input = crate::config::service::normalize_hostname(hostname);
+            let ts_base = ts_hostname.split('.').next().unwrap_or(&ts_hostname);
+            let input_base = hostname.split('.').next().unwrap_or(hostname);
+
+            if hostname.eq_ignore_ascii_case(&ts_hostname)
+                || hostname.eq_ignore_ascii_case(&normalized_ts)
+                || normalized_input.eq_ignore_ascii_case(&normalized_ts)
+                || normalized_input.eq_ignore_ascii_case(&ts_hostname)
+                || input_base.eq_ignore_ascii_case(ts_base)
+                || normalized_input.eq_ignore_ascii_case(ts_base)
+                || normalized_ts.eq_ignore_ascii_case(input_base)
             {
                 return Ok(Executor::Local);
             }
@@ -490,16 +520,21 @@ impl Executor {
                     hostname.to_uppercase()
                 )
             })?;
-        
+
         // Verify we're using the correct hostname (not a different one)
         if actual_hostname != hostname && !hostname.eq_ignore_ascii_case(&actual_hostname) {
-            eprintln!("⚠️  Warning: Hostname '{}' was normalized to '{}'", hostname, actual_hostname);
+            eprintln!(
+                "⚠️  Warning: Hostname '{}' was normalized to '{}'",
+                hostname, actual_hostname
+            );
         }
-        
-        let host_config = config
-            .hosts
-            .get(&actual_hostname)
-            .with_context(|| format!("Host '{}' (normalized from '{}') not found in config", actual_hostname, hostname))?;
+
+        let host_config = config.hosts.get(&actual_hostname).with_context(|| {
+            format!(
+                "Host '{}' (normalized from '{}') not found in config",
+                actual_hostname, hostname
+            )
+        })?;
 
         // Get target IP
         let target_ip = if let Some(ip) = &host_config.ip {
@@ -513,16 +548,17 @@ impl Executor {
                 // First, try to get actual Tailscale hostname from local Tailscale status
                 use crate::services::tailscale::get_peer_tailscale_hostname;
                 let target_host = {
-                    let raw_host = if let Ok(Some(ts_hostname)) = get_peer_tailscale_hostname(hostname_val) {
-                        // Found actual Tailscale hostname - use it
-                        ts_hostname
-                    } else if hostname_val.contains('.') {
-                        // Hostname already includes domain - use as-is
-                        hostname_val.clone()
-                    } else {
-                        // Construct from tailnet base
-                        format!("{}.{}", hostname_val, config._tailnet_base)
-                    };
+                    let raw_host =
+                        if let Ok(Some(ts_hostname)) = get_peer_tailscale_hostname(hostname_val) {
+                            // Found actual Tailscale hostname - use it
+                            ts_hostname
+                        } else if hostname_val.contains('.') {
+                            // Hostname already includes domain - use as-is
+                            hostname_val.clone()
+                        } else {
+                            // Construct from tailnet base
+                            format!("{}.{}", hostname_val, config._tailnet_base)
+                        };
                     // Strip trailing dot (DNS absolute notation) which causes SSH resolution issues
                     raw_host.trim_end_matches('.').to_string()
                 };
@@ -546,15 +582,17 @@ impl Executor {
         // Get local IP addresses (both regular and Tailscale)
         let local_ips = crate::utils::networking::get_local_ips()?;
         let tailscale_ips = crate::utils::networking::get_tailscale_ips().unwrap_or_default();
-        
+
         // Check if target IP matches any local IP (regular or Tailscale)
         let is_local_by_ip = local_ips.contains(&target_ip) || tailscale_ips.contains(&target_ip);
-        
+
         // Also check if the hostname matches the current machine's hostname
         // This is a fallback in case IP comparison fails (e.g., if IPs don't match exactly)
         let is_local_by_hostname = if !is_local_by_ip {
             if let Ok(current_hostname) = crate::config::service::get_current_hostname() {
-                if let Some(normalized_current) = crate::config::service::find_hostname_in_config(&current_hostname, config) {
+                if let Some(normalized_current) =
+                    crate::config::service::find_hostname_in_config(&current_hostname, config)
+                {
                     normalized_current == actual_hostname
                 } else {
                     false
@@ -565,7 +603,7 @@ impl Executor {
         } else {
             false
         };
-        
+
         let is_local = is_local_by_ip || is_local_by_hostname;
 
         if is_local {
@@ -607,39 +645,191 @@ impl Executor {
             let sudo_password = host_config.sudo_password.clone();
             let sudo_user = host_config.sudo_user.clone();
 
-            // Try to connect via agent first (port 13500)
-            // If agent is available, use it; otherwise fallback to SSH
-            // Use a quick timeout check - if agent isn't available, fall back to SSH immediately
-            let agent_client = AgentClient::new(&target_host, 13500);
-            match agent_client.ping() {
-                Ok(true) => {
-                    // Agent is available - use it
-                    Ok(Executor::Agent {
-                        client: agent_client,
-                        host: target_host,
-                        sudo_password,
-                        sudo_user,
-                    })
-                }
-                _ => {
-                    // Agent not available or ping failed - fallback to SSH
-                    // (Don't log this as it's expected for nodes without agents yet)
-                    let username = get_ssh_config_username(&target_host)
-                        .or_else(|| get_ssh_config_username(hostname))
-                        .or_else(|| get_ssh_config_username(&actual_hostname))
-                        .unwrap_or_else(|| {
-                            // No username in SSH config - prompt user
-                            prompt_ssh_username(&target_host)
-                                .unwrap_or_else(|_| crate::config::get_default_username())
-                        });
-                    let host_with_user = format!("{}@{}", username, target_host);
-                    let ssh_conn = SshConnection::new_with_sudo_password(
-                        &host_with_user,
-                        sudo_password,
-                        sudo_user,
-                    )?;
+            // Try to connect via agent first
+            // 1. Try to discover agent via Tailscale (finds correct port and hostname)
+            // 2. If not found, try default port 13500 with target_host
+            // 3. Fallback to SSH if agent is not available
+            let mut agent_client_opt = None;
+            let mut agent_host = target_host.clone();
 
-                    Ok(Executor::Remote(ssh_conn))
+            // First, try to discover agent via Tailscale
+            use crate::agent::discovery::HostDiscovery;
+            let discovery = HostDiscovery::new(13500); // Default agent port
+            if let Ok(discovered_hosts) = discovery.discover_via_tailscale() {
+                // Look for a discovered host that matches our target
+                for discovered in discovered_hosts {
+                    // Match by hostname (base name or full hostname)
+                    let discovered_base = discovered
+                        .hostname
+                        .split('.')
+                        .next()
+                        .unwrap_or(&discovered.hostname);
+                    let target_base = actual_hostname
+                        .split('.')
+                        .next()
+                        .unwrap_or(&actual_hostname);
+
+                    if discovered.hostname.eq_ignore_ascii_case(&actual_hostname)
+                        || discovered.hostname.eq_ignore_ascii_case(hostname)
+                        || discovered_base.eq_ignore_ascii_case(target_base)
+                        || discovered_base.eq_ignore_ascii_case(&actual_hostname)
+                    {
+                        // Found matching host - try to connect to discovered agent
+                        let agent_address = discovered
+                            .tailscale_hostname
+                            .as_ref()
+                            .or(discovered.tailscale_ip.as_ref())
+                            .or(discovered.local_ip.as_ref())
+                            .ok_or_else(|| anyhow::anyhow!("No address for discovered host"))?;
+
+                        let client = AgentClient::new(agent_address, discovered.agent_port);
+                        if client.ping().is_ok() {
+                            agent_client_opt = Some(client);
+                            agent_host = agent_address.clone();
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // If discovery didn't find it, try default port with target_host
+            if agent_client_opt.is_none() {
+                let client = AgentClient::new(&target_host, 13500);
+                if client.ping().is_ok() {
+                    agent_client_opt = Some(client);
+                }
+            }
+
+            // Use agent if available, otherwise check if we should install it
+            if let Some(agent_client) = agent_client_opt {
+                // Agent is available - use it
+                Ok(Executor::Agent {
+                    client: agent_client,
+                    host: agent_host,
+                    sudo_password,
+                    sudo_user,
+                })
+            } else {
+                // Agent not available - check if SSH is available and prompt to install agent
+                let username = get_ssh_config_username(&target_host)
+                    .or_else(|| get_ssh_config_username(hostname))
+                    .or_else(|| get_ssh_config_username(&actual_hostname))
+                    .unwrap_or_else(|| {
+                        // No username in SSH config - prompt user
+                        prompt_ssh_username(&target_host)
+                            .unwrap_or_else(|_| crate::config::get_default_username())
+                    });
+                let host_with_user = format!("{}@{}", username, target_host);
+
+                // Try to create SSH connection to verify it works
+                let ssh_conn_result = SshConnection::new_with_sudo_password(
+                    &host_with_user,
+                    sudo_password.clone(),
+                    sudo_user.clone(),
+                );
+
+                match ssh_conn_result {
+                    Ok(ssh_conn) => {
+                        // SSH is available - prompt user to install agent
+                        println!();
+                        println!(
+                            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                        );
+                        println!("Halvor agent is not running on {}", actual_hostname);
+                        println!(
+                            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                        );
+                        println!();
+                        println!(
+                            "The halvor agent provides faster remote execution and better automation."
+                        );
+                        println!("SSH is available, so we can install the agent now.");
+                        println!();
+                        print!(
+                            "Would you like to install and start the halvor agent on {}? [Y/n]: ",
+                            actual_hostname
+                        );
+                        std::io::stdout().flush()?;
+
+                        let mut input = String::new();
+                        std::io::stdin().read_line(&mut input)?;
+                        let response = input.trim().to_lowercase();
+
+                        // Default to yes if empty or 'y' or 'yes'
+                        if response.is_empty() || response == "y" || response == "yes" {
+                            println!();
+                            println!("Installing halvor agent on {}...", actual_hostname);
+
+                            // Use SSH executor to install agent
+                            let ssh_exec = Executor::Remote(ssh_conn);
+
+                            // Ensure halvor is installed first
+                            use crate::services::k3s;
+                            if let Err(e) = k3s::check_and_install_halvor(&ssh_exec) {
+                                println!(
+                                    "⚠️  Warning: Failed to ensure halvor is installed: {}",
+                                    e
+                                );
+                                println!("  Continuing with agent installation anyway...");
+                            }
+
+                            // Install agent service
+                            if let Err(e) = k3s::setup_agent_service(&ssh_exec, None) {
+                                println!("⚠️  Warning: Failed to install agent service: {}", e);
+                                println!("  Falling back to SSH for this session.");
+                                println!();
+                                // Recreate SSH connection for fallback
+                                let ssh_conn_fallback = SshConnection::new_with_sudo_password(
+                                    &host_with_user,
+                                    sudo_password,
+                                    sudo_user,
+                                )?;
+                                return Ok(Executor::Remote(ssh_conn_fallback));
+                            }
+
+                            // Wait a moment for agent to start
+                            println!("  Waiting for agent to start...");
+                            std::thread::sleep(std::time::Duration::from_secs(2));
+
+                            // Try to connect via agent again
+                            let client = AgentClient::new(&target_host, 13500);
+                            if let Ok(true) = client.ping() {
+                                println!("✓ Agent installed and running!");
+                                println!();
+                                return Ok(Executor::Agent {
+                                    client,
+                                    host: target_host,
+                                    sudo_password,
+                                    sudo_user,
+                                });
+                            } else {
+                                println!("⚠️  Agent installed but not yet reachable.");
+                                println!("  This may take a few seconds. Using SSH for now.");
+                                println!();
+                                // Recreate SSH connection for fallback
+                                let ssh_conn_fallback = SshConnection::new_with_sudo_password(
+                                    &host_with_user,
+                                    sudo_password,
+                                    sudo_user,
+                                )?;
+                                return Ok(Executor::Remote(ssh_conn_fallback));
+                            }
+                        } else {
+                            println!();
+                            println!("Skipping agent installation. Using SSH for this session.");
+                            println!();
+                            // User declined - use SSH
+                            Ok(Executor::Remote(ssh_conn))
+                        }
+                    }
+                    Err(e) => {
+                        // SSH also failed - return error
+                        anyhow::bail!(
+                            "Cannot connect to {}: Agent is not running and SSH connection failed: {}",
+                            actual_hostname,
+                            e
+                        );
+                    }
                 }
             }
         }
@@ -730,9 +920,14 @@ impl CommandExecutor for Executor {
                     #[cfg(not(any(unix, windows)))]
                     {
                         // Fallback: use Command to get a successful exit status
-                        std::process::Command::new("true").status().unwrap_or_else(|_| {
-                            std::process::Command::new("cmd").args(["/C", "exit", "0"]).status().unwrap()
-                        })
+                        std::process::Command::new("true")
+                            .status()
+                            .unwrap_or_else(|_| {
+                                std::process::Command::new("cmd")
+                                    .args(["/C", "exit", "0"])
+                                    .status()
+                                    .unwrap()
+                            })
                     }
                 };
                 Ok(Output {
@@ -842,7 +1037,7 @@ impl CommandExecutor for Executor {
         match self {
             Executor::Local => {
                 // Check if path requires sudo (system directories)
-                let needs_sudo = path.starts_with("/etc/") 
+                let needs_sudo = path.starts_with("/etc/")
                     || path.starts_with("/usr/local/bin/")
                     || path.starts_with("/opt/")
                     || path.starts_with("/var/lib/");
@@ -857,9 +1052,9 @@ impl CommandExecutor for Executor {
                     cmd.stdout(Stdio::null());
                     cmd.stderr(Stdio::inherit());
 
-                    let mut child = cmd
-                        .spawn()
-                        .with_context(|| format!("Failed to spawn sudo command for writing file"))?;
+                    let mut child = cmd.spawn().with_context(|| {
+                        format!("Failed to spawn sudo command for writing file")
+                    })?;
 
                     if let Some(mut stdin) = child.stdin.take() {
                         stdin.write_all(content)?;
@@ -881,7 +1076,7 @@ impl CommandExecutor for Executor {
             }
             Executor::Agent { client, .. } => {
                 // Check if path requires sudo
-                let needs_sudo = path.starts_with("/etc/") 
+                let needs_sudo = path.starts_with("/etc/")
                     || path.starts_with("/usr/local/bin/")
                     || path.starts_with("/opt/")
                     || path.starts_with("/var/lib/");
@@ -890,7 +1085,11 @@ impl CommandExecutor for Executor {
                     // Write via sudo tee
                     let content_str = String::from_utf8_lossy(content);
                     let escaped_content = shell_escape(&content_str);
-                    let cmd = format!("echo {} | sudo tee {} > /dev/null", escaped_content, shell_escape(path));
+                    let cmd = format!(
+                        "echo {} | sudo tee {} > /dev/null",
+                        escaped_content,
+                        shell_escape(path)
+                    );
                     client.execute_command("sh", &["-c", &cmd])?;
                 } else {
                     // Write file via echo/tee command

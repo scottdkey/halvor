@@ -228,8 +228,11 @@ Releases are published to GitHub Releases. Docker images are pushed to GitHub Co
 
 The project uses **direnv** + **1Password** for secrets management:
 
-1. Copy `.envrc.example` to `.envrc`
-2. Configure 1Password vault reference
+1. Copy `.envrc.example` to `.envrc` (if it exists)
+2. Configure 1Password vault reference in `.envrc`
+   - Use `eval $(op signin)` for single account setups
+   - If you have multiple accounts, use `eval $(op signin --account <account-url-or-uuid>)`
+   - List accounts with `op account list` to find the correct identifier
 3. Allow direnv: `direnv allow`
 4. Environment variables are loaded from 1Password vault
 

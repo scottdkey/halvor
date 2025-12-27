@@ -64,8 +64,19 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
         List { verbose } => {
             list::handle_list(hostname.as_deref(), verbose)?;
         }
-        Install { app, list } => {
-            install::handle_install(hostname.as_deref(), app.as_deref(), list)?;
+        Install {
+            app,
+            list,
+            repo,
+            repo_name,
+        } => {
+            install::handle_install(
+                hostname.as_deref(),
+                app.as_deref(),
+                list,
+                repo.as_deref(),
+                repo_name.as_deref(),
+            )?;
         }
         Uninstall { service } => {
             if let Some(service) = service {
@@ -81,11 +92,15 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
         } => {
             update::handle_update(hostname.as_deref(), app.as_deref(), experimental, force)?;
         }
-        Init { token, yes, skip_k3s } => {
+        Init {
+            token,
+            yes,
+            skip_k3s,
+        } => {
             // Detect current machine's hostname if not provided
             let halvor_dir = crate::config::find_halvor_dir()?;
             let config = crate::config::load_env_config(&halvor_dir)?;
-            
+
             let target_host = if let Some(host) = hostname.as_deref() {
                 host.to_string()
             } else {
@@ -93,7 +108,9 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
                 match crate::config::service::get_current_hostname() {
                     Ok(current_host) => {
                         // Try to find it in config (with normalization)
-                        if let Some(found_host) = crate::config::service::find_hostname_in_config(&current_host, &config) {
+                        if let Some(found_host) =
+                            crate::config::service::find_hostname_in_config(&current_host, &config)
+                        {
                             found_host
                         } else {
                             // Not in config, but we can still use it - Executor will detect it's local
@@ -150,7 +167,8 @@ pub fn handle_command(hostname: Option<String>, command: Commands) -> Result<()>
             )?;
         }
         Status { command } => {
-            let local_command: Option<status::StatusCommands> = command.map(|c| unsafe { mem::transmute(c) });
+            let local_command: Option<status::StatusCommands> =
+                command.map(|c| unsafe { mem::transmute(c) });
             status::handle_status(hostname.as_deref(), local_command)?;
         }
     }

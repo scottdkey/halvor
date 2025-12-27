@@ -60,6 +60,12 @@ pub enum Commands {
         /// List all available apps
         #[arg(long)]
         list: bool,
+        /// Helm repository URL for external charts (e.g., https://pkgs.tailscale.com/helmcharts)
+        #[arg(long)]
+        repo: Option<String>,
+        /// Helm repository name (defaults to chart name if not provided)
+        #[arg(long)]
+        repo_name: Option<String>,
     },
     /// Uninstall a service from a host or halvor itself
     Uninstall {
