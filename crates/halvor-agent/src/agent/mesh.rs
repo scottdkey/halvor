@@ -232,40 +232,14 @@ pub fn update_peer_last_seen(hostname: &str) -> Result<()> {
     Ok(())
 }
 
-/// Update peer Tailscale information (IP and hostname)
-pub fn update_peer_tailscale_info(
-    hostname: &str,
-    tailscale_ip: Option<String>,
-    tailscale_hostname: Option<String>,
-) -> Result<()> {
+/// Update peer Tailscale hostname
+pub fn update_peer_tailscale_hostname(hostname: &str, tailscale_hostname: &str) -> Result<()> {
     let conn = db::get_connection()?;
-    let now = chrono::Utc::now().timestamp();
 
-    // Update both IP and hostname if provided
-    match (tailscale_ip.as_ref(), tailscale_hostname.as_ref()) {
-        (Some(ip), Some(ts_hostname)) => {
-            conn.execute(
-                "UPDATE agent_peers SET tailscale_ip = ?1, tailscale_hostname = ?2, last_seen_at = ?3 WHERE hostname = ?4",
-                rusqlite::params![ip, ts_hostname, now, hostname],
-            )?;
-        }
-        (Some(ip), None) => {
-            conn.execute(
-                "UPDATE agent_peers SET tailscale_ip = ?1, last_seen_at = ?2 WHERE hostname = ?3",
-                rusqlite::params![ip, now, hostname],
-            )?;
-        }
-        (None, Some(ts_hostname)) => {
-            conn.execute(
-                "UPDATE agent_peers SET tailscale_hostname = ?1, last_seen_at = ?2 WHERE hostname = ?3",
-                rusqlite::params![ts_hostname, now, hostname],
-            )?;
-        }
-        (None, None) => {
-            // Just update last_seen_at if no Tailscale info provided
-            update_peer_last_seen(hostname)?;
-        }
-    }
+    conn.execute(
+        "UPDATE agent_peers SET tailscale_hostname = ?1 WHERE hostname = ?2",
+        rusqlite::params![tailscale_hostname, hostname],
+    )?;
 
     Ok(())
 }
